@@ -1,0 +1,73 @@
+From 26ec130276fa2a1078bbe885d79158a04f2562be Mon Sep 17 00:00:00 2001
+From: Yago Lasse <yagolasse@gmail.com>
+Date: Wed, 14 Oct 2026 19:51:02 -0300
+Subject: [PATCH] pb_exec: draw XYZRHW quads with rhw 0; frame trace shows
+ vertex outputs
+
+D3D's pass-through program for pre-transformed vertices sets oPos.w to
+rcp(rhw). A title that leaves rhw at 0 for its 2D quads gets w = +inf, and
+the rasteriser's 1/w = 0 turned every perspective-divided texcoord into
+0/0, so the quads sampled nothing and blended away. Treat w of 0 or inf as
+no perspective (1/w = 1), as the hardware evidently does.
+
+RECOMP_FRAME_TRACE now also prints d0/d1/t0 of each program batch's first
+three vertices and the raw inputs of vertex 0.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BsjokU5AonJ5uAaxukRBuF
+---
+ src/kernel/nv2a_pb_exec.c | 31 ++++++++++++++++++++++++++++++-
+ 1 file changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/src/kernel/nv2a_pb_exec.c b/src/kernel/nv2a_pb_exec.c
+index 25fa835..ce50284 100644
+--- a/src/kernel/nv2a_pb_exec.c
++++ b/src/kernel/nv2a_pb_exec.c
+@@ -2074,7 +2074,13 @@ static void raster_xf_triangle(const Nv2aVshOutput *va, const Nv2aVshOutput *vb,
+         sv = (float)s_gpu.texs[0].height;
+     }
+     for (k = 0; k < 3; k++) {
+-        T.iw[k] = 1.0f / v[k]->pos[3];
++        /* D3D's pass-through program for pre-transformed (XYZRHW) vertices
++         * takes oPos.w = rcp(rhw), and a title that leaves rhw at 0 for its
++         * 2D quads (MK: Shaolin Monks' menus) gets w = +inf. The hardware
++         * draws those unperspective; 1/w = 0 here would make every
++         * perspective-divided texcoord 0/0 and blend the quad away. */
++        float w = v[k]->pos[3];
++        T.iw[k] = (w == 0.0f || isinf(w)) ? 1.0f : 1.0f / w;
+         T.uv[k][0] = v[k]->tex[0][0] * su * T.iw[k];
+         T.uv[k][1] = v[k]->tex[0][1] * sv * T.iw[k];
+     }
+@@ -2499,6 +2505,29 @@ static void draw_primitive(void)
+                         s_xf[0].pos[0], s_xf[0].pos[1], s_xf[0].pos[2],
+                         s_xf[0].pos[3], s_xf[1].pos[0], s_xf[1].pos[1],
+                         s_xf[2].pos[0], s_xf[2].pos[1], 10);
++            /* What the program handed the combiners, next to where it put
++             * the vertex: a quad in the right place that blends away to
++             * nothing has a zero diffuse alpha or texcoords off the texture,
++             * and the position alone cannot say which. */
++            if ((s_gpu.xf_mode & 3) == 2) {
++                uint32_t k, a;
++                for (k = 0; k < 3 && k < s_gpu.idx_count; k++)
++                    fprintf(stderr, "[FTRACE]     out%u d0 %g %g %g %g  d1 %g %g %g %g"
++                            "  t0 %g %g %g %g%c", k,
++                            s_xf[k].d0[0], s_xf[k].d0[1], s_xf[k].d0[2], s_xf[k].d0[3],
++                            s_xf[k].d1[0], s_xf[k].d1[1], s_xf[k].d1[2], s_xf[k].d1[3],
++                            s_xf[k].tex[0][0], s_xf[k].tex[0][1],
++                            s_xf[k].tex[0][2], s_xf[k].tex[0][3], 10);
++                for (a = 0; a < NV2A_VSH_INPUTS; a++) {
++                    const VertexAttr *at = &s_gpu.attr[a];
++                    float in[4] = {0, 0, 0, 1};
++                    if (!at->size)
++                        continue;
++                    fetch_attr(at, s_gpu.idx[0], in);
++                    fprintf(stderr, "[FTRACE]     in0 v%u type %u size %u = %g %g %g %g%c",
++                            a, at->type, at->size, in[0], in[1], in[2], in[3], 10);
++                }
++            }
+             if (s_gpu.rc_seen) {
+                 int st;
+                 fprintf(stderr, "[FTRACE]     rc stages %u ctl %08X prog %05X fin %08X %08X",
+-- 
+2.53.0.windows.2
+

@@ -110,6 +110,23 @@ if(MSVC)
     )
 endif()
 
+# ── Tests ───────────────────────────────────────────────────────
+#
+# Boot smoke test: runs the exe headless against the extracted game folder and
+# checks the log (tools/smoke_test.py). Needs game data, which is never in the
+# repo: without default.xbe in MKSM_GAME_DIR the test is skipped.
+#   ctest --test-dir build -C Release --output-on-failure
+enable_testing()
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_FOUND)
+    set(MKSM_GAME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../game_files" CACHE PATH
+        "Extracted game folder (holding default.xbe) for the smoke test")
+    add_test(NAME smoke
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/smoke_test.py
+            --game-dir ${MKSM_GAME_DIR} --exe $<TARGET_FILE:${PROJECT_NAME}>)
+    set_tests_properties(smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+endif()
+
 # ── Game-specific additions ─────────────────────────────────────
 #
 # Add any game-specific libraries, loaders, or custom renderers below.

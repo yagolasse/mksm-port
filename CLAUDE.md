@@ -21,6 +21,7 @@ statically recompiling the retail `default.xbe` to C with
 - `external/xboxrecomp/`: toolkit git submodule (pinned). Prefer fixing things in our `src/` first;
   toolkit changes should go upstream or into a fork
 - `tools/run.sh`, `tools/run.bat`: run the exe with the needed env defaults, log to `../logs/`
+- `tools/smoke_test.py`: boot smoke test (also CTest `smoke`), see Testing
 - `tools/xiso.py`: list/extract files from an Xbox disc image
 - `tools/padding_seeds.py`: finds undetected functions after int3 padding (writes `seeds/padding.json`)
 - `tools/stub_audit.py`: sorts `gen/recomp_stubs_unresolved.c` into real code vs. decoded data (writes `seeds/stubs.json`)
@@ -85,6 +86,19 @@ RECOMP_WATCHDOG_SECS=10 timeout 60 tools/run.sh
 console view and prints the last 40 lines on exit; in cmd, turn `RECOMP_AC97_READY` off with `0`
 (empty means unset there). Keep the two scripts' defaults in sync.
 The failure path for a missing XBE shows a MessageBox, which blocks an unattended run.
+
+## Testing
+Run the smoke test after every re-lift or rebuild (a re-lift can break a path that used to work):
+```bash
+python tools/smoke_test.py            # or: ctest --test-dir build -C Release --output-on-failure
+```
+It runs the exe headless with a watchdog per checkpoint (~3 min total), logs to
+`../logs/smoke_<timestamp>_<checkpoint>.log`, and checks: exit 0/3 (3 = watchdog, normal), no
+`[CRASH]`, no `Failed to resolve VA`, no `is not code` (except `KNOWN_WILD`), a minimum draw count,
+and files opened. `boot` = no input, both intro movies; `pad` = scripted Start/A to Select
+Difficulty. Draw counts depend on the frame rate, so prefer file markers when adding checkpoints.
+Add a checkpoint each time the game gets further. Game dir: `--game-dir`, else `MKSM_GAME_DIR`,
+else `../game_files`; without game data it exits 77 (CTest skip). `--only boot|pad` runs one.
 
 ## Input
 The game's statically linked XAPI drives the USB host controllers directly, so pads come from the

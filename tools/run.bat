@@ -1,6 +1,7 @@
 @echo off
 rem Run the recompiled exe against an extracted game folder and capture its output.
 rem Windows (cmd) twin of tools/run.sh: keep the defaults of the two scripts in sync.
+rem tools/smoke_test.py (RUN_ENV) uses the same defaults too.
 rem
 rem The exe is a GUI-subsystem program, so its printf/stderr output only goes
 rem somewhere when redirected; this script writes both into a log file and

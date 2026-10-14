@@ -97,6 +97,17 @@ if(MSVC)
     )
     # The generated code files can be very large. Increase object file section limit.
     target_compile_options(${PROJECT_NAME} PRIVATE /bigobj)
+    # Debug info in every config: the fault handler resolves host RIP to the
+    # generated sub_XXXXXXXX symbol through dbghelp, which needs a PDB.
+    # /Z7 keeps debug info in each .obj (no shared PDB server during parallel
+    # compiles); /DEBUG:FULL makes the linker write a standalone .pdb.
+    # /DEBUG turns off /OPT:REF and /OPT:ICF, so turn them back on for Release.
+    target_compile_options(${PROJECT_NAME} PRIVATE /Z7)
+    target_link_options(${PROJECT_NAME} PRIVATE
+        /DEBUG:FULL
+        $<$<NOT:$<CONFIG:Debug>>:/OPT:REF>
+        $<$<NOT:$<CONFIG:Debug>>:/OPT:ICF>
+    )
 endif()
 
 # ── Game-specific additions ─────────────────────────────────────

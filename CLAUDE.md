@@ -40,8 +40,9 @@ python -m tools.recomp ../../../game_files/default.xbe --all --split 250 --gen-d
 VS 2022 + CMake, x64 (the default; don't force `-A Win32`).
 ```bash
 cmake -S . -B build
-cmake --build build --config Release
+cmake --build build --config Release --parallel 6
 ```
+Use `--parallel N`, not `-- /m`: Git Bash rewrites `/m` into a path (`M:/`) and MSBuild fails.
 At runtime the exe reads `game\default.xbe` and game data from `game\` relative to the working
 directory (`YOUR_GAME_XBE_PATH` / `YOUR_GAME_DIR` in `src/main.c`).
 

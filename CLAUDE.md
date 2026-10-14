@@ -62,3 +62,6 @@ guest stack, and recent ICALL targets. Fix by adding overrides in `recomp_manual
 support. Useful env vars from the toolkit: `RECOMP_WATCHDOG_SECS`, `RECOMP_AC97_READY`.
 `RECOMP_PB_EXEC=1` (set by `tools/run.sh`) is required: D3D init waits on GPU semaphore releases,
 which only the pushbuffer executor performs.
+`tools/run.sh` also sets `RECOMP_AC97_READY=1` (emulated APU, so `DirectSoundCreate` succeeds) and
+`RECOMP_APU_DSP_ACK=<addr>` (acks the GP DSP command doorbell that DirectSound init waits on). The
+doorbell address comes from an allocation; if audio init hangs, read `ebx` from a watchdog dump.

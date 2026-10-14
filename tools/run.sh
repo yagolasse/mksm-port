@@ -12,6 +12,13 @@
 #      Toolkit vars such as RECOMP_WATCHDOG_SECS / RECOMP_AC97_READY pass through.
 #      RECOMP_PB_EXEC defaults to 1: boot needs the pushbuffer executor, since
 #      D3D init waits for the GPU to report progress.
+#      RECOMP_AC97_READY defaults to 1 (0 or empty turns it off): reports the
+#      AC'97 codec and brings up the emulated APU. Without it DirectSoundCreate
+#      fails and the game later spins on a NULL IDirectSound.
+#      RECOMP_APU_DSP_ACK defaults to the GP DSP command doorbell DirectSound
+#      waits on during init (DSP scratch + 0x810). The address comes from a
+#      contiguous allocation; if audio init hangs again, re-check it with
+#      RECOMP_WATCHDOG_SECS (ebx in the dump) and override it here.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,6 +38,14 @@ if [ ! -f "$EXE" ]; then
 fi
 
 export RECOMP_PB_EXEC="${RECOMP_PB_EXEC-1}"
+RECOMP_AC97_READY="${RECOMP_AC97_READY-1}"
+# The runtime only checks that the variable exists, so "off" means unset.
+if [ -z "$RECOMP_AC97_READY" ] || [ "$RECOMP_AC97_READY" = 0 ]; then
+    unset RECOMP_AC97_READY
+else
+    export RECOMP_AC97_READY
+fi
+export RECOMP_APU_DSP_ACK="${RECOMP_APU_DSP_ACK-0x83550810}"
 
 mkdir -p "$(dirname "$LOG")"
 LOG="$(cd "$(dirname "$LOG")" && pwd)/$(basename "$LOG")"

@@ -101,7 +101,8 @@ python tools/smoke_test.py            # or: ctest --test-dir build -C Release --
 ```
 It runs the exe headless with a watchdog per checkpoint (~3.5 min total), logs to
 `../logs/smoke_<timestamp>_<checkpoint>.log`, and checks: exit 0/3 (3 = watchdog, normal), no
-`[CRASH]`, no `Failed to resolve VA`, no `is not code` (except `KNOWN_WILD`), a minimum draw count,
+`[CRASH]`, no `Failed to resolve VA`, no `is not code` (except `KNOWN_WILD`), no `arena exhausted`,
+a DSP doorbell ack, a minimum draw count,
 and files opened. `boot` = no input, both intro movies; `pad` = scripted Start/A past Select
 Difficulty and the movie skip into the level load (`WADCRC.BIN`). Draw counts depend on the frame rate, so prefer file markers when adding checkpoints.
 Add a checkpoint each time the game gets further. Game dir: `--game-dir`, else `MKSM_GAME_DIR`,
@@ -124,8 +125,11 @@ support. Useful env vars from the toolkit: `RECOMP_WATCHDOG_SECS`, `RECOMP_AC97_
 `RECOMP_PB_EXEC=1` (set by the run scripts) is required: D3D init waits on GPU semaphore releases,
 which only the pushbuffer executor performs.
 The run scripts also set `RECOMP_AC97_READY=1` (emulated APU, so `DirectSoundCreate` succeeds) and
-`RECOMP_APU_DSP_ACK=<addr>` (acks the GP DSP command doorbell that DirectSound init waits on). The
-doorbell address comes from an allocation; if audio init hangs, read `ebx` from a watchdog dump.
+`RECOMP_APU_DSP_ACK=auto` (patch 0004: acks the GP DSP command doorbell that DirectSound init waits
+on, found as GP scratch page 0 + 0x810 via `GPSADDR` and logged as `DSP doorbell auto`). If audio
+init hangs, compare `ebx` in a watchdog dump with the logged address; a fixed address can be given
+instead. `RECOMP_HEAP_RECLAIM=1` (also a default) reuses freed contiguous/heap blocks: without it
+the contiguous arena runs out (`[CONTIG] arena exhausted`) and the movie after New Game stays black.
 They also set `RECOMP_TITLE_KEVENTS=1` (events the game builds by hand get a host event, so waits
 on them block instead of failing at once; the XDK timer thread behind the audio tick needs it) with
 `RECOMP_TITLE_KEVENTS_SKIP=0x003F29CC` (patch 0003): D3D's event, set by a GPU interrupt the runtime

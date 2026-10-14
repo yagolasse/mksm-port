@@ -11,6 +11,7 @@ BOOT = next(c for c in smoke_test.CHECKPOINTS if c.name == "boot")
 PAD = next(c for c in smoke_test.CHECKPOINTS if c.name == "pad")
 
 GOOD_BOOT = """\
+[APU] DSP doorbell 0x831C8810: command 0x00000003 acknowledged
   [PATH] \\Device\\CdRom0\\FRONT\\MOVIES\\MIDWAY.SFD
 [GPU] draws 1200 (1200 with coordinates), 10 indices; x 0..1  y 0..1
   [PATH] \\Device\\CdRom0\\FRONT\\MOVIES\\OPENING.SFD
@@ -48,6 +49,12 @@ class SmokeChecksTest(unittest.TestCase):
         no_opening = GOOD_BOOT.replace("OPENING.SFD", "OTHER.SFD")
         self.assertEqual(failures(BOOT, 3, no_opening), ["opened OPENING.SFD"])
 
+    def test_contig_exhausted_and_dsp_ack(self):
+        oom = "  [CONTIG] arena exhausted (2457600 requested, 65470464 of 67108864 used)\n"
+        self.assertEqual(failures(BOOT, 3, GOOD_BOOT + oom), ["1 [CONTIG] arena exhausted"])
+        no_ack = GOOD_BOOT.replace("acknowledged", "pending")
+        self.assertEqual(failures(BOOT, 3, no_ack), ["DSP doorbell acknowledged"])
+
     def test_pad_steps(self):
         text = GOOD_BOOT + "".join(
             "  [PATH] \\Device\\X\\%s\n" % f for f in PAD.files) \
@@ -63,7 +70,7 @@ class SmokeChecksTest(unittest.TestCase):
     def test_pad_files_after_step(self):
         step, names = PAD.files_after_step
         files = "".join("  [PATH] \\Device\\X\\%s\n" % f for f in PAD.files + names)
-        text = files + "[GPU] draws %d (\n" % PAD.min_draws
+        text = GOOD_BOOT.splitlines(True)[0] + files + "[GPU] draws %d (\n" % PAD.min_draws
         steps = "".join("  PAD: t=%d ms step %d (digital 0x10 analog 0x00)\n" % (i * 1000, i)
                         for i in range(PAD.last_pad_step + 1))
         # opened only before the step: fails once per file

@@ -43,7 +43,8 @@ RUN_ENV = {
     "RECOMP_AC97_READY": "1",
     "RECOMP_USB": "1",
     "RECOMP_KEYBOARD": "1",
-    "RECOMP_APU_DSP_ACK": "0x83550810",
+    "RECOMP_APU_DSP_ACK": "auto",
+    "RECOMP_HEAP_RECLAIM": "1",
     "RECOMP_TITLE_KEVENTS": "1",
     "RECOMP_TITLE_KEVENTS_SKIP": "0x003F29CC",
 }
@@ -95,6 +96,7 @@ CHECKPOINTS = [
 ]
 
 RE_DRAWS = re.compile(r"^\[GPU\] draws (\d+) ", re.M)
+RE_DSP_ACK = re.compile(r"\[APU\] DSP doorbell 0x[0-9A-Fa-f]+: command 0x[0-9A-Fa-f]+ acknowledged")
 RE_PATH = re.compile(r"^\s*\[PATH\] (.+)$", re.M)
 RE_WILD = re.compile(r"\[ICALL\] target 0x([0-9A-Fa-f]+) is not code")
 RE_PAD = re.compile(r"PAD: t=\d+ ms step (\d+)")
@@ -135,6 +137,13 @@ def check(cp, code, text):
                     + " ".join(f"0x{v:08X}" for v in bad)))
     for v in sorted(wild & KNOWN_WILD):
         print(f"  note: known wild ICALL 0x{v:08X}")
+    # 1.15e: the bump-only contiguous arena ran out before the movie after New
+    # Game, which then stayed black. RECOMP_HEAP_RECLAIM=1 fixes it.
+    exhausted = text.count("arena exhausted")
+    results.append((exhausted == 0, f"{exhausted} [CONTIG] arena exhausted"))
+    # RECOMP_APU_DSP_ACK=auto found DirectSound's doorbell; without the ack
+    # the boot stalls in DSOUND init.
+    results.append((bool(RE_DSP_ACK.search(text)), "DSP doorbell acknowledged"))
     draws = [int(d) for d in RE_DRAWS.findall(text)]
     n = max(draws, default=0)
     results.append((n >= cp.min_draws, f"{n} draws (need >= {cp.min_draws})"))

@@ -22,10 +22,14 @@
 #      pad drives the first one.
 #      RECOMP_KEYBOARD defaults to 1: keyboard on top of pad 1, read from the
 #      framebuffer window (RECOMP_FB_WINDOW=1) while it has the focus.
-#      RECOMP_APU_DSP_ACK defaults to the GP DSP command doorbell DirectSound
-#      waits on during init (DSP scratch + 0x810). The address comes from a
-#      contiguous allocation; if audio init hangs again, re-check it with
-#      RECOMP_WATCHDOG_SECS (ebx in the dump) and override it here.
+#      RECOMP_APU_DSP_ACK defaults to auto: acks the GP DSP command doorbell
+#      DirectSound init waits on, found from the APU's GP scratch table
+#      (scratch page 0 + 0x810, logged as "DSP doorbell auto"). A fixed
+#      address also works but moves with the allocation order. If audio init
+#      hangs, compare ebx in a RECOMP_WATCHDOG_SECS dump with the logged one.
+#      RECOMP_HEAP_RECLAIM defaults to 1 (0 turns it off): freed contiguous
+#      and heap blocks are reused. Without it the contiguous arena runs out
+#      by the second OPENING.SFD and the movie after New Game stays black.
 #      RECOMP_TITLE_KEVENTS defaults to 1 (0 turns it off): events the game
 #      builds by hand get a host event, so waits on them block instead of
 #      failing at once (the XDK timer thread needs it). RECOMP_TITLE_KEVENTS_SKIP
@@ -64,7 +68,13 @@ else
     export RECOMP_USB
 fi
 export RECOMP_KEYBOARD="${RECOMP_KEYBOARD-1}"
-export RECOMP_APU_DSP_ACK="${RECOMP_APU_DSP_ACK-0x83550810}"
+export RECOMP_APU_DSP_ACK="${RECOMP_APU_DSP_ACK-auto}"
+RECOMP_HEAP_RECLAIM="${RECOMP_HEAP_RECLAIM-1}"
+if [ -z "$RECOMP_HEAP_RECLAIM" ] || [ "$RECOMP_HEAP_RECLAIM" = 0 ]; then
+    unset RECOMP_HEAP_RECLAIM
+else
+    export RECOMP_HEAP_RECLAIM
+fi
 export RECOMP_TITLE_KEVENTS="${RECOMP_TITLE_KEVENTS-1}"
 export RECOMP_TITLE_KEVENTS_SKIP="${RECOMP_TITLE_KEVENTS_SKIP-0x003F29CC}"
 

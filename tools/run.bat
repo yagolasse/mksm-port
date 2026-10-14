@@ -25,10 +25,14 @@ rem      controllers the game's XAPI finds its gamepads on; a host XInput pad
 rem      drives the first one.
 rem      RECOMP_KEYBOARD defaults to 1: keyboard on top of pad 1, read from the
 rem      framebuffer window (RECOMP_FB_WINDOW=1) while it has the focus.
-rem      RECOMP_APU_DSP_ACK defaults to the GP DSP command doorbell DirectSound
-rem      waits on during init (DSP scratch + 0x810). The address comes from a
-rem      contiguous allocation; if audio init hangs again, re-check it with
-rem      RECOMP_WATCHDOG_SECS (ebx in the dump) and override it here.
+rem      RECOMP_APU_DSP_ACK defaults to auto: acks the GP DSP command doorbell
+rem      DirectSound init waits on, found from the APU's GP scratch table
+rem      (scratch page 0 + 0x810, logged as "DSP doorbell auto"). A fixed
+rem      address also works but moves with the allocation order. If audio init
+rem      hangs, compare ebx in a RECOMP_WATCHDOG_SECS dump with the logged one.
+rem      RECOMP_HEAP_RECLAIM defaults to 1 (0 turns it off): freed contiguous
+rem      and heap blocks are reused. Without it the contiguous arena runs out
+rem      by the second OPENING.SFD and the movie after New Game stays black.
 rem      RECOMP_TITLE_KEVENTS defaults to 1 (0 turns it off): events the game
 rem      builds by hand get a host event, so waits on them block instead of
 rem      failing at once (the XDK timer thread needs it). RECOMP_TITLE_KEVENTS_SKIP
@@ -68,7 +72,9 @@ if "%RECOMP_AC97_READY%"=="0" set "RECOMP_AC97_READY="
 if not defined RECOMP_USB set "RECOMP_USB=1"
 if "%RECOMP_USB%"=="0" set "RECOMP_USB="
 if not defined RECOMP_KEYBOARD set "RECOMP_KEYBOARD=1"
-if not defined RECOMP_APU_DSP_ACK set "RECOMP_APU_DSP_ACK=0x83550810"
+if not defined RECOMP_APU_DSP_ACK set "RECOMP_APU_DSP_ACK=auto"
+if not defined RECOMP_HEAP_RECLAIM set "RECOMP_HEAP_RECLAIM=1"
+if "%RECOMP_HEAP_RECLAIM%"=="0" set "RECOMP_HEAP_RECLAIM="
 if not defined RECOMP_TITLE_KEVENTS set "RECOMP_TITLE_KEVENTS=1"
 if not defined RECOMP_TITLE_KEVENTS_SKIP set "RECOMP_TITLE_KEVENTS_SKIP=0x003F29CC"
 

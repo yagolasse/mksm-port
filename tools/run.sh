@@ -26,6 +26,11 @@
 #      waits on during init (DSP scratch + 0x810). The address comes from a
 #      contiguous allocation; if audio init hangs again, re-check it with
 #      RECOMP_WATCHDOG_SECS (ebx in the dump) and override it here.
+#      RECOMP_TITLE_KEVENTS defaults to 1 (0 turns it off): events the game
+#      builds by hand get a host event, so waits on them block instead of
+#      failing at once (the XDK timer thread needs it). RECOMP_TITLE_KEVENTS_SKIP
+#      defaults to D3D's event 0x003F29CC, which a GPU interrupt sets that the
+#      runtime doesn't model: waiting on it for real hangs the boot.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,6 +65,8 @@ else
 fi
 export RECOMP_KEYBOARD="${RECOMP_KEYBOARD-1}"
 export RECOMP_APU_DSP_ACK="${RECOMP_APU_DSP_ACK-0x83550810}"
+export RECOMP_TITLE_KEVENTS="${RECOMP_TITLE_KEVENTS-1}"
+export RECOMP_TITLE_KEVENTS_SKIP="${RECOMP_TITLE_KEVENTS_SKIP-0x003F29CC}"
 
 mkdir -p "$(dirname "$LOG")"
 LOG="$(cd "$(dirname "$LOG")" && pwd)/$(basename "$LOG")"

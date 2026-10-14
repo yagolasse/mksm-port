@@ -8,7 +8,8 @@ here), then checks the log for markers of how far the game got:
   boot  no input, ~90 s: no crash, no unresolved/wild indirect calls, enough
         draws, both intro movies (MIDWAY.SFD, OPENING.SFD) opened
   pad   scripted pad (Start x5, then A): the save meta is read, the character
-        pick opens GAMEDATA.WAH and the draw count reaches Select Difficulty
+        pick opens GAMEDATA.WAH, the draw count reaches Select Difficulty, and
+        accepting it (step 9) opens OPENING.SFD (the story intro)
 
 Run it after every re-lift or rebuild: a re-lift can break a path that used to
 work. When the game gets further, add a checkpoint here.
@@ -42,6 +43,8 @@ RUN_ENV = {
     "RECOMP_USB": "1",
     "RECOMP_KEYBOARD": "1",
     "RECOMP_APU_DSP_ACK": "0x83550810",
+    "RECOMP_TITLE_KEVENTS": "1",
+    "RECOMP_TITLE_KEVENTS_SKIP": "0x003F29CC",
 }
 
 # The 1.12c pad script: Start through the title, brightness and main menu,
@@ -58,13 +61,16 @@ KNOWN_WILD = {0x00000140}
 
 
 class Checkpoint:
-    def __init__(self, name, secs, env, min_draws, files, last_pad_step=None):
+    def __init__(self, name, secs, env, min_draws, files, last_pad_step=None,
+                 files_after_step=None):
         self.name = name
         self.secs = secs
         self.env = env
         self.min_draws = min_draws
         self.files = files            # path suffixes that must show up as [PATH]
         self.last_pad_step = last_pad_step
+        # (step, [suffixes]): files that must open after that pad step's line
+        self.files_after_step = files_after_step
 
 
 CHECKPOINTS = [
@@ -73,14 +79,18 @@ CHECKPOINTS = [
     # Draws depend on the frame rate: 40,436 after accepting in 1.12c, 34,391 in
     # 1.13 (same path). GAMEDATA.WAH opens after picking a character (step 7),
     # just before Select Difficulty, so it is the sturdier marker.
+    # 1.15b: accepting Select Difficulty (step 9) opens OPENING.SFD. Before the
+    # timer thread worked (boot-log #5) nothing opened after the accept.
     Checkpoint("pad", 65, {"RECOMP_PAD_SCRIPT": PAD_SCRIPT}, 25000,
-               ["MIDWAY.SFD", "SaveMeta.xbx", "GAMEDATA.WAH"], last_pad_step=9),
+               ["MIDWAY.SFD", "SaveMeta.xbx", "GAMEDATA.WAH"], last_pad_step=9,
+               files_after_step=(9, ["OPENING.SFD"])),
 ]
 
 RE_DRAWS = re.compile(r"^\[GPU\] draws (\d+) ", re.M)
 RE_PATH = re.compile(r"^\s*\[PATH\] (.+)$", re.M)
 RE_WILD = re.compile(r"\[ICALL\] target 0x([0-9A-Fa-f]+) is not code")
 RE_PAD = re.compile(r"PAD: t=\d+ ms step (\d+)")
+RE_PAD_STEP = r"PAD: t=\d+ ms step %d "
 
 
 def run(cp, exe, game_dir, log):
@@ -129,6 +139,13 @@ def check(cp, code, text):
         last = max(steps, default=-1)
         results.append((last >= cp.last_pad_step,
                         f"pad script reached step {last} (need >= {cp.last_pad_step})"))
+    if cp.files_after_step is not None:
+        step, names = cp.files_after_step
+        m = re.search(RE_PAD_STEP % step, text)
+        later = RE_PATH.findall(text, m.end()) if m else []
+        for name in names:
+            hit = any(p.lower().endswith(name.lower()) for p in later)
+            results.append((hit, f"opened {name} after pad step {step}"))
     return results
 
 

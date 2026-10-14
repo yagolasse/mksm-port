@@ -54,8 +54,21 @@ class SmokeChecksTest(unittest.TestCase):
             + "[GPU] draws %d (" % PAD.min_draws + "\n"
         steps = "".join("  PAD: t=%d ms step %d (digital 0x10 analog 0x00)\n" % (i * 1000, i)
                         for i in range(PAD.last_pad_step + 1))
-        self.assertEqual(failures(PAD, 3, text + steps), [])
-        self.assertEqual(len(failures(PAD, 3, text)), 1)
+        step, names = PAD.files_after_step
+        after = "".join("  [PATH] \\Device\\X\\%s\n" % f for f in names)
+        self.assertEqual(failures(PAD, 3, text + steps + after), [])
+        # no steps: the step check and the after-step file check fail
+        self.assertEqual(len(failures(PAD, 3, text + after)), 2)
+
+    def test_pad_files_after_step(self):
+        step, names = PAD.files_after_step
+        files = "".join("  [PATH] \\Device\\X\\%s\n" % f for f in PAD.files + names)
+        text = files + "[GPU] draws %d (\n" % PAD.min_draws
+        steps = "".join("  PAD: t=%d ms step %d (digital 0x10 analog 0x00)\n" % (i * 1000, i)
+                        for i in range(PAD.last_pad_step + 1))
+        # opened only before the step: fails once per file
+        self.assertEqual(failures(PAD, 3, text + steps),
+                         ["opened %s after pad step %d" % (n, step) for n in names])
 
     def test_pad_script_matches_1_12c(self):
         entries = smoke_test.PAD_SCRIPT.split(",")

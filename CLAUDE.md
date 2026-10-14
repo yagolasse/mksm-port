@@ -126,3 +126,8 @@ which only the pushbuffer executor performs.
 The run scripts also set `RECOMP_AC97_READY=1` (emulated APU, so `DirectSoundCreate` succeeds) and
 `RECOMP_APU_DSP_ACK=<addr>` (acks the GP DSP command doorbell that DirectSound init waits on). The
 doorbell address comes from an allocation; if audio init hangs, read `ebx` from a watchdog dump.
+They also set `RECOMP_TITLE_KEVENTS=1` (events the game builds by hand get a host event, so waits
+on them block instead of failing at once; the XDK timer thread behind the audio tick needs it) with
+`RECOMP_TITLE_KEVENTS_SKIP=0x003F29CC` (patch 0003): D3D's event, set by a GPU interrupt the runtime
+doesn't model, keeps the fail-at-once path, else the boot hangs. A new hang on a hand-built event
+→ log its VA (`event 0x... built by the title`) and try adding it to the skip list.

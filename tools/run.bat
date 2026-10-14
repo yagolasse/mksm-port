@@ -29,6 +29,11 @@ rem      RECOMP_APU_DSP_ACK defaults to the GP DSP command doorbell DirectSound
 rem      waits on during init (DSP scratch + 0x810). The address comes from a
 rem      contiguous allocation; if audio init hangs again, re-check it with
 rem      RECOMP_WATCHDOG_SECS (ebx in the dump) and override it here.
+rem      RECOMP_TITLE_KEVENTS defaults to 1 (0 turns it off): events the game
+rem      builds by hand get a host event, so waits on them block instead of
+rem      failing at once (the XDK timer thread needs it). RECOMP_TITLE_KEVENTS_SKIP
+rem      defaults to D3D's event 0x003F29CC, which a GPU interrupt sets that the
+rem      runtime doesn't model: waiting on it for real hangs the boot.
 setlocal
 
 set "PORT=%~dp0.."
@@ -64,6 +69,8 @@ if not defined RECOMP_USB set "RECOMP_USB=1"
 if "%RECOMP_USB%"=="0" set "RECOMP_USB="
 if not defined RECOMP_KEYBOARD set "RECOMP_KEYBOARD=1"
 if not defined RECOMP_APU_DSP_ACK set "RECOMP_APU_DSP_ACK=0x83550810"
+if not defined RECOMP_TITLE_KEVENTS set "RECOMP_TITLE_KEVENTS=1"
+if not defined RECOMP_TITLE_KEVENTS_SKIP set "RECOMP_TITLE_KEVENTS_SKIP=0x003F29CC"
 
 for %%I in ("%LOG%") do if not exist "%%~dpI" mkdir "%%~dpI"
 echo exe:  %EXE%

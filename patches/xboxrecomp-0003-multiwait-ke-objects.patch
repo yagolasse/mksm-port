@@ -1,0 +1,185 @@
+From 2165b59c712596c9cce5afcc429c1be30355fdd4 Mon Sep 17 00:00:00 2001
+From: Yago Lasse <yagolasse@gmail.com>
+Date: Wed, 14 Oct 2026 18:17:01 -0300
+Subject: [PATCH] kernel: KeWaitForMultipleObjects resolves Ke objects; KEVENT
+ skip list
+
+The multi-wait only looked up handle tokens, so a Ke object (a
+KeInitializeEvent/Timer shadow, or an event the title built itself) went
+to Win32 as its raw guest VA and the wait failed at once. An XDK timer
+thread that waits on its hand-built wake event plus its KTIMERs then
+spins forever and no timer callback ever runs.
+
+Each object now goes through the single wait's chain: ke_guest_event
+(SignalState synced first, shared helper ke_guest_event_sync), then the
+Ke shadow table, then the handle token. A satisfied wait consumes the
+synchronization events it was satisfied by (WaitAny: the returned index,
+WaitAll: all).
+
+RECOMP_TITLE_KEVENTS_SKIP=<va>[,<va>...] leaves single hand-built events
+out of RECOMP_TITLE_KEVENTS, for events whose setter the runtime does
+not model yet (e.g. a D3D event a GPU interrupt sets): those keep the
+old fail-at-once path instead of hanging.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BsjokU5AonJ5uAaxukRBuF
+---
+ src/kernel/kernel_bridge.c | 84 ++++++++++++++++++++++++++++++--------
+ 1 file changed, 67 insertions(+), 17 deletions(-)
+
+diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
+index c65ba43..c84afa3 100644
+--- a/src/kernel/kernel_bridge.c
++++ b/src/kernel/kernel_bridge.c
+@@ -1513,6 +1513,20 @@ static void ke_shadow_insert(uint32_t guest_va, HANDLE host);
+ static HANDLE bridge_resolve_handle(uint32_t token);
+ static HANDLE ke_guest_event(uint32_t guest_va, int *type);
+ 
++/* Before a wait on an event the title built itself: its SignalState in guest
++ * memory is the truth -- XDK code resets it by writing 0 there -- so bring the
++ * host event in line first. */
++static void ke_guest_event_sync(uint32_t guest_va, HANDLE ge)
++{
++    if (BRIDGE_MEM32(guest_va + 4) == 0) {
++        ResetEvent(ge);
++        if (BRIDGE_MEM32(guest_va + 4) != 0)   /* set meanwhile */
++            SetEvent(ge);
++    } else {
++        SetEvent(ge);                          /* set by a header write */
++    }
++}
++
+ /* ── KeSetEvent (ordinal 145) ────────────────────────────── */
+ static void bridge_KeSetEvent(void)
+ {
+@@ -1555,19 +1569,11 @@ static void bridge_KeWaitForSingleObject(void)
+     uint32_t timeout_ptr = STACK_ARG(4);
+     HANDLE h;
+ 
+-    {   /* An event the title built itself (see ke_guest_event). Its
+-         * SignalState in guest memory is the truth -- XDK code resets it by
+-         * writing 0 there -- so bring the host event in line first. */
++    {   /* An event the title built itself (see ke_guest_event). */
+         int type;
+         HANDLE ge = ke_guest_event(object, &type);
+         if (ge) {
+-            if (BRIDGE_MEM32(object + 4) == 0) {
+-                ResetEvent(ge);
+-                if (BRIDGE_MEM32(object + 4) != 0)     /* set meanwhile */
+-                    SetEvent(ge);
+-            } else {
+-                SetEvent(ge);                          /* set by a header write */
+-            }
++            ke_guest_event_sync(object, ge);
+             g_eax = (uint32_t)xbox_KeWaitForSingleObject(
+                 ge, wait_reason, wait_mode,
+                 (BOOLEAN)alertable, XBOX_TO_NATIVE(timeout_ptr));
+@@ -4451,9 +4457,13 @@ static void bridge_KeAlertThread(void)
+ 
+ /* ── KeWaitForMultipleObjects (ordinal 158, 8 args)
+  *
+- * KeWaitForSingleObject is routed; the multiple-object sibling was not. Like
+- * NtWaitForMultipleObjectsEx, the Objects[] array in guest memory holds 32-bit
+- * handle tokens, so each is resolved before the native wait sees it. */
++ * KeWaitForSingleObject is routed; the multiple-object sibling was not. The
++ * Objects[] array in guest memory holds guest object VAs, so each goes through
++ * the single wait's chain: an event the title built itself (ke_guest_event,
++ * SignalState synced first), then a Ke* shadow (KeInitializeEvent/Timer), then
++ * a handle token. With only the token lookup, every Ke object came through as
++ * its raw VA and the wait failed at once: an XDK timer thread waiting on its
++ * hand-built wake event plus its KTIMERs spun forever and no timer ever fired. */
+ #define BRIDGE_MAXIMUM_WAIT_OBJECTS 64
+ 
+ static void bridge_KeWaitForMultipleObjects(void)
+@@ -4464,6 +4474,7 @@ static void bridge_KeWaitForMultipleObjects(void)
+     uint32_t alertable  = STACK_ARG(5);   /* 3=WaitReason, 4=WaitMode */
+     uint32_t timeout_va = STACK_ARG(6);
+     HANDLE handles[BRIDGE_MAXIMUM_WAIT_OBJECTS];
++    int types[BRIDGE_MAXIMUM_WAIT_OBJECTS];
+     uint32_t i;
+ 
+     if (count == 0) {
+@@ -4472,15 +4483,32 @@ static void bridge_KeWaitForMultipleObjects(void)
+     }
+     if (count > BRIDGE_MAXIMUM_WAIT_OBJECTS)
+         count = BRIDGE_MAXIMUM_WAIT_OBJECTS;
+-    for (i = 0; i < count; i++)
+-        handles[i] = bridge_resolve_handle(
+-            objects_va ? BRIDGE_MEM32(objects_va + i * 4) : 0);
++    for (i = 0; i < count; i++) {
++        uint32_t va = objects_va ? BRIDGE_MEM32(objects_va + i * 4) : 0;
++        HANDLE h = ke_guest_event(va, &types[i]);
++        if (h)
++            ke_guest_event_sync(va, h);
++        else {
++            types[i] = -1;
++            h = ke_shadow_lookup(va);
++        }
++        handles[i] = h ? h : bridge_resolve_handle(va);
++    }
+ 
+     g_eax = (uint32_t)xbox_KeWaitForMultipleObjects(
+         count, (PVOID *)handles, wait_type,
+         STACK_ARG(3), (KPROCESSOR_MODE)STACK_ARG(4),
+         (BOOLEAN)alertable, XBOX_TO_NATIVE(timeout_va),
+         XBOX_TO_NATIVE(STACK_ARG(7)));
++
++    /* A satisfied wait consumes a synchronization event: WaitAny the one
++     * at the returned index, WaitAll (type 0) every one. */
++    for (i = 0; i < count; i++) {
++        if (types[i] != 1)
++            continue;
++        if (wait_type == 0 ? g_eax == 0 : g_eax == i)
++            BRIDGE_MEM32(BRIDGE_MEM32(objects_va + i * 4) + 4) = 0;
++    }
+ }
+ 
+ #undef BRIDGE_MAXIMUM_WAIT_OBJECTS
+@@ -6209,21 +6237,43 @@ static void ke_shadow_remove(uint32_t guest_va)
+  * Opt-in because it changes what every such wait does: a wait that failed at
+  * once now blocks until the event is set, and on a title whose setter the
+  * runtime does not model yet (a GPU interrupt, say) that turns a spin into a
+- * hang. Turn it on for a title that waits on events it built itself. */
++ * hang. Turn it on for a title that waits on events it built itself.
++ *
++ * RECOMP_TITLE_KEVENTS_SKIP=<va>[,<va>...] (hex) leaves out single events
++ * whose setter the runtime does not model yet, e.g. a D3D event the GPU
++ * interrupt sets: those keep the old fail-at-once path. */
++#define KE_GUEST_EVENT_SKIP_MAX 16
++
+ static HANDLE ke_guest_event(uint32_t guest_va, int *type)
+ {
+     static int enabled = -1;
++    static uint32_t skip[KE_GUEST_EVENT_SKIP_MAX];
++    static uint32_t skip_count;
+     uint32_t hdr, i;
+     HANDLE h = NULL;
+ 
+     if (enabled < 0) {
+         const char *e = getenv("RECOMP_TITLE_KEVENTS");
++        const char *s = getenv("RECOMP_TITLE_KEVENTS_SKIP");
++        while (s && *s && skip_count < KE_GUEST_EVENT_SKIP_MAX) {
++            char *end;
++            unsigned long va = strtoul(s, &end, 16);
++            if (end == s)
++                break;
++            skip[skip_count++] = (uint32_t)va;
++            s = end;
++            while (*s == ',' || *s == ' ')
++                s++;
++        }
+         enabled = e && *e == '1';
+     }
+     if (!enabled)
+         return NULL;
+     if (guest_va < 0x10000u || (guest_va & 3u))
+         return NULL;
++    for (i = 0; i < skip_count; i++)
++        if (skip[i] == guest_va)
++            return NULL;
+     if (guest_va >= 0x04000000u && (guest_va < 0x80000000u || guest_va >= 0x84000000u))
+         return NULL;                               /* RAM or the contiguous window */
+     hdr = BRIDGE_MEM32(guest_va);
+-- 
+2.53.0.windows.2
+

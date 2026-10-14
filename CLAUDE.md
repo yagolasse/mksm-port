@@ -20,6 +20,7 @@ statically recompiling the retail `default.xbe` to C with
 - `src/recomp/gen/`: generated C (not in git)
 - `external/xboxrecomp/`: toolkit git submodule (pinned). Prefer fixing things in our `src/` first;
   toolkit changes should go upstream or into a fork
+- `tools/run.sh`, `tools/run.bat`: run the exe with the needed env defaults, log to `../logs/`
 - `tools/xiso.py`: list/extract files from an Xbox disc image
 - `tools/padding_seeds.py`: finds undetected functions after int3 padding (writes `seeds/padding.json`)
 - `seeds/`: extra function entry points for `tools.disasm --seed-functions` (see Pipeline)
@@ -57,20 +58,23 @@ Use `--parallel N`, not `-- /m`: Git Bash rewrites `/m` into a path (`M:/`) and 
 ## Run
 The exe takes the extracted game folder (holding `default.xbe`) from its first argument, else
 `MKSM_GAME_DIR`, else `game\` in the working directory (`resolve_game_dir` in `src/main.c`).
-It's a GUI-subsystem exe, so stdout only appears when redirected. Use the run script, which
-defaults to `../game_files` and tees output to `../logs/run_<timestamp>.log`:
+It's a GUI-subsystem exe, so stdout only appears when redirected. Use a run script, which
+defaults to `../game_files` and logs to `../logs/run_<timestamp>.log`:
 ```bash
 tools/run.sh                                  # MKSM_GAME_DIR / MKSM_EXE / MKSM_LOG override
 RECOMP_WATCHDOG_SECS=10 timeout 60 tools/run.sh
 ```
+`tools/run.bat` is the cmd twin (same defaults and overrides). It writes the log without a live
+console view and prints the last 40 lines on exit; in cmd, turn `RECOMP_AC97_READY` off with `0`
+(empty means unset there). Keep the two scripts' defaults in sync.
 The failure path for a missing XBE shows a MessageBox, which blocks an unattended run.
 
 ## Debugging
 Expect crashes during bring-up. The VEH handler in `main.c` prints the faulting guest function, the
 guest stack, and recent ICALL targets. Fix by adding overrides in `recomp_manual.c` or runtime
 support. Useful env vars from the toolkit: `RECOMP_WATCHDOG_SECS`, `RECOMP_AC97_READY`.
-`RECOMP_PB_EXEC=1` (set by `tools/run.sh`) is required: D3D init waits on GPU semaphore releases,
+`RECOMP_PB_EXEC=1` (set by the run scripts) is required: D3D init waits on GPU semaphore releases,
 which only the pushbuffer executor performs.
-`tools/run.sh` also sets `RECOMP_AC97_READY=1` (emulated APU, so `DirectSoundCreate` succeeds) and
+The run scripts also set `RECOMP_AC97_READY=1` (emulated APU, so `DirectSoundCreate` succeeds) and
 `RECOMP_APU_DSP_ACK=<addr>` (acks the GP DSP command doorbell that DirectSound init waits on). The
 doorbell address comes from an allocation; if audio init hangs, read `ebx` from a watchdog dump.

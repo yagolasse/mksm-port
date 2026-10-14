@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Run the recompiled exe against an extracted game folder and capture its output.
+# tools/run.bat is the Windows (cmd) twin: keep the defaults of the two scripts in sync.
 #
 # The exe is a GUI-subsystem program, so its printf/stderr output only goes
 # somewhere when redirected; this script pipes both into a log file.

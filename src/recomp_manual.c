@@ -84,17 +84,42 @@ extern ptrdiff_t g_xbox_mem_offset;
  *       g_eax = result;
  *   }
  */
+recomp_func_t recomp_lookup(uint32_t xbox_va);
+
+/*
+ * Incremental-link thunk table at the start of .text: one 5-byte
+ * `jmp rel32` per function. Function pointers stored in data (vtables,
+ * callbacks) point at these thunks, but the lifter only registers the
+ * thunks it saw called directly, so an indirect call to any other one
+ * fails to resolve and is skipped. Follow the jump instead.
+ */
+#define ILT_LO 0x00011005u
+#define ILT_HI 0x00016CDAu
+
+static recomp_func_t resolve_ilt_thunk(uint32_t xbox_va)
+{
+    const uint8_t *p = (const uint8_t *)((uintptr_t)xbox_va + g_xbox_mem_offset);
+    int32_t rel;
+
+    if (p[0] != 0xE9)
+        return (recomp_func_t)0;
+    rel = (int32_t)((uint32_t)p[1] | (uint32_t)p[2] << 8 |
+                    (uint32_t)p[3] << 16 | (uint32_t)p[4] << 24);
+    return recomp_lookup(xbox_va + 5 + (uint32_t)rel);
+}
+
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
 {
     /*
-     * TODO: Add your overrides here. Examples:
+     * Examples:
      *
      * if (xbox_va == 0x00012345) return traced_sub_00012345;
      * if (xbox_va == 0x00067890) return stub_00067890;
      * if (xbox_va == 0x000ABCDE) return fixed_sub_000ABCDE;
      */
 
-    (void)xbox_va;
+    if (xbox_va - ILT_LO < ILT_HI - ILT_LO)
+        return resolve_ilt_thunk(xbox_va);
     return (recomp_func_t)0;
 }
 

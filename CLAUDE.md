@@ -23,6 +23,7 @@ statically recompiling the retail `default.xbe` to C with
 - `tools/run.sh`, `tools/run.bat`: run the exe with the needed env defaults, log to `../logs/`
 - `tools/xiso.py`: list/extract files from an Xbox disc image
 - `tools/padding_seeds.py`: finds undetected functions after int3 padding (writes `seeds/padding.json`)
+- `tools/stub_audit.py`: sorts `gen/recomp_stubs_unresolved.c` into real code vs. decoded data (writes `seeds/stubs.json`)
 - `seeds/`: extra function entry points for `tools.disasm --seed-functions` (see Pipeline)
 - `patches/`: our toolkit changes not yet upstream; apply them in `external/xboxrecomp` after cloning
   (`git am ../../patches/*.patch`)
@@ -31,7 +32,8 @@ statically recompiling the retail `default.xbe` to C with
 ```bash
 python -m tools.xbe_parser ../../../game_files/default.xbe --json ../../../game_files/default_analysis.json
 python -m tools.disasm ../../../game_files/default.xbe -v --seed-functions ../../seeds/observed.json \
-    --seed-functions ../../seeds/padding.json --seed-functions ../../seeds/manual.json  # all code sections
+    --seed-functions ../../seeds/padding.json --seed-functions ../../seeds/manual.json \
+    --seed-functions ../../seeds/stubs.json  # all code sections
 python -m tools.func_id ../../../game_files/default.xbe -v
 python -m tools.abi_analysis ../../../game_files/default.xbe -v
 bash ../../tools/ghidra/run_ghidra.sh   # our wrapper (Java export; Ghidra 12 has no Jython), ~20+ min
@@ -49,7 +51,11 @@ python -m tools.recomp ../../../game_files/default.xbe --all --split 250 --gen-d
   (functions after int3 padding that nothing calls; regenerate only from an unseeded disasm).
   `manual.json`: hand-found entries, each with a note saying why (e.g. a jump target after zero
   padding). A call or jump to an undetected address lifts to a silent no-op stub in
-  `gen/recomp_stubs_unresolved.c` (`/* not detected */`), so check there when something never runs.
+  `gen/recomp_stubs_unresolved.c` (`/* not detected */`); a `jmp`/`jcc` to one makes the jumping
+  function return early. After each lift run `tools/stub_audit.py`: its `entry`/`split` rows are
+  real code and go to `stubs.json`. `--seeds` overwrites the file with the current rows only, so
+  once a lift has used `stubs.json`, write to a temp file and merge the new rows in. The other
+  classes are only referenced from decoded data (jump tables, strings) or dead code.
 
 ## Build
 VS 2022 + CMake, x64 (the default; don't force `-A Win32`).

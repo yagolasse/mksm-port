@@ -1,0 +1,338 @@
+[
+  {
+    "start": "0x00050442",
+    "note": "stub_audit: split (in 0x00050040+0x402), referenced from sub_00050505, sub_00050515"
+  },
+  {
+    "start": "0x00050479",
+    "note": "stub_audit: split (in 0x00050040+0x439), referenced from sub_00050505, sub_00050515"
+  },
+  {
+    "start": "0x00052F60",
+    "note": "stub_audit: entry (after int3), referenced from sub_00012F31"
+  },
+  {
+    "start": "0x0008D400",
+    "note": "stub_audit: entry (after int3), referenced from sub_00015321"
+  },
+  {
+    "start": "0x0008EBD0",
+    "note": "stub_audit: entry (after int3), referenced from sub_00012E6E"
+  },
+  {
+    "start": "0x0009FFE0",
+    "note": "stub_audit: entry (after int3), referenced from sub_00012455"
+  },
+  {
+    "start": "0x000A1FB0",
+    "note": "stub_audit: split (in 0x000A1FA0+0x10), referenced from sub_000A2078"
+  },
+  {
+    "start": "0x000A2170",
+    "note": "stub_audit: split (in 0x000A2161+0xF), referenced from sub_000A2172"
+  },
+  {
+    "start": "0x000A26B0",
+    "note": "stub_audit: entry (after int3), referenced from sub_000139A4"
+  },
+  {
+    "start": "0x000A39DE",
+    "note": "stub_audit: split (in 0x000A3935+0xA9), referenced from sub_000A3A29"
+  },
+  {
+    "start": "0x000EBA31",
+    "note": "stub_audit: split (in 0x000EBA0E+0x23), referenced from sub_000EBA61"
+  },
+  {
+    "start": "0x000EC5A4",
+    "note": "stub_audit: split (in 0x000EC57C+0x28), referenced from sub_000EC5F8"
+  },
+  {
+    "start": "0x000EC892",
+    "note": "stub_audit: split (in 0x000EC88F+0x3), referenced from sub_000EC858"
+  },
+  {
+    "start": "0x000EDE87",
+    "note": "stub_audit: split (in 0x000EDE61+0x26), referenced from sub_000EDE94"
+  },
+  {
+    "start": "0x000EE502",
+    "note": "stub_audit: entry (after ret), referenced from sub_000EE3B8"
+  },
+  {
+    "start": "0x000EE510",
+    "note": "stub_audit: split (in a gap), referenced from sub_000EE3B8"
+  },
+  {
+    "start": "0x000EF6A2",
+    "note": "stub_audit: split (in 0x000EF6A0+0x2), referenced from sub_002AB2B4"
+  },
+  {
+    "start": "0x000EF75C",
+    "note": "stub_audit: split (in 0x000EF755+0x7), referenced from sub_000EF742"
+  },
+  {
+    "start": "0x000EF7FE",
+    "note": "stub_audit: split (in 0x000EF7D8+0x26), referenced from sub_000EFE16, sub_000EFE1A, sub_000F007D"
+  },
+  {
+    "start": "0x000EF801",
+    "note": "stub_audit: split (in 0x000EF7D8+0x29), referenced from sub_000EFE16, sub_000EFE1A, sub_000F007D"
+  },
+  {
+    "start": "0x000EFC99",
+    "note": "stub_audit: split (in 0x000EF7D8+0x4C1), referenced from sub_000EFE16, sub_000EFE1A"
+  },
+  {
+    "start": "0x000F0048",
+    "note": "stub_audit: split (in 0x000EFE1A+0x22E), referenced from sub_000F007D"
+  },
+  {
+    "start": "0x000F05D5",
+    "note": "stub_audit: split (in 0x000F05C1+0x14), referenced from sub_000F05AD"
+  },
+  {
+    "start": "0x000F361E",
+    "note": "stub_audit: entry (after ret), referenced from sub_000F357E"
+  },
+  {
+    "start": "0x000F3636",
+    "note": "stub_audit: split (in a gap), referenced from sub_000F357E"
+  },
+  {
+    "start": "0x000F83B3",
+    "note": "stub_audit: split (in 0x000F8366+0x4D), referenced from sub_000F83BF"
+  },
+  {
+    "start": "0x000F841C",
+    "note": "stub_audit: split (in 0x000F83CB+0x51), referenced from sub_000F8428"
+  },
+  {
+    "start": "0x000F8487",
+    "note": "stub_audit: split (in 0x000F8442+0x45), referenced from sub_000F8493"
+  },
+  {
+    "start": "0x000F84DE",
+    "note": "stub_audit: split (in 0x000F849F+0x3F), referenced from sub_000F84EA"
+  },
+  {
+    "start": "0x000FB151",
+    "note": "stub_audit: split (in 0x000FAF52+0x1FF), referenced from sub_000FB159, sub_000FB15D"
+  },
+  {
+    "start": "0x001018EE",
+    "note": "stub_audit: split (in a gap), referenced from sub_000F4F22"
+  },
+  {
+    "start": "0x001B8740",
+    "note": "stub_audit: split (in 0x001B86E0+0x60), referenced from sub_001B8768"
+  },
+  {
+    "start": "0x00200E30",
+    "note": "stub_audit: split (in 0x00200E10+0x20), referenced from sub_002010A2"
+  },
+  {
+    "start": "0x00202000",
+    "note": "stub_audit: split (in 0x00201FA0+0x60), referenced from sub_00202020"
+  },
+  {
+    "start": "0x00203A10",
+    "note": "stub_audit: split (in 0x00203A08+0x8), referenced from sub_00203A29"
+  },
+  {
+    "start": "0x00203A63",
+    "note": "stub_audit: split (in 0x00203A29+0x3A), referenced from sub_00203A6C"
+  },
+  {
+    "start": "0x00206862",
+    "note": "stub_audit: split (in 0x002067F0+0x72), referenced from sub_00206867"
+  },
+  {
+    "start": "0x00206D44",
+    "note": "stub_audit: split (in 0x00206D10+0x34), referenced from sub_00206E65"
+  },
+  {
+    "start": "0x0021C0D5",
+    "note": "stub_audit: split (in 0x0021C0C0+0x15), referenced from sub_0021C184"
+  },
+  {
+    "start": "0x0021C100",
+    "note": "stub_audit: split (in 0x0021C0C0+0x40), referenced from sub_0021C184"
+  },
+  {
+    "start": "0x0022CFB4",
+    "note": "stub_audit: split (in 0x0022CC40+0x374), referenced from sub_0022D380"
+  },
+  {
+    "start": "0x0022D027",
+    "note": "stub_audit: split (in 0x0022CC40+0x3E7), referenced from sub_0022D380"
+  },
+  {
+    "start": "0x0022D04C",
+    "note": "stub_audit: split (in 0x0022CC40+0x40C), referenced from sub_0022D380"
+  },
+  {
+    "start": "0x0022D230",
+    "note": "stub_audit: split (in 0x0022CC40+0x5F0), referenced from sub_0022D380"
+  },
+  {
+    "start": "0x00254310",
+    "note": "stub_audit: split (in 0x00253AF0+0x820), referenced from sub_0025441B"
+  },
+  {
+    "start": "0x00282BD2",
+    "note": "stub_audit: split (in 0x00282B80+0x52), referenced from sub_00282D02"
+  },
+  {
+    "start": "0x00296BF9",
+    "note": "stub_audit: split (in 0x00296B00+0xF9), referenced from sub_00296C6C"
+  },
+  {
+    "start": "0x002ABF83",
+    "note": "stub_audit: entry (after ret), referenced from sub_002ABF00"
+  },
+  {
+    "start": "0x002ABF91",
+    "note": "stub_audit: split (in a gap), referenced from sub_002ABF00"
+  },
+  {
+    "start": "0x002AC086",
+    "note": "stub_audit: entry (after ret), referenced from sub_002AC003"
+  },
+  {
+    "start": "0x002AC094",
+    "note": "stub_audit: split (in a gap), referenced from sub_002AC003"
+  },
+  {
+    "start": "0x002CA78A",
+    "note": "stub_audit: split (in 0x002CA71B+0x6F), referenced from sub_002CA6C0"
+  },
+  {
+    "start": "0x002E6424",
+    "note": "stub_audit: split (in 0x002E6330+0xF4), referenced from sub_002E6425"
+  },
+  {
+    "start": "0x002E6570",
+    "note": "stub_audit: split (in 0x002E6540+0x30), referenced from sub_002E657A"
+  },
+  {
+    "start": "0x002FFFFB",
+    "note": "stub_audit: split (in 0x002FFF50+0xAB), referenced from sub_00300081"
+  },
+  {
+    "start": "0x00300025",
+    "note": "stub_audit: split (in 0x002FFF50+0xD5), referenced from sub_00300081"
+  },
+  {
+    "start": "0x00301E40",
+    "note": "stub_audit: split (in 0x00301D90+0xB0), referenced from sub_0030203D, sub_0030203E"
+  },
+  {
+    "start": "0x003035D2",
+    "note": "stub_audit: split (in 0x00303550+0x82), referenced from sub_00303731, sub_00303831"
+  },
+  {
+    "start": "0x003035D7",
+    "note": "stub_audit: split (in 0x00303550+0x87), referenced from sub_00303731, sub_00303831"
+  },
+  {
+    "start": "0x0030E491",
+    "note": "stub_audit: split (in 0x0030E2B0+0x1E1), referenced from sub_00310021, sub_0031003D"
+  },
+  {
+    "start": "0x0030E4E0",
+    "note": "stub_audit: split (in 0x0030E2B0+0x230), referenced from sub_00310021, sub_0031003D"
+  },
+  {
+    "start": "0x0030E5B3",
+    "note": "stub_audit: split (in 0x0030E2B0+0x303), referenced from sub_00310021, sub_0031003D"
+  },
+  {
+    "start": "0x00312C60",
+    "note": "stub_audit: split (in 0x00312190+0xAD0), referenced from sub_00312D20"
+  },
+  {
+    "start": "0x00312C6A",
+    "note": "stub_audit: split (in 0x00312190+0xADA), referenced from sub_00312D20"
+  },
+  {
+    "start": "0x00312FD4",
+    "note": "stub_audit: split (in 0x00312E60+0x174), referenced from sub_00313020, sub_00313031, sub_0031306D, sub_00313074, sub_00313077, sub_00313120, sub_00313131"
+  },
+  {
+    "start": "0x00312FDE",
+    "note": "stub_audit: split (in 0x00312E60+0x17E), referenced from sub_00313020, sub_00313031, sub_0031306D, sub_00313074, sub_00313077, sub_00313120, sub_00313131"
+  },
+  {
+    "start": "0x00313296",
+    "note": "stub_audit: split (in 0x00313131+0x165), referenced from sub_00313632, sub_00313732, sub_00313832"
+  },
+  {
+    "start": "0x0031361A",
+    "note": "stub_audit: split (in 0x00313131+0x4E9), referenced from sub_00313632"
+  },
+  {
+    "start": "0x003136B0",
+    "note": "stub_audit: split (in 0x00313632+0x7E), referenced from sub_00313732, sub_00313832"
+  },
+  {
+    "start": "0x003136BA",
+    "note": "stub_audit: split (in 0x00313632+0x88), referenced from sub_00313732, sub_00313832"
+  },
+  {
+    "start": "0x00314BA3",
+    "note": "stub_audit: split (in 0x00314AF0+0xB3), referenced from sub_00314D41"
+  },
+  {
+    "start": "0x00316220",
+    "note": "stub_audit: split (in 0x00316200+0x20), referenced from sub_0031625F"
+  },
+  {
+    "start": "0x003177E3",
+    "note": "stub_audit: split (in 0x00317500+0x2E3), referenced from sub_0031795F"
+  },
+  {
+    "start": "0x00317880",
+    "note": "stub_audit: split (in 0x00317500+0x380), referenced from sub_0031795F"
+  },
+  {
+    "start": "0x003D08E4",
+    "note": "stub_audit: split (in 0x003D0830+0xB4), referenced from sub_003D0900"
+  },
+  {
+    "start": "0x0040075A",
+    "note": "stub_audit: entry (after ret), referenced from sub_003FAAE9"
+  },
+  {
+    "start": "0x0040968D",
+    "note": "stub_audit: split (in 0x00409683+0xA), referenced from sub_002AD011"
+  },
+  {
+    "start": "0x004431E6",
+    "note": "stub_audit: split (in 0x00443159+0x8D), referenced from sub_00443265"
+  },
+  {
+    "start": "0x00444931",
+    "note": "stub_audit: split (in 0x004448E1+0x50), referenced from sub_0044495F, sub_0044496B"
+  },
+  {
+    "start": "0x00444E21",
+    "note": "stub_audit: split (in 0x00444DBA+0x67), referenced from sub_00444E45, sub_00444E53"
+  },
+  {
+    "start": "0x0045FE01",
+    "note": "stub_audit: split (in 0x0045FDC7+0x3A), referenced from sub_00460000"
+  },
+  {
+    "start": "0x0045FE5F",
+    "note": "stub_audit: split (in 0x0045FDC7+0x98), referenced from sub_00460000"
+  },
+  {
+    "start": "0x0045FE66",
+    "note": "stub_audit: split (in 0x0045FDC7+0x9F), referenced from sub_00460000"
+  },
+  {
+    "start": "0x0045FE6D",
+    "note": "stub_audit: entry (after ret), referenced from sub_00460000"
+  }
+]

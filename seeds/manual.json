@@ -1,5 +1,677 @@
 [
   {
+    "start": "0x002E6406",
+    "note": "switch target: two-level table (byte index 0x002E6460 -> jump table 0x002E6450) at 0x002E63F8, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x002E642C",
+    "note": "switch target: two-level table (byte index 0x002E6460 -> jump table 0x002E6450) at 0x002E63F8, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030E528",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030E5D0",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030E681",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030E702",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030E790",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030E81C",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030E890",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030E913",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030E985",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030EA08",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030EA7A",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030EAD5",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030EB31",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030EB91",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030EBEF",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030EC4F",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030ECAD",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030ED0B",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030ED67",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030EDB6",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030EE44",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030EED0",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030EF2C",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030EFB8",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F042",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F09C",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F0FA",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F156",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F1B4",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F210",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F26C",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F2C6",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F324",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F380",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F3DE",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F43A",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F496",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F4F0",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F532",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F592",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F5F0",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F652",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F6B2",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F714",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F774",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F7D4",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F832",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F883",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F8E1",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F93D",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F99D",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030F9FB",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FA5B",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FAB9",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FB17",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FB73",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FBB7",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FC17",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FC75",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FCD7",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FD37",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FD88",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FDE6",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FE42",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FEA2",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FF00",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FF44",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FFA2",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0030FFFE",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031005E",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003100BC",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003100E8",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310144",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031019E",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003101FC",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310258",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310282",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003102E2",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310340",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031036E",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003103CC",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310428",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310454",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003104B4",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310512",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310540",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031059E",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003105FA",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310626",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310684",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003106E0",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031070C",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310768",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003107C2",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003107EC",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031081A",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310846",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310872",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031089C",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003108CA",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003108F6",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310924",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310950",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031097E",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003109AA",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003109D8",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310A04",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310A30",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310A5A",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310A88",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310AB4",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310AE2",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310B0E",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310B3C",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310B68",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310B96",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310BC2",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310BF0",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310C1C",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310C4A",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310C76",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310CA2",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310CCC",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310CFA",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310D26",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310D54",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310D80",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310E76",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310EAA",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310EC3",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310EDC",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310F86",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00310FFC",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00311055",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00311098",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031110E",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00311167",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003111C3",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031123C",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00311280",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003112DC",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00311336",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031134A",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003113AA",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00311408",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031144B",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003114A9",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00311521",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00311565",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003115A8",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003115CE",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003115F6",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031163A",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00311665",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031168E",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003116B6",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003116DC",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00311704",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031176E",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00311799",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003117C2",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x003117ED",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00311816",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031183E",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x00311864",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x0031188C",
+    "note": "switch target: two-level table (byte index 0x00311BA8 -> jump table 0x00311910) at 0x0030E51A, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
     "start": "0x0048C258",
     "note": "XPP: XInitDevices body, the target of the public stub's jmp. Zero (not int3) padding before it, so neither the detector nor padding_seeds.py finds it; without it the stub tail-jumps into a no-op and USB never starts."
   }

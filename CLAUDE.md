@@ -56,6 +56,14 @@ python -m tools.recomp ../../../game_files/default.xbe --all --split 250 --gen-d
   real code and go to `stubs.json`. `--seeds` overwrites the file with the current rows only, so
   once a lift has used `stubs.json`, write to a temp file and merge the new rows in. The other
   classes are only referenced from decoded data (jump tables, strings) or dead code.
+  Each seeded alias can jump back into its parent and create new `split` rows, so repeat
+  lift → audit → merge until the audit has no `entry`/`split` rows (1.12c took 5 + 2 rounds).
+- Switches the lifter doesn't decode (a byte index table feeding a jump table) lift as
+  `RECOMP_ITAIL(MEM32(reg * 4 + table))`; every table target must be a function or alias, or the
+  call fails at runtime with `Failed to resolve VA`. Those targets are in `manual.json`. To find
+  more: `grep -hoE "RECOMP_ITAIL\(MEM32\([a-z]+ \* 4 \+ 0x[0-9A-F]+\)\)" src/recomp/gen/*.c`.
+- `tools.disasm` sometimes dies in capstone during the linear sweep (heap corruption 0xC0000374,
+  shows as exit 139 in Git Bash). It's not deterministic; just run it again.
 
 ## Build
 VS 2022 + CMake, x64 (the default; don't force `-A Win32`).

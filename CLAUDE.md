@@ -21,13 +21,16 @@ statically recompiling the retail `default.xbe` to C with
 - `external/xboxrecomp/`: toolkit git submodule (pinned). Prefer fixing things in our `src/` first;
   toolkit changes should go upstream or into a fork
 - `tools/xiso.py`: list/extract files from an Xbox disc image
+- `tools/padding_seeds.py`: finds undetected functions after int3 padding (writes `seeds/padding.json`)
+- `seeds/`: extra function entry points for `tools.disasm --seed-functions` (see Pipeline)
 - `patches/`: our toolkit changes not yet upstream; apply them in `external/xboxrecomp` after cloning
   (`git am ../../patches/*.patch`)
 
 ## Pipeline (run from `external/xboxrecomp`, game data in `../../../game_files`)
 ```bash
 python -m tools.xbe_parser ../../../game_files/default.xbe --json ../../../game_files/default_analysis.json
-python -m tools.disasm ../../../game_files/default.xbe -v          # all code sections, NOT --text-only
+python -m tools.disasm ../../../game_files/default.xbe -v --seed-functions ../../seeds/observed.json \
+    --seed-functions ../../seeds/padding.json                       # all code sections, NOT --text-only
 python -m tools.func_id ../../../game_files/default.xbe -v
 python -m tools.abi_analysis ../../../game_files/default.xbe -v
 bash ../../tools/ghidra/run_ghidra.sh   # our wrapper (Java export; Ghidra 12 has no Jython), ~20+ min
@@ -37,6 +40,12 @@ python -m tools.recomp ../../../game_files/default.xbe --all --split 250 --gen-d
 - Use all code sections. The game calls directly into its statically linked D3D/DSOUND/D3DX/WMADEC/XPP/
   PSFD00 (Sofdec)/DOLBY sections.
 - Tool outputs land in `external/xboxrecomp/tools/*/output/` (gitignored there).
+- `seeds/`: function entries the detector misses (only addresses, no code).
+  `observed.json` comes from runs: after a crash with `[ICALL] Failed to resolve VA`, run
+  `python -m tools.seed_from_log <run.log> ../../../game_files/default.xbe --functions tools/disasm/output/functions.json --seeds ../../seeds/observed.json`,
+  drop entries in the incremental-link thunk range `0x00011005..0x00016CDA` (handled at runtime),
+  then re-run disasm and everything after it. `padding.json` is from `tools/padding_seeds.py`
+  (functions after int3 padding that nothing calls; regenerate only from an unseeded disasm).
 
 ## Build
 VS 2022 + CMake, x64 (the default; don't force `-A Win32`).

@@ -10,6 +10,8 @@
 #      MKSM_EXE      (default build/Release/mksm_recomp.exe)
 #      MKSM_LOG      (default ../logs/run_<timestamp>.log)
 #      Toolkit vars such as RECOMP_WATCHDOG_SECS / RECOMP_AC97_READY pass through.
+#      RECOMP_PB_EXEC defaults to 1: boot needs the pushbuffer executor, since
+#      D3D init waits for the GPU to report progress.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,6 +29,8 @@ if [ ! -f "$EXE" ]; then
     echo "exe not found: $EXE (build first, or set MKSM_EXE)" >&2
     exit 1
 fi
+
+export RECOMP_PB_EXEC="${RECOMP_PB_EXEC-1}"
 
 mkdir -p "$(dirname "$LOG")"
 LOG="$(cd "$(dirname "$LOG")" && pwd)/$(basename "$LOG")"

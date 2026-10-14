@@ -21,6 +21,8 @@ statically recompiling the retail `default.xbe` to C with
 - `external/xboxrecomp/`: toolkit git submodule (pinned). Prefer fixing things in our `src/` first;
   toolkit changes should go upstream or into a fork
 - `tools/xiso.py`: list/extract files from an Xbox disc image
+- `patches/`: our toolkit changes not yet upstream; apply them in `external/xboxrecomp` after cloning
+  (`git am ../../patches/*.patch`)
 
 ## Pipeline (run from `external/xboxrecomp`, game data in `../../../game_files`)
 ```bash
@@ -58,3 +60,5 @@ The failure path for a missing XBE shows a MessageBox, which blocks an unattende
 Expect crashes during bring-up. The VEH handler in `main.c` prints the faulting guest function, the
 guest stack, and recent ICALL targets. Fix by adding overrides in `recomp_manual.c` or runtime
 support. Useful env vars from the toolkit: `RECOMP_WATCHDOG_SECS`, `RECOMP_AC97_READY`.
+`RECOMP_PB_EXEC=1` (set by `tools/run.sh`) is required: D3D init waits on GPU semaphore releases,
+which only the pushbuffer executor performs.

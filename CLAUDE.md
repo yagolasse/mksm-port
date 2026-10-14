@@ -25,6 +25,7 @@ statically recompiling the retail `default.xbe` to C with
 - `tools/xiso.py`: list/extract files from an Xbox disc image
 - `tools/padding_seeds.py`: finds undetected functions after int3 padding (writes `seeds/padding.json`)
 - `tools/stub_audit.py`: sorts `gen/recomp_stubs_unresolved.c` into real code vs. decoded data (writes `seeds/stubs.json`)
+- `tests/`: unit tests for `tools/*.py` on synthetic inputs (no game data), see Testing
 - `seeds/`: extra function entry points for `tools.disasm --seed-functions` (see Pipeline)
 - `patches/`: our toolkit changes not yet upstream; apply them in `external/xboxrecomp` after cloning
   (`git am ../../patches/*.patch`)
@@ -88,6 +89,12 @@ console view and prints the last 40 lines on exit; in cmd, turn `RECOMP_AC97_REA
 The failure path for a missing XBE shows a MessageBox, which blocks an unattended run.
 
 ## Testing
+Unit tests for the Python tools (stdlib `unittest`, pytest also runs them; `stub_audit` needs
+capstone and is skipped without it). They build tiny synthetic WADs/ISOs/sections in a temp dir,
+so they need no game data. Run them after changing a tool:
+```bash
+python -m unittest discover -s tests  # or: ctest --test-dir build -C Release -R tools
+```
 Run the smoke test after every re-lift or rebuild (a re-lift can break a path that used to work):
 ```bash
 python tools/smoke_test.py            # or: ctest --test-dir build -C Release --output-on-failure

@@ -112,10 +112,11 @@ endif()
 
 # ── Tests ───────────────────────────────────────────────────────
 #
-# Boot smoke test: runs the exe headless against the extracted game folder and
-# checks the log (tools/smoke_test.py). Needs game data, which is never in the
-# repo: without default.xbe in MKSM_GAME_DIR the test is skipped.
-#   ctest --test-dir build -C Release --output-on-failure
+# tools: unit tests for the Python tools (tests/), no game data needed.
+# smoke: boot smoke test, runs the exe headless against the extracted game
+# folder and checks the log (tools/smoke_test.py). Needs game data, which is
+# never in the repo: without default.xbe in MKSM_GAME_DIR it is skipped.
+#   ctest --test-dir build -C Release --output-on-failure [-R tools|smoke]
 enable_testing()
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
@@ -125,6 +126,10 @@ if(Python3_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/smoke_test.py
             --game-dir ${MKSM_GAME_DIR} --exe $<TARGET_FILE:${PROJECT_NAME}>)
     set_tests_properties(smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+    # Unit tests for tools/*.py on synthetic inputs (no game data, ~1 s).
+    add_test(NAME tools
+        COMMAND ${Python3_EXECUTABLE} -m unittest discover -s tests
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 # ── Game-specific additions ─────────────────────────────────────

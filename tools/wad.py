@@ -45,6 +45,8 @@ class Wad:
 
         head = self._read(0, 0x20)
         if head[:4] != b"PWF ":
+            for f in self.files:
+                f.close()
             raise ValueError(f"bad magic {head[:4]!r}")
         self.header = struct.unpack("<8I", head)
         version, count = self.header[2], self.header[3]

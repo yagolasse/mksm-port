@@ -24,6 +24,7 @@ class XIso:
                 self.base = base
                 break
         else:
+            self.f.close()
             raise ValueError("no XDVDFS volume descriptor found")
         self.root_sector, self.root_size = struct.unpack("<II", self.f.read(8))
 

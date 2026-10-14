@@ -7,9 +7,10 @@ here), then checks the log for markers of how far the game got:
 
   boot  no input, ~90 s: no crash, no unresolved/wild indirect calls, enough
         draws, both intro movies (MIDWAY.SFD, OPENING.SFD) opened
-  pad   scripted pad (Start x5, then A): the save meta is read, the character
-        pick opens GAMEDATA.WAH, the draw count reaches Select Difficulty, and
-        accepting it (step 9) opens OPENING.SFD (the story intro)
+  pad   scripted pad (Start x5, then A, then Start): the save meta is read,
+        the character pick opens GAMEDATA.WAH, the draw count reaches Select
+        Difficulty, accepting it (step 9) opens OPENING.SFD (the story intro),
+        and skipping that movie starts the level load (WADCRC.BIN)
 
 Run it after every re-lift or rebuild: a re-lift can break a path that used to
 work. When the game gets further, add a checkpoint here.
@@ -55,6 +56,11 @@ PAD_SCRIPT = ",".join(
     + [f"{t}:a" for t in (26000, 30000, 34000, 38000, 42000, 48000, 54000)]
 )
 
+# 1.15d: A at 54 s or Start at 57 s skips OPENING.SFD and the level load
+# starts. From then on the game renders at ~5 fps and polls the pad only every
+# ~10 s, so later steps are missed; nothing past this one is scripted.
+PAD_SKIP_MOVIE = "57000:start"
+
 # Wild indirect calls that are known and harmless: reported, not failed.
 # 0x00000140: seen once in a 90 s run after 1.12c, not reproducible (PLAN 1.12c).
 KNOWN_WILD = {0x00000140}
@@ -81,9 +87,11 @@ CHECKPOINTS = [
     # just before Select Difficulty, so it is the sturdier marker.
     # 1.15b: accepting Select Difficulty (step 9) opens OPENING.SFD. Before the
     # timer thread worked (boot-log #5) nothing opened after the accept.
-    Checkpoint("pad", 65, {"RECOMP_PAD_SCRIPT": PAD_SCRIPT}, 25000,
+    # 1.15d: skipping the movie opens WADCRC.BIN (only then) at 55-60 s, then
+    # level data; 90 s leaves time for the slow frames after it.
+    Checkpoint("pad", 90, {"RECOMP_PAD_SCRIPT": PAD_SCRIPT + "," + PAD_SKIP_MOVIE}, 25000,
                ["MIDWAY.SFD", "SaveMeta.xbx", "GAMEDATA.WAH"], last_pad_step=9,
-               files_after_step=(9, ["OPENING.SFD"])),
+               files_after_step=(9, ["OPENING.SFD", "WADCRC.BIN"])),
 ]
 
 RE_DRAWS = re.compile(r"^\[GPU\] draws (\d+) ", re.M)

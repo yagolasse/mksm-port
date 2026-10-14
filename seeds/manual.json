@@ -674,5 +674,21 @@
   {
     "start": "0x0048C258",
     "note": "XPP: XInitDevices body, the target of the public stub's jmp. Zero (not int3) padding before it, so neither the detector nor padding_seeds.py finds it; without it the stub tail-jumps into a no-op and USB never starts."
+  },
+  {
+    "start": "0x000A6720",
+    "note": "entry after int3 padding, reached only through incremental-link thunk 0x0001379C (jmp), which the runtime follows; the detector merged/missed it, so the call failed (1.15d, after skipping OPENING.SFD)"
+  },
+  {
+    "start": "0x00090FD0",
+    "note": "entry after int3 padding, reached only through incremental-link thunk 0x00011244 (jmp), which the runtime follows; the detector merged/missed it, so the call failed (1.15d, after skipping OPENING.SFD)"
+  },
+  {
+    "start": "0x001C6EEE",
+    "note": "switch target: two-level table (byte index 0x001C6EFC -> jump table 0x001C6EF4) in 0x001C6ED0, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
+  },
+  {
+    "start": "0x001C6EF1",
+    "note": "switch target: two-level table (byte index 0x001C6EFC -> jump table 0x001C6EF4) in 0x001C6ED0, which the lifter emits as an indirect tail jmp, so each target must be a function/alias"
   }
 ]

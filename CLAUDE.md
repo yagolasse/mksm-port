@@ -99,11 +99,11 @@ Run the smoke test after every re-lift or rebuild (a re-lift can break a path th
 ```bash
 python tools/smoke_test.py            # or: ctest --test-dir build -C Release --output-on-failure
 ```
-It runs the exe headless with a watchdog per checkpoint (~3 min total), logs to
+It runs the exe headless with a watchdog per checkpoint (~3.5 min total), logs to
 `../logs/smoke_<timestamp>_<checkpoint>.log`, and checks: exit 0/3 (3 = watchdog, normal), no
 `[CRASH]`, no `Failed to resolve VA`, no `is not code` (except `KNOWN_WILD`), a minimum draw count,
-and files opened. `boot` = no input, both intro movies; `pad` = scripted Start/A to Select
-Difficulty. Draw counts depend on the frame rate, so prefer file markers when adding checkpoints.
+and files opened. `boot` = no input, both intro movies; `pad` = scripted Start/A past Select
+Difficulty and the movie skip into the level load (`WADCRC.BIN`). Draw counts depend on the frame rate, so prefer file markers when adding checkpoints.
 Add a checkpoint each time the game gets further. Game dir: `--game-dir`, else `MKSM_GAME_DIR`,
 else `../game_files`; without game data it exits 77 (CTest skip). `--only boot|pad` runs one.
 

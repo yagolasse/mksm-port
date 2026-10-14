@@ -57,8 +57,8 @@ class SmokeChecksTest(unittest.TestCase):
         step, names = PAD.files_after_step
         after = "".join("  [PATH] \\Device\\X\\%s\n" % f for f in names)
         self.assertEqual(failures(PAD, 3, text + steps + after), [])
-        # no steps: the step check and the after-step file check fail
-        self.assertEqual(len(failures(PAD, 3, text + after)), 2)
+        # no steps: the step check and each after-step file check fail
+        self.assertEqual(len(failures(PAD, 3, text + after)), 1 + len(names))
 
     def test_pad_files_after_step(self):
         step, names = PAD.files_after_step

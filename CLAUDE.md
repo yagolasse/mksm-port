@@ -31,7 +31,7 @@ statically recompiling the retail `default.xbe` to C with
 ```bash
 python -m tools.xbe_parser ../../../game_files/default.xbe --json ../../../game_files/default_analysis.json
 python -m tools.disasm ../../../game_files/default.xbe -v --seed-functions ../../seeds/observed.json \
-    --seed-functions ../../seeds/padding.json                       # all code sections, NOT --text-only
+    --seed-functions ../../seeds/padding.json --seed-functions ../../seeds/manual.json  # all code sections
 python -m tools.func_id ../../../game_files/default.xbe -v
 python -m tools.abi_analysis ../../../game_files/default.xbe -v
 bash ../../tools/ghidra/run_ghidra.sh   # our wrapper (Java export; Ghidra 12 has no Jython), ~20+ min
@@ -47,6 +47,9 @@ python -m tools.recomp ../../../game_files/default.xbe --all --split 250 --gen-d
   drop entries in the incremental-link thunk range `0x00011005..0x00016CDA` (handled at runtime),
   then re-run disasm and everything after it. `padding.json` is from `tools/padding_seeds.py`
   (functions after int3 padding that nothing calls; regenerate only from an unseeded disasm).
+  `manual.json`: hand-found entries, each with a note saying why (e.g. a jump target after zero
+  padding). A call or jump to an undetected address lifts to a silent no-op stub in
+  `gen/recomp_stubs_unresolved.c` (`/* not detected */`), so check there when something never runs.
 
 ## Build
 VS 2022 + CMake, x64 (the default; don't force `-A Win32`).
@@ -68,6 +71,16 @@ RECOMP_WATCHDOG_SECS=10 timeout 60 tools/run.sh
 console view and prints the last 40 lines on exit; in cmd, turn `RECOMP_AC97_READY` off with `0`
 (empty means unset there). Keep the two scripts' defaults in sync.
 The failure path for a missing XBE shows a MessageBox, which blocks an unattended run.
+
+## Input
+The game's statically linked XAPI drives the USB host controllers directly, so pads come from the
+toolkit's emulated OHCI (`RECOMP_USB`, wired up in `main.c`: `xbox_OhciInit` + the VEH MMIO trap).
+The run scripts default `RECOMP_USB=1` and `RECOMP_KEYBOARD=1`. Host XInput pad 1 drives Xbox pad 1.
+The keyboard is merged on top and read from the framebuffer window (`RECOMP_FB_WINDOW=1`, needs focus):
+arrows = d-pad, Enter = Start, Backspace = Back, Z/X/A/S = A/B/X/Y, Q/E = white/black,
+1/3 = triggers, numpad 8/2/4/6 = left stick, I/K/J/L = right stick, Shift/Ctrl = stick clicks.
+Headless: `RECOMP_PAD_PRESS=0x10,3000,300` (mask,period,hold ms) or `RECOMP_PAD_SCRIPT`.
+`RECOMP_USB_STATS=1` prints transfer counts every 5 s.
 
 ## Debugging
 Expect crashes during bring-up. The VEH handler in `main.c` prints the faulting guest function, the

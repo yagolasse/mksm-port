@@ -223,6 +223,14 @@ extern MCPXAPUState *g_apu_state;
 extern bool apu_hook_handle_mmio(PCONTEXT ctx, uintptr_t fault_addr,
                                  uint32_t fault_xbox_va, int is_write);
 
+/* The emulated USB host controllers (src/usb/ohci.h), where the game's
+ * statically linked XAPI finds its gamepads. Nothing in the toolkit calls
+ * these; the title brings the model up and routes its register faults here.
+ * Both do nothing unless RECOMP_USB is set. */
+extern void xbox_OhciInit(void);
+extern int  xbox_OhciOwnsAddress(uint32_t xbox_va);
+extern int  xbox_OhciHandleMmio(void *ctx, uint32_t xbox_va);
+
 /* The trapped span, matching what MemoryLayoutInit unmaps: the APU's own
  * 512 KB, not the whole MCPX aperture. AC'97 above it stays plain memory,
  * which is what the codec-ready bit needs. */
@@ -261,6 +269,12 @@ static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
                            ep->ContextRecord, fault_addr, xbox_va,
                            ep->ExceptionRecord->ExceptionInformation[0]
                                ? 1 : 0)) {
+                return EXCEPTION_CONTINUE_EXECUTION;
+            }
+
+            /* OHCI registers -> the emulated USB controllers (gamepads). */
+            if (xbox_OhciOwnsAddress(xbox_va)
+                    && xbox_OhciHandleMmio(ep->ContextRecord, xbox_va)) {
                 return EXCEPTION_CONTINUE_EXECUTION;
             }
         }
@@ -395,6 +409,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         fprintf(stderr, "[BOOT] emulated APU %s\n",
                 g_apu_state ? "up" : "FAILED to initialise");
     }
+
+    /* Bring up the USB host controllers (RECOMP_USB). Needs the guest memory
+     * mapped: it makes their register pages fault so the VEH can answer. */
+    xbox_OhciInit();
 
     /* Step 3: Initialize Xbox kernel */
     printf("Initializing Xbox kernel replacement...\n");

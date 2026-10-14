@@ -1,0 +1,6 @@
+[
+  {
+    "start": "0x0048C258",
+    "note": "XPP: XInitDevices body, the target of the public stub's jmp. Zero (not int3) padding before it, so neither the detector nor padding_seeds.py finds it; without it the stub tail-jumps into a no-op and USB never starts."
+  }
+]

@@ -16,6 +16,11 @@
 #      RECOMP_AC97_READY defaults to 1 (0 or empty turns it off): reports the
 #      AC'97 codec and brings up the emulated APU. Without it DirectSoundCreate
 #      fails and the game later spins on a NULL IDirectSound.
+#      RECOMP_USB defaults to 1 (0 or empty turns it off): the emulated USB
+#      host controllers the game's XAPI finds its gamepads on; a host XInput
+#      pad drives the first one.
+#      RECOMP_KEYBOARD defaults to 1: keyboard on top of pad 1, read from the
+#      framebuffer window (RECOMP_FB_WINDOW=1) while it has the focus.
 #      RECOMP_APU_DSP_ACK defaults to the GP DSP command doorbell DirectSound
 #      waits on during init (DSP scratch + 0x810). The address comes from a
 #      contiguous allocation; if audio init hangs again, re-check it with
@@ -46,6 +51,13 @@ if [ -z "$RECOMP_AC97_READY" ] || [ "$RECOMP_AC97_READY" = 0 ]; then
 else
     export RECOMP_AC97_READY
 fi
+RECOMP_USB="${RECOMP_USB-1}"
+if [ -z "$RECOMP_USB" ] || [ "$RECOMP_USB" = 0 ]; then
+    unset RECOMP_USB
+else
+    export RECOMP_USB
+fi
+export RECOMP_KEYBOARD="${RECOMP_KEYBOARD-1}"
 export RECOMP_APU_DSP_ACK="${RECOMP_APU_DSP_ACK-0x83550810}"
 
 mkdir -p "$(dirname "$LOG")"

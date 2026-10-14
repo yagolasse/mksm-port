@@ -19,6 +19,11 @@ rem      RECOMP_AC97_READY defaults to 1 (0 turns it off; cmd can't tell empty
 rem      from unset): reports the AC'97 codec and brings up the emulated APU.
 rem      Without it DirectSoundCreate fails and the game later spins on a NULL
 rem      IDirectSound.
+rem      RECOMP_USB defaults to 1 (0 turns it off): the emulated USB host
+rem      controllers the game's XAPI finds its gamepads on; a host XInput pad
+rem      drives the first one.
+rem      RECOMP_KEYBOARD defaults to 1: keyboard on top of pad 1, read from the
+rem      framebuffer window (RECOMP_FB_WINDOW=1) while it has the focus.
 rem      RECOMP_APU_DSP_ACK defaults to the GP DSP command doorbell DirectSound
 rem      waits on during init (DSP scratch + 0x810). The address comes from a
 rem      contiguous allocation; if audio init hangs again, re-check it with
@@ -54,6 +59,9 @@ if not defined RECOMP_PB_EXEC set "RECOMP_PB_EXEC=1"
 if not defined RECOMP_AC97_READY set "RECOMP_AC97_READY=1"
 rem The runtime only checks that the variable exists, so "off" means unset.
 if "%RECOMP_AC97_READY%"=="0" set "RECOMP_AC97_READY="
+if not defined RECOMP_USB set "RECOMP_USB=1"
+if "%RECOMP_USB%"=="0" set "RECOMP_USB="
+if not defined RECOMP_KEYBOARD set "RECOMP_KEYBOARD=1"
 if not defined RECOMP_APU_DSP_ACK set "RECOMP_APU_DSP_ACK=0x83550810"
 
 for %%I in ("%LOG%") do if not exist "%%~dpI" mkdir "%%~dpI"

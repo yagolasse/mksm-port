@@ -1,0 +1,12 @@
+# Copyrighted game data never goes in the repo
+game_files/
+*.iso
+*.xbe
+
+# Recompiled output is derived from the game binary: keep it out of the repo
+src/recomp/gen/
+build/
+
+# Python
+__pycache__/
+*.pyc

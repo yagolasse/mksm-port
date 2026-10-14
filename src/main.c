@@ -15,8 +15,7 @@
  *
  * Customize this file for your game:
  *   - Set YOUR_GAME_ENTRY_POINT to the XBE entry point address
- *   - Set YOUR_GAME_XBE_PATH to where the XBE file lives
- *   - Set YOUR_GAME_DIR to the game data directory
+ *   - The game dir comes from argv[1], MKSM_GAME_DIR, or "game" (see resolve_game_dir)
  *   - Add any CRT global pre-initialization your game needs
  *   - Customize the VEH handler for game-specific crash diagnosis
  *
@@ -78,13 +77,16 @@ extern ptrdiff_t g_xbox_mem_offset;
 
 /* ── XBE Constants ─────────────────────────────────────────── */
 
-/*
- * TODO: Set these from your xbe_parser output.
- * Run: py -3 -m tools.xbe_parser game/default.xbe
- */
 #define YOUR_GAME_ENTRY_POINT   0x000F40CA  /* XBE entry point VA */
-#define YOUR_GAME_XBE_PATH      "game\\default.xbe"
-#define YOUR_GAME_DIR            "game"
+
+/* Game directory: the extracted disc root, holding default.xbe and the
+ * data files. Taken from the first command-line argument, else the
+ * MKSM_GAME_DIR environment variable, else "game" in the working
+ * directory. Made absolute by resolve_game_dir(). */
+#define DEFAULT_GAME_DIR        "game"
+
+static char g_game_dir[MAX_PATH];
+static char g_xbe_path[MAX_PATH];
 
 /* ── Forward declarations ──────────────────────────────────── */
 
@@ -303,6 +305,30 @@ static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+/* ── Game directory ────────────────────────────────────────── */
+
+static void resolve_game_dir(void)
+{
+    const char *dir = DEFAULT_GAME_DIR;
+    const char *env = getenv("MKSM_GAME_DIR");
+    size_t len;
+
+    if (__argc > 1 && __argv[1][0])
+        dir = __argv[1];
+    else if (env && env[0])
+        dir = env;
+
+    if (!GetFullPathNameA(dir, MAX_PATH, g_game_dir, NULL))
+        snprintf(g_game_dir, MAX_PATH, "%s", dir);
+
+    /* Drop trailing separators, but keep a bare drive root like "D:\". */
+    len = strlen(g_game_dir);
+    while (len > 3 && (g_game_dir[len - 1] == '\\' || g_game_dir[len - 1] == '/'))
+        g_game_dir[--len] = '\0';
+
+    snprintf(g_xbe_path, MAX_PATH, "%s\\default.xbe", g_game_dir);
+}
+
 /* ── WinMain ───────────────────────────────────────────────── */
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
@@ -332,9 +358,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     AddVectoredExceptionHandler(1, veh_handler);
 
     /* Step 1: Load XBE */
-    if (!load_xbe(YOUR_GAME_XBE_PATH, &xbe_data, &xbe_size)) {
+    resolve_game_dir();
+    printf("Game dir: %s\n", g_game_dir);
+    if (!load_xbe(g_xbe_path, &xbe_data, &xbe_size)) {
+        fprintf(stderr, "Failed to load %s\n", g_xbe_path);
         MessageBoxA(NULL, "Failed to load default.xbe.\n"
-                    "Place the game files in the 'game' subdirectory.",
+                    "Pass the extracted game folder as the first argument,\n"
+                    "set MKSM_GAME_DIR, or put it in a 'game' subdirectory.",
                     "Recomp", MB_ICONERROR);
         return 1;
     }
@@ -373,7 +403,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* Step 4: Set game directory for file I/O path translation */
     {
         extern void xbox_path_init(const char *game_dir, const char *save_dir);
-        xbox_path_init(YOUR_GAME_DIR, NULL);
+        xbox_path_init(g_game_dir, NULL);
     }
 
     /* Step 5: Initialize kernel bridge (thunk table in Xbox memory) */

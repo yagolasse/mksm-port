@@ -43,8 +43,16 @@ cmake -S . -B build
 cmake --build build --config Release --parallel 6
 ```
 Use `--parallel N`, not `-- /m`: Git Bash rewrites `/m` into a path (`M:/`) and MSBuild fails.
-At runtime the exe reads `game\default.xbe` and game data from `game\` relative to the working
-directory (`YOUR_GAME_XBE_PATH` / `YOUR_GAME_DIR` in `src/main.c`).
+## Run
+The exe takes the extracted game folder (holding `default.xbe`) from its first argument, else
+`MKSM_GAME_DIR`, else `game\` in the working directory (`resolve_game_dir` in `src/main.c`).
+It's a GUI-subsystem exe, so stdout only appears when redirected. Use the run script, which
+defaults to `../game_files` and tees output to `../logs/run_<timestamp>.log`:
+```bash
+tools/run.sh                                  # MKSM_GAME_DIR / MKSM_EXE / MKSM_LOG override
+RECOMP_WATCHDOG_SECS=10 timeout 60 tools/run.sh
+```
+The failure path for a missing XBE shows a MessageBox, which blocks an unattended run.
 
 ## Debugging
 Expect crashes during bring-up. The VEH handler in `main.c` prints the faulting guest function, the

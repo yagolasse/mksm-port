@@ -209,7 +209,17 @@ voices per voice list, peak level at each stage (VP sum, mixbins, `frame_buf` as
 it, the block sent to XAudio2), XAudio2 submits accepted/refused (`drop` = queue full), samples
 played and `starved` (cumulative times the queue ran dry; the first submit counts once): where the
 audio stops; also `stall` (1 ms waits while DirectSound has the sample counter stopped) and sample
-data reads by store (`amb heap/win`: heap-range addresses below the contiguous high-water mark).
+data reads by store (`amb heap/win`: heap-range addresses below the contiguous high-water mark),
+FE `VOICE_ON`s, voice offs (`off=<methods>/<all>`) and SSL stream counters (`strm`, `ssl_done`,
+`strm_empty`). `RECOMP_APU_STATS=2` adds one `[APU-VOICE]` line per voice that played in that second
+(list, peak before volume, volume/bins, rate, format, buffer offsets: which voice is the music).
+Any stats level also prints `[APU-DROP]` (first 20) when a voice still marked active falls off every
+voice list, with the list before/after and the last 32 FE methods (plan 3.3c's music bug).
+`[APU-TOP]` logs the title's writes of the 2D list top with the host call stack (patch 0022, which
+also makes the ISR's FEDECMETH/FEDECPARAM read atomic: a torn read freed the music voice).
+`RECOMP_AUDIO_TICK_STATS=1` (`recomp_manual.c`) prints `[AUDIO-TICK]` calls per second of the
+game's 5 ms sound driver tick (`timeSetEvent` callback; should be ~200, needs patch 0021's
+precise kernel timers: the old 10 ms poll gave ~65).
 Output (patches 0018-0019): every ~5.33 ms the monitor sends the 256-sample block the
 VP/DSP wrote (plus the DirectSound software mixer) as one XAudio2 buffer, up to 16 queued, 4
 silent blocks prefilled after a starve; voices are resampled by their pitch (linear). Sample data

@@ -1,0 +1,573 @@
+From 2f450e2810461a5e1e26820463df4dbac43cc92d Mon Sep 17 00:00:00 2001
+From: Yago Lasse <yagolasse@gmail.com>
+Date: Thu, 15 Oct 2026 19:32:53 -0300
+Subject: [PATCH] apu: atomic FE decode for the ISR, wait for locked voices,
+ drop detector
+
+DirectSound frees the voice named in FEDECPARAM when FEDECMETH says
+"idle voice" (0x8000). Its ISR reads the two registers one after the
+other, and here it runs on the frame thread while game threads keep
+issuing FE methods: it read METH = 0x8000 left from a trap and PARAM =
+the voice the game had just selected, and freed a playing voice (MKSM's
+level music). A FEDECMETH read now snapshots both under the device lock,
+and the same thread's next FEDECPARAM read returns the matching half.
+
+Also, closer to the hardware's serial front end:
+- guest FE methods run under the device lock; FEDEC is frozen while the
+  FE is trapped; only one idle-voice trap at a time
+- the voice-list walk waits for a title-locked voice (VOICE_LOCK) like
+  xemu's voice_work_dispatch, capped at 20 ms (then skips the voice)
+
+Diagnostics (RECOMP_APU_STATS): voice on/off, SSL stream and lock-wait
+counters in [APU-STATS]; =2 adds per-voice [APU-VOICE] lines;
+[APU-DROP] reports a voice still active that fell off every list, with
+the last FE methods and register events; [APU-TOP] logs title writes of
+the 2D list top with FEDEC and the host call stack.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016ahYm8JBvCH5KhgtSu9Yoy
+---
+ src/apu/apu_core.c      |  53 ++++++++--
+ src/apu/apu_debug.h     |   8 ++
+ src/apu/apu_mmio_hook.c |  49 ++++++++++
+ src/apu/apu_state.h     |   2 +
+ src/apu/apu_vp.c        | 210 +++++++++++++++++++++++++++++++++++++++-
+ 5 files changed, 313 insertions(+), 9 deletions(-)
+
+diff --git a/src/apu/apu_core.c b/src/apu/apu_core.c
+index ee1802e..8f44bc0 100644
+--- a/src/apu/apu_core.c
++++ b/src/apu/apu_core.c
+@@ -50,7 +50,7 @@ struct McpxApuStats g_apu_stats = { -1 };
+ int mcpx_apu_stats_init(void)
+ {
+     const char *e = getenv("RECOMP_APU_STATS");
+-    g_apu_stats.enabled = (e && *e && atoi(e) != 0);
++    g_apu_stats.enabled = (e && *e) ? atoi(e) : 0;   /* 2 = also per voice */
+     return g_apu_stats.enabled;
+ }
+ 
+@@ -270,6 +270,10 @@ static void apu_deliver_irq(MCPXAPUState *d)
+  * MMIO Read / Write
+  * ============================================================ */
+ 
++/* The FEDECPARAM half of the last FEDECMETH read, per thread (see below). */
++static APU_TLS uint32_t s_fedec_param;
++static APU_TLS int s_fedec_latched;
++
+ uint64_t mcpx_apu_read(void *opaque, hwaddr addr, unsigned int size)
+ {
+     MCPXAPUState *d = (MCPXAPUState *)opaque;
+@@ -279,6 +283,31 @@ uint64_t mcpx_apu_read(void *opaque, hwaddr addr, unsigned int size)
+     case NV_PAPU_XGSCNT:
+         r = (uint64_t)(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) / 100);
+         break;
++    /* FEDECMETH then FEDECPARAM is one decoded method, and the APU ISR reads
++     * them in that order. On the single-CPU console nothing runs between the
++     * two reads; here the ISR runs on the frame thread while game threads
++     * keep issuing FE methods, and DirectSound read METH = 0x8000 (idle
++     * voice, left from a trap) with PARAM = the voice the game had just
++     * selected -- and freed MKSM's playing music voice (plan 3.3c). So a
++     * METH read takes both under the lock fe_method writes them under, and
++     * the same thread's next PARAM read gets the matching half. */
++    case NV_PAPU_FEDECMETH:
++        qemu_mutex_lock(&d->lock);
++        r = qatomic_read(&d->regs[NV_PAPU_FEDECMETH]);
++        s_fedec_param = qatomic_read(&d->regs[NV_PAPU_FEDECPARAM]);
++        s_fedec_latched = 1;
++        qemu_mutex_unlock(&d->lock);
++        mcpx_apu_reg_event((uint32_t)addr | 0x10000, 0, (uint32_t)r);
++        break;
++    case NV_PAPU_FEDECPARAM:
++        if (s_fedec_latched) {
++            r = s_fedec_param;
++            s_fedec_latched = 0;
++        } else {
++            r = qatomic_read(&d->regs[NV_PAPU_FEDECPARAM]);
++        }
++        mcpx_apu_reg_event((uint32_t)addr | 0x10000, 0, (uint32_t)r);
++        break;
+     default:
+         if (addr < 0x20000) {
+             r = qatomic_read(&d->regs[addr]);
+@@ -313,6 +342,8 @@ void mcpx_apu_write(void *opaque, hwaddr addr, uint64_t val,
+         break;
+     case NV_PAPU_FECTL:
+     case NV_PAPU_SECTL:
++        if (addr == NV_PAPU_FECTL)
++            mcpx_apu_reg_event((uint32_t)addr, d->regs[addr], (uint32_t)val);
+         qatomic_set(&d->regs[addr], (uint32_t)val);
+         /* Starting the APU has to start the frame thread.
+          *
+@@ -349,6 +380,8 @@ void mcpx_apu_write(void *opaque, hwaddr addr, uint64_t val,
+         break;
+     default:
+         if (addr < 0x20000) {
++            if (addr >= NV_PAPU_TVL2D && addr <= NV_PAPU_TVL2D + 0x20)
++                mcpx_apu_reg_event((uint32_t)addr, d->regs[addr], (uint32_t)val);
+             qatomic_set(&d->regs[addr], (uint32_t)val);
+         }
+         break;
+@@ -681,7 +714,8 @@ static void mcpx_apu_stats_tick(MCPXAPUState *d)
+             " voices=%u/%u/%u paused=%u idle=%u peak vp=%d bin=%d block=%d"
+             " out=%d submit ok=%u drop=%u xa2 queued=%d played=%llu starved=%u"
+             " sw_voices=%d data img=%u win=%u ram=%u amb heap=%u win=%u"
+-            " (%08X-%08X) contig=%08X\n",
++            " (%08X-%08X) contig=%08X on=%u off=%u/%u strm=%u ssl_done=%u"
++            " strm_empty=%u lock wait=%u skip=%u\n",
+             s->se_frames, s->mon_frames, s->stall_waits,
+             (unsigned)qatomic_read(&d->regs[NV_PAPU_SECTL]),
+             (unsigned)qatomic_read(&d->regs[NV_PAPU_FECTL]), (int)d->monitor.point,
+@@ -691,10 +725,17 @@ static void mcpx_apu_stats_tick(MCPXAPUState *d)
+             starved, (int)g_mixer_active_count,
+             s->data_img, s->data_win, s->data_ram, s->amb_heap, s->amb_win,
+             s->amb_lo, s->amb_hi,
+-            (unsigned)xbox_ContiguousAllocatedBytes());
+-    fflush(stderr);
+-    memset(s, 0, sizeof(*s));
+-    s->enabled = 1;
++            (unsigned)xbox_ContiguousAllocatedBytes(),
++            s->on, s->off_cmd, s->off, s->strm, s->ssl_done, s->strm_empty,
++            s->lock_waits, s->lock_skips);
++    {
++        int level = s->enabled;
++        if (level > 1)
++            mcpx_apu_vp_dump_voices(d);
++        fflush(stderr);
++        memset(s, 0, sizeof(*s));
++        s->enabled = level;
++    }
+     s->last_ms = now;
+ }
+ 
+diff --git a/src/apu/apu_debug.h b/src/apu/apu_debug.h
+index 80b16f5..7cecc61 100644
+--- a/src/apu/apu_debug.h
++++ b/src/apu/apu_debug.h
+@@ -115,6 +115,14 @@ struct McpxApuStats
+     unsigned amb_heap, amb_win;  /* heap-range addresses below the contiguous
+                                     high-water mark, by the store chosen */
+     uint32_t amb_lo, amb_hi;     /* their address range */
++    /* voice lifetime and streams (plan 3.3c). on/off_cmd come from the PIO
++     * path (game threads), so they are approximate under contention. */
++    unsigned on, off_cmd, off;  /* VOICE_ON, VOICE_OFF methods, all voice_off */
++    unsigned strm;              /* stream (SSL) voice-frames that read data */
++    unsigned ssl_done;          /* SSL buffers finished (SSLA/SSLB_DONE) */
++    unsigned strm_empty;        /* stream voice-frames with no segments queued */
++    unsigned lock_waits;        /* list walk waited for a title-locked voice */
++    unsigned lock_skips;        /* ... and gave up (20 ms), voice skipped */
+ };
+ extern struct McpxApuStats g_apu_stats;
+ int mcpx_apu_stats_init(void);
+diff --git a/src/apu/apu_mmio_hook.c b/src/apu/apu_mmio_hook.c
+index 043b0ee..0b14e0b 100644
+--- a/src/apu/apu_mmio_hook.c
++++ b/src/apu/apu_mmio_hook.c
+@@ -254,12 +254,61 @@ static bool apu_decode_and_handle(PCONTEXT ctx, uint32_t mmio_offset, int is_wri
+  * Public API (called from VEH in main.c)
+  * ============================================================ */
+ 
++static int top_trace_on(void)
++{
++    static int on = -1;
++    if (on < 0) {
++        const char *e = getenv("RECOMP_APU_STATS");
++        on = e && *e && atoi(e) != 0;
++    }
++    return on;
++}
++
+ bool apu_hook_handle_mmio(PCONTEXT ctx, uintptr_t fault_addr,
+                           uint32_t fault_xbox_va, int is_write)
+ {
+     uint32_t mmio_offset = fault_xbox_va - APU_MMIO_BASE;
+     DWORD64 rip = ctx->Rip;
++    /* RECOMP_APU_STATS: who rewrites the 2D voice list's top (DirectSound
++     * unlinking a voice; plan 3.3c). Host call stack of the writer, unwound
++     * from the fault context, with the old/new top; symbolize the RIPs with
++     * llvm-symbolizer and the PDB (rip - base + 0x140000000). First 60. */
++    if (is_write && mmio_offset == 0x2054 && top_trace_on() && g_apu_state) {
++        static unsigned n;
++        if (n++ < 60) {
++            CONTEXT c = *ctx;
++            uint32_t old = (uint32_t)mcpx_apu_mmio_read(g_apu_state, 0x2054, 4);
++            fprintf(stderr, "  [APU-TOP] t=%llu old=%X FECTL=%X FEDEC=%X/%X ISTS=%X"
++                    " base=%p stack:",
++                    (unsigned long long)GetTickCount64(), old,
++                    (uint32_t)mcpx_apu_mmio_read(g_apu_state, 0x1100, 4),
++                    (uint32_t)mcpx_apu_mmio_read(g_apu_state, 0x1300, 4),
++                    (uint32_t)mcpx_apu_mmio_read(g_apu_state, 0x1304, 4),
++                    (uint32_t)mcpx_apu_mmio_read(g_apu_state, 0x1000, 4),
++                    (void *)GetModuleHandleW(NULL));
++            for (int f = 0; f < 16 && c.Rip; f++) {
++                DWORD64 img = 0, est = 0;
++                PVOID hd = NULL;
++                PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(c.Rip, &img, NULL);
++                fprintf(stderr, " %llx", (unsigned long long)c.Rip);
++                if (!rf) {
++                    c.Rip = *(DWORD64 *)c.Rsp;   /* leaf */
++                    c.Rsp += 8;
++                    continue;
++                }
++                RtlVirtualUnwind(UNW_FLAG_NHANDLER, img, c.Rip, rf, &c, &hd,
++                                 &est, NULL);
++            }
++            fprintf(stderr, "\n");
++        }
++    }
+     bool ok = apu_decode_and_handle(ctx, mmio_offset, is_write);
++    if (is_write && mmio_offset == 0x2054 && top_trace_on()) {
++        static unsigned n2;
++        if (n2++ < 60 && g_apu_state)
++            fprintf(stderr, "  [APU-TOP] new=%X\n",
++                    (uint32_t)mcpx_apu_mmio_read(g_apu_state, 0x2054, 4));
++    }
+ 
+     /* RECOMP_APU_TRACE_SECTL=1: who switches the sample counter on and off
+      * (SECTL.XCNTMODE). Host RIP of the writing instruction plus the module
+diff --git a/src/apu/apu_state.h b/src/apu/apu_state.h
+index b666b99..b3c159a 100644
+--- a/src/apu/apu_state.h
++++ b/src/apu/apu_state.h
+@@ -519,6 +519,8 @@ void mcpx_apu_vp_init(MCPXAPUState *d);
+ void mcpx_apu_vp_finalize(MCPXAPUState *d);
+ void mcpx_apu_vp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME]);
+ void mcpx_apu_vp_reset(MCPXAPUState *d);
++void mcpx_apu_vp_dump_voices(MCPXAPUState *d);
++void mcpx_apu_reg_event(uint32_t what, uint32_t old, uint32_t val);
+ 
+ /* DSP functions (stubbed) */
+ void mcpx_apu_dsp_init(MCPXAPUState *d);
+diff --git a/src/apu/apu_vp.c b/src/apu/apu_vp.c
+index e6b1100..bb0cb1c 100644
+--- a/src/apu/apu_vp.c
++++ b/src/apu/apu_vp.c
+@@ -135,6 +135,16 @@ static struct {
+     double frac;
+ } s_rs[MCPX_HW_MAX_VOICES];
+ 
++/* RECOMP_APU_STATS=2: per-voice counters since the last [APU-VOICE] dump. */
++struct VoiceStat {
++    unsigned frames;        /* frames the voice produced samples in */
++    int peak;               /* source samples, before volume (x32767) */
++    uint16_t vol0, vol1;    /* attenuation of the first two bins (0xFFF = off) */
++    uint8_t bin0, bin1, list;
++    float rate;             /* source samples per output sample */
++};
++static struct VoiceStat s_vstat[MCPX_HW_MAX_VOICES];
++
+ static void voice_resample_reset(uint16_t v)
+ {
+     s_rs[v].len = 0;
+@@ -143,6 +153,7 @@ static void voice_resample_reset(uint16_t v)
+ 
+ static void voice_off(MCPXAPUState *d, uint16_t v)
+ {
++    if (mcpx_apu_stats_on()) g_apu_stats.off++;
+     voice_set_mask(d, v, NV_PAVS_VOICE_PAR_STATE,
+                    NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
+ 
+@@ -195,12 +206,51 @@ static void set_hrir_coeff_tar(MCPXAPUState *d, int channel, int coeff_idx,
+  * Front-End method dispatch
+  * ============================================================ */
+ 
++/* RECOMP_APU_STATS: the last FE methods, for the dropped-voice report. */
++#define FE_RING 32
++static struct { uint32_t method, arg; } s_fe_ring[FE_RING];
++static unsigned s_fe_ring_pos;
++
++/* Register events for the same report: the title's writes to FECTL and the
++ * voice list registers (old -> new) and the idle-voice traps raised. */
++#define REG_RING 48
++static struct { uint32_t what, old, val; } s_reg_ring[REG_RING];
++static volatile long s_reg_ring_pos;
++
++void mcpx_apu_reg_event(uint32_t what, uint32_t old, uint32_t val)
++{
++    if (g_apu_stats.enabled > 0) {
++        unsigned p = (unsigned)_InterlockedIncrement(&s_reg_ring_pos) % REG_RING;
++        s_reg_ring[p].what = what;
++        s_reg_ring[p].old = old;
++        s_reg_ring[p].val = val;
++    }
++}
++
+ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
+ {
+     unsigned int slot;
+ 
+-    d->regs[NV_PAPU_FEDECMETH] = method;
+-    d->regs[NV_PAPU_FEDECPARAM] = argument;
++    if (method != SE2FE_IDLE_VOICE && g_apu_stats.enabled > 0) {
++        unsigned p = s_fe_ring_pos++ % FE_RING;
++        s_fe_ring[p].method = method;
++        s_fe_ring[p].arg = argument;
++    }
++
++    /* While the FE is trapped, FEDECMETH/FEDECPARAM describe the trap and
++     * the title's ISR reads them (DirectSound: method 0x8000 = idle voice,
++     * param = the voice it then unlinks and frees). On hardware the FE is
++     * stalled until the ISR resumes it, so they cannot change underneath;
++     * here the title's own methods (and further idle voices) kept arriving
++     * and overwrote them. A trap pairing 0x8000 with the handle of a voice
++     * the title had just selected made DirectSound free a playing voice --
++     * MKSM's music, cut out of its list mid-level (plan 3.3c). */
++    bool trapped = (d->regs[NV_PAPU_FECTL] & NV_PAPU_FECTL_FEMETHMODE) ==
++                   NV_PAPU_FECTL_FEMETHMODE_TRAPPED;
++    if (!trapped) {
++        d->regs[NV_PAPU_FEDECMETH] = method;
++        d->regs[NV_PAPU_FEDECPARAM] = argument;
++    }
+     unsigned int selected_handle, list;
+ 
+     switch (method) {
+@@ -214,6 +264,7 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
+ 
+     case NV1BA0_PIO_VOICE_ON: {
+         selected_handle = argument & NV1BA0_PIO_VOICE_ON_HANDLE;
++        if (mcpx_apu_stats_on()) g_apu_stats.on++;
+ 
+         bool locked = is_voice_locked(d, (uint16_t)selected_handle);
+         if (!locked) voice_lock(d, (uint16_t)selected_handle, true);
+@@ -326,6 +377,7 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
+     }
+ 
+     case NV1BA0_PIO_VOICE_OFF:
++        if (mcpx_apu_stats_on()) g_apu_stats.off_cmd++;
+         voice_off(d, (uint16_t)(argument & NV1BA0_PIO_VOICE_OFF_HANDLE));
+         break;
+ 
+@@ -505,12 +557,17 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
+         break;
+ 
+     case SE2FE_IDLE_VOICE:
++        /* One trap at a time: the voice stays on its list and is reported
++         * again on a later frame, after the ISR has resumed the FE. */
++        if (trapped)
++            break;
+         if (d->regs[NV_PAPU_FETFORCE1] & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) {
+             d->regs[NV_PAPU_FECTL] &= ~NV_PAPU_FECTL_FEMETHMODE;
+             d->regs[NV_PAPU_FECTL] |= NV_PAPU_FECTL_FEMETHMODE_TRAPPED;
+             d->regs[NV_PAPU_FECTL] &= ~NV_PAPU_FECTL_FETRAPREASON;
+             d->regs[NV_PAPU_FECTL] |= NV_PAPU_FECTL_FETRAPREASON_REQUESTED;
+             d->set_irq = true;
++            mcpx_apu_reg_event(0x8000, 0, argument);
+         }
+         break;
+ 
+@@ -585,8 +642,13 @@ void mcpx_apu_vp_write(void *opaque, hwaddr addr, uint64_t val,
+     MCPXAPUState *d = (MCPXAPUState *)opaque;
+     (void)size;
+ 
+-    /* Dispatch known methods through fe_method */
++    /* Under the device lock, like the frame thread's own fe_method calls:
++     * the FE is one serial engine, and the two used to interleave their
++     * FEDEC writes (see fe_method). Recursive, so this is fine from the
++     * title's ISR, which the frame thread runs with the lock dropped. */
++    qemu_mutex_lock(&d->lock);
+     fe_method(d, (uint32_t)addr, (uint32_t)val);
++    qemu_mutex_unlock(&d->lock);
+ }
+ 
+ /* ============================================================
+@@ -809,6 +871,10 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+         page = d->vp.ssl[v].base[ssl_index] + ssl_seg;
+         count = d->vp.ssl[v].count[ssl_index];
+ 
++        if (mcpx_apu_stats_on()) {
++            if (count == 0) g_apu_stats.strm_empty++;
++            else            g_apu_stats.strm++;
++        }
+         if (count == 0) {
+             voice_set_mask(d, (uint16_t)v, NV_PAVS_VOICE_PAR_OFFSET,
+                            NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
+@@ -939,6 +1005,7 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+                 int next_index = (ssl_index + 1) % 2;
+                 d->vp.ssl[v].ssl_index = next_index;
+                 d->vp.ssl[v].ssl_seg = 0;
++                if (mcpx_apu_stats_on()) g_apu_stats.ssl_done++;
+                 set_notify_status(d, v, MCPX_HW_NOTIFIER_SSLA_DONE + ssl_index,
+                                   NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
+             }
+@@ -1162,6 +1229,21 @@ static void voice_process(MCPXAPUState *d,
+         dbg->vol[i] = vol[i];
+     }
+ 
++    if (g_apu_stats.enabled > 1) {
++        struct VoiceStat *vs = &s_vstat[v];
++        vs->list = (uint8_t)voice_list;
++        vs->frames++;
++        vs->vol0 = vol[0];
++        vs->vol1 = vol[1];
++        vs->bin0 = (uint8_t)bin[0];
++        vs->bin1 = (uint8_t)bin[1];
++        vs->rate = rate;
++        for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
++            vs->peak = mcpx_apu_peak_f(vs->peak, samples[i][0]);
++            vs->peak = mcpx_apu_peak_f(vs->peak, samples[i][1]);
++        }
++    }
++
+     if (voice_should_mute(v)) return;
+ 
+     /* Low-pass filter */
+@@ -1241,6 +1323,67 @@ static void voice_process(MCPXAPUState *d,
+  * Simplified single-threaded version (no worker threads initially)
+  * ============================================================ */
+ 
++/* Dropped-voice check (RECOMP_APU_STATS, plan 3.3c): a voice that was on a
++ * list last frame, is on no list now and is still ACTIVE was cut out of the
++ * list without being stopped -- the music voice did this in a level. */
++static uint16_t s_walk[3][MCPX_HW_MAX_VOICES], s_prev[3][MCPX_HW_MAX_VOICES];
++static int s_walk_len[3], s_prev_len[3];
++
++static void print_list(const char *tag, int list, const uint16_t *w, int n)
++{
++    fprintf(stderr, "  %s list %d:", tag, list);
++    for (int i = 0; i < n; i++)
++        fprintf(stderr, " %u", w[i]);
++    fprintf(stderr, "\n");
++}
++
++static void check_dropped_voices(MCPXAPUState *d)
++{
++    static unsigned reports;
++    uint8_t now_on[MCPX_HW_MAX_VOICES] = {0};
++
++    for (int l = 0; l < 3; l++)
++        for (int i = 0; i < s_walk_len[l]; i++)
++            now_on[s_walk[l][i]] = 1;
++    for (int l = 0; l < 3; l++) {
++        for (int i = 0; i < s_prev_len[l]; i++) {
++            uint16_t v = s_prev[l][i];
++            if (now_on[v] || !voice_get_mask(d, v, NV_PAVS_VOICE_PAR_STATE,
++                                             NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE))
++                continue;
++            now_on[v] = 1;   /* once per voice per frame */
++            if (reports++ >= 20)
++                continue;
++            fprintf(stderr, "[APU-DROP] active voice %u left list %d unstopped"
++                    " (FECTL=%08X FEDEC=%04X/%04X)\n", v, l,
++                    (unsigned)d->regs[NV_PAPU_FECTL],
++                    (unsigned)d->regs[NV_PAPU_FEDECMETH],
++                    (unsigned)d->regs[NV_PAPU_FEDECPARAM]);
++            print_list("before", l, s_prev[l], s_prev_len[l]);
++            print_list("after ", l, s_walk[l], s_walk_len[l]);
++            fprintf(stderr, "  FE methods, oldest first:");
++            for (unsigned k = 0; k < FE_RING; k++) {
++                unsigned p = (s_fe_ring_pos + k) % FE_RING;
++                if (s_fe_ring[p].method || s_fe_ring[p].arg)
++                    fprintf(stderr, " %X:%X", s_fe_ring[p].method,
++                            s_fe_ring[p].arg);
++            }
++            fprintf(stderr, "\n");
++            fprintf(stderr, "  reg events (8000 = idle trap: voice), oldest first:");
++            for (unsigned k = 1; k <= REG_RING; k++) {
++                unsigned p = ((unsigned)s_reg_ring_pos + k) % REG_RING;
++                if (s_reg_ring[p].what)
++                    fprintf(stderr, " %X:%X>%X", s_reg_ring[p].what,
++                            s_reg_ring[p].old, s_reg_ring[p].val);
++            }
++            fprintf(stderr, "\n");
++            fflush(stderr);
++        }
++    }
++    memcpy(s_prev, s_walk, sizeof(s_prev));
++    memcpy(s_prev_len, s_walk_len, sizeof(s_prev_len));
++}
++
+ void mcpx_apu_vp_frame(MCPXAPUState *d,
+                         float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME])
+ {
+@@ -1253,6 +1396,7 @@ void mcpx_apu_vp_frame(MCPXAPUState *d,
+         next = voice_list_regs[list].next;
+ 
+         d->regs[current] = d->regs[top];
++        s_walk_len[list] = 0;
+ 
+         for (int i = 0; d->regs[current] != 0xFFFF; i++) {
+             if (i >= MCPX_HW_MAX_VOICES) {
+@@ -1261,6 +1405,32 @@ void mcpx_apu_vp_frame(MCPXAPUState *d,
+             }
+ 
+             uint16_t v = (uint16_t)d->regs[current];
++
++            /* A locked voice is being edited by the title (VOICE_LOCK
++             * around its writes to voice memory): leave it alone until the
++             * unlock, as xemu's voice_work_dispatch does. Reading it
++             * mid-edit saw a playing voice as inactive, reported it idle,
++             * and DirectSound freed it -- MKSM's music stopped mid-level
++             * (plan 3.3c). The wait drops d->lock so the unlock can come
++             * in; capped, since a title that holds a lock across frames
++             * must not stall the APU (then the voice skips this frame). */
++            if (is_voice_locked(d, v)) {
++                int64_t t0 = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
++                while (is_voice_locked(d, v) &&
++                       !qatomic_read(&d->pause_requested) &&
++                       qemu_clock_get_ms(QEMU_CLOCK_REALTIME) - t0 < 20)
++                    qemu_cond_timedwait(&d->cond, &d->lock, 1);
++                if (mcpx_apu_stats_on()) g_apu_stats.lock_waits++;
++                if (is_voice_locked(d, v)) {
++                    if (mcpx_apu_stats_on()) g_apu_stats.lock_skips++;
++                    d->regs[next] = voice_get_mask(d, v, NV_PAVS_VOICE_TAR_PITCH_LINK,
++                                       NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE);
++                    s_walk[list][s_walk_len[list]++] = v;
++                    d->regs[current] = d->regs[next];
++                    continue;
++                }
++            }
++            s_walk[list][s_walk_len[list]++] = v;
+             d->regs[next] = voice_get_mask(d, v, NV_PAVS_VOICE_TAR_PITCH_LINK,
+                                NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE);
+ 
+@@ -1276,6 +1446,9 @@ void mcpx_apu_vp_frame(MCPXAPUState *d,
+         }
+     }
+ 
++    if (g_apu_stats.enabled > 0)
++        check_dropped_voices(d);
++
+     if (mcpx_apu_stats_on()) {
+         int p = g_apu_stats.vp_peak;
+         for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
+@@ -1304,6 +1477,37 @@ void mcpx_apu_vp_frame(MCPXAPUState *d,
+  * VP Init / Finalize / Reset
+  * ============================================================ */
+ 
++/* One [APU-VOICE] line per voice that played since the last call
++ * (RECOMP_APU_STATS=2): which voice is which, and what it is doing. */
++void mcpx_apu_vp_dump_voices(MCPXAPUState *d)
++{
++    for (unsigned v = 0; v < MCPX_HW_MAX_VOICES; v++) {
++        struct VoiceStat *vs = &s_vstat[v];
++        if (!vs->frames)
++            continue;
++        uint32_t fmt = voice_get_mask(d, (uint16_t)v, NV_PAVS_VOICE_CFG_FMT,
++                                      0xFFFFFFFF);
++        fprintf(stderr, "[APU-VOICE] v=%u list=%u frames=%u peak=%d vol=%03X/%03X"
++                " bin=%u/%u rate=%.3f fmt=%08X%s%s ba=%06X lbo=%06X cbo=%06X ebo=%06X"
++                " active=%d\n",
++                v, vs->list, vs->frames, vs->peak, vs->vol0, vs->vol1,
++                vs->bin0, vs->bin1, vs->rate, fmt,
++                (fmt & NV_PAVS_VOICE_CFG_FMT_LOOP) ? " loop" : "",
++                (fmt & NV_PAVS_VOICE_CFG_FMT_STEREO) ? " stereo" : "",
++                voice_get_mask(d, (uint16_t)v, NV_PAVS_VOICE_CUR_PSL_START,
++                               NV_PAVS_VOICE_CUR_PSL_START_BA),
++                voice_get_mask(d, (uint16_t)v, NV_PAVS_VOICE_CUR_PSH_SAMPLE,
++                               NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO),
++                voice_get_mask(d, (uint16_t)v, NV_PAVS_VOICE_PAR_OFFSET,
++                               NV_PAVS_VOICE_PAR_OFFSET_CBO),
++                voice_get_mask(d, (uint16_t)v, NV_PAVS_VOICE_PAR_NEXT,
++                               NV_PAVS_VOICE_PAR_NEXT_EBO),
++                voice_get_mask(d, (uint16_t)v, NV_PAVS_VOICE_PAR_STATE,
++                               NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0);
++        memset(vs, 0, sizeof(*vs));
++    }
++}
++
+ void mcpx_apu_vp_init(MCPXAPUState *d)
+ {
+     /* Single-threaded - no worker dispatch needed */
+-- 
+2.53.0.windows.2
+

@@ -105,8 +105,13 @@ Shims needed (a `qemu_shim.h`-style header, as the toolkit already has for the A
 `0x80000000` (the physical view, which is what xemu's VRAM offsets mean), and the dirty-page calls
 (below). `pgraph.c` also uses the external `nv2a_vsh_cpu` library for context-write tracking
 (four calls: `nv2a_vsh_parse_program`, `nv2a_vsh_emu_initialize_xss_execution_state`,
-`nv2a_vsh_emu_execute_track_context_writes`, `nv2a_vsh_program_destroy`); vendor it if its
-license allows, else the toolkit's `nv2a_vsh_interp.c` can stand in behind the same four calls.
+`nv2a_vsh_emu_execute_track_context_writes`, `nv2a_vsh_program_destroy`). xemu pins its fork
+`xemu-project/nv2a_vsh_cpu` (`561fe80`), which is under the Unlicense, so it is vendored as is.
+
+**Compiler**: the xemu files use GNU C that MSVC `cl` rejects (statement-expression macros such as
+`SET_MASK`, case ranges, `__attribute__((constructor))`, `g_autofree`). The renderer library is
+built with clang-cl, which accepts them and produces MSVC-ABI objects, so the vendored files stay
+unmodified; the rest of the port keeps `cl`.
 
 ### Threading
 

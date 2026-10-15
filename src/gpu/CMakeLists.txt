@@ -106,5 +106,9 @@ target_compile_options(mksm_gpu PRIVATE
 # Asserts stay on, as in xemu (QEMU refuses to build with NDEBUG): they are its consistency
 # checks, and a failed one prints "Assertion failed" (mksm_gpu_init routes it to stderr).
 target_compile_options(mksm_gpu PRIVATE /UNDEBUG)
+# CodeView in each object (no PDB server): the game's link (/DEBUG:FULL) puts these into its PDB,
+# so crash reports and RECOMP_PROF name the renderer's functions.
+target_compile_options(mksm_gpu PRIVATE /Z7)
+target_compile_options(nv2a_vsh_cpu PRIVATE /Z7)
 target_compile_options(nv2a_vsh_cpu PRIVATE -Wno-microsoft)
 target_compile_definitions(nv2a_vsh_cpu PRIVATE _CRT_SECURE_NO_WARNINGS)

@@ -16,6 +16,7 @@ statically recompiling the retail `default.xbe` to C with
 ## Layout
 - `CMakeLists.txt`: game executable `mksm_recomp`; pulls in the toolkit via `add_subdirectory`
 - `src/main.c`: host entry: loads the XBE, maps Xbox memory, inits kernel/bridge, calls the guest entry `0x000F40CA`
+- `src/prof.c`: `RECOMP_PROF` sampling profiler (all threads, symbolized from the PDB; see Debugging)
 - `src/recomp_manual.c`: hand-written overrides (`recomp_lookup_manual`) and ICALL diagnostics
 - `src/recomp/gen/`: generated C (not in git)
 - `src/gpu/`: GPU renderer library `mksm_gpu` (xemu's PGRAPH; the game uses it with `RECOMP_PB_GPU=1`): its own
@@ -168,8 +169,17 @@ support. Useful env vars from the toolkit: `RECOMP_WATCHDOG_SECS`, `RECOMP_AC97_
 surface drawn last into the framebuffer window (`RECOMP_FB_WINDOW=1`) and waits for a 59.94 Hz VBlank.
 `RECOMP_PB_GPU_RENDERER=null` = xemu's null renderer (draws nothing), `RECOMP_PB_GPU_VBLANK=<Hz>` sets
 the pacing (0 = uncapped), `RECOMP_PB_GPU_DUMP=<file.bmp>` (+ `RECOMP_PB_GPU_DUMP_FLIP=<N>`, default
-600) dumps one presented frame. Movies (Sofdec) stay black on this path until 2.H.6. It still needs
+600) dumps one presented frame. `RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
+changed on every use (default: once per pushbuffer kick, see `docs/gpu-renderer.md`; for A/B runs).
+Movies (Sofdec) stay black on this path until 2.H.6. It still needs
 `RECOMP_PB_EXEC=1`, which is what makes the ack thread decode the pushbuffer.
+`RECOMP_PROF=<start_ms>,<dur_ms>[,<period_us>]`: sampling profiler (`src/prof.c`). After start_ms it
+samples every thread's stack each period (default 1000 us) for dur_ms, then prints `[PROF]` per thread
+with >= 2% CPU: CPU time, start routine, top exclusive/inclusive functions (`module!symbol`; guest
+code shows as `sub_XXXXXXXX`, the renderer lib has /Z7 debug info). For the level with the `pad`
+script: `RECOMP_PROF=65000,20000 python tools/smoke_test.py --gpu --only pad`.
+`RECOMP_WBC_ACK=1` (experimental, hangs the GPU path, plan 2.H.8b): a thread acks D3D's kickoff
+flush wait at once instead of the ack thread doing it after each executed segment.
 `RECOMP_PB_EXEC=1` (set by the run scripts) is required: D3D init waits on GPU semaphore releases,
 which only the pushbuffer executor performs.
 The run scripts also set `RECOMP_AC97_READY=1` (emulated APU, so `DirectSoundCreate` succeeds) and

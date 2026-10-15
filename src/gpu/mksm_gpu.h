@@ -26,6 +26,8 @@ typedef struct MksmGpuMemory {
     size_t ramin_size;
     const volatile uint32_t *pfifo; /* the PFIFO register block as the title wrote it
                                        (RAMHT location/size, CACHE1 channel id) */
+    const volatile uint32_t *dma_put; /* the channel's DMA_PUT: texture and vertex memory is
+                                         re-checked once per kick (NULL: on every use) */
 } MksmGpuMemory;
 
 /* Sets up xemu's PGRAPH on a device that uses these views, with the OpenGL (opengl = 1) or

@@ -136,19 +136,72 @@ uint64_t memory_region_size(MemoryRegion *mr)
     return mr->size;
 }
 
-/* No dirty bitmap (guest RAM is a file mapping, see port/docs/gpu-renderer.md): every range
- * reads as dirty, so vertex data is re-uploaded and textures re-hashed (xemu confirms texture
- * changes by content hash). Marking dirty is then a no-op. */
+/* Dirty tracking without a dirty bitmap (guest RAM is a file mapping, see
+ * port/docs/gpu-renderer.md, "Dirty tracking"). The title can only expect the GPU to see a
+ * CPU write once it has kicked the pushbuffer after it (written DMA_PUT), and x86 makes the
+ * data visible before the PUT that follows it. So a page reads as dirty at most once per
+ * kick: the first check after DMA_PUT moves reports every page of the range as dirty, later
+ * checks in the same kick only the pages not checked since. xemu then confirms texture
+ * changes by content hash and re-uploads vertex data. Without a DMA_PUT register
+ * (xemu_stubs_set_dma_put not called) every range is dirty, as before.
+ * Ranges xemu writes itself (surface downloads, blits) are marked dirty for the clients. */
+static const volatile uint32_t *s_dma_put;
+static uint32_t s_last_put, s_epoch = 1;
+static uint32_t *s_page_epoch[2];   /* DIRTY_MEMORY_NV2A, _NV2A_TEX: epoch of the last check */
+static size_t s_pages;
+
+void xemu_stubs_set_dma_put(const volatile uint32_t *dma_put)
+{
+    s_dma_put = dma_put;
+}
+
+static uint32_t *page_epochs(MemoryRegion *mr, unsigned client)
+{
+    if (!s_dma_put || (client != DIRTY_MEMORY_NV2A && client != DIRTY_MEMORY_NV2A_TEX)) {
+        return NULL;
+    }
+    unsigned i = client - DIRTY_MEMORY_NV2A;
+    if (!s_page_epoch[i]) {
+        s_pages = mr->size >> TARGET_PAGE_BITS;
+        s_page_epoch[i] = (uint32_t *)g_malloc0(s_pages * sizeof(uint32_t));
+    }
+    return s_page_epoch[i];
+}
+
 bool memory_region_test_and_clear_dirty(MemoryRegion *mr, hwaddr addr, hwaddr size,
                                         unsigned client)
 {
-    (void)mr; (void)addr; (void)size; (void)client;
-    return true;
+    uint32_t *epochs = page_epochs(mr, client);
+    if (!epochs) {
+        return true;
+    }
+    uint32_t put = *s_dma_put;
+    if (put != s_last_put) {
+        s_last_put = put;
+        s_epoch++;
+        xemu_stub_counts.dirty_epochs++;
+    }
+    bool dirty = false;
+    size_t last = size ? (size_t)((addr + size - 1) >> TARGET_PAGE_BITS) : 0;
+    for (size_t p = (size_t)(addr >> TARGET_PAGE_BITS); p <= last && p < s_pages; p++) {
+        if (epochs[p] != s_epoch) {
+            epochs[p] = s_epoch;
+            dirty = true;
+        }
+    }
+    return dirty;
 }
 
 void memory_region_set_client_dirty(MemoryRegion *mr, hwaddr addr, hwaddr size, unsigned client)
 {
-    (void)mr; (void)addr; (void)size; (void)client;
+    uint32_t *epochs = page_epochs(mr, client);
+    if (!epochs || !size) {
+        return;
+    }
+    size_t last = (size_t)((addr + size - 1) >> TARGET_PAGE_BITS);
+    for (size_t p = (size_t)(addr >> TARGET_PAGE_BITS); p <= last && p < s_pages; p++) {
+        epochs[p] = 0;
+    }
 }
 
 /* QEMU accelerator: report TCG. In xemu that selects CPU access callbacks for surfaces (below,

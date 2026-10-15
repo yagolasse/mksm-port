@@ -8,6 +8,10 @@
 typedef struct XemuStubCounts {
     unsigned long pfifo_kick;
     unsigned long update_irq;
+    unsigned long dirty_epochs;     /* DMA_PUT changes seen by the dirty query */
 } XemuStubCounts;
 
 extern XemuStubCounts xemu_stub_counts;
+
+/* The title's DMA_PUT register: the dirty query reads a page as dirty once per kick. */
+void xemu_stubs_set_dma_put(const volatile uint32_t *dma_put);

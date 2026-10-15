@@ -51,6 +51,7 @@ file(GLOB RECOMP_GEN_SOURCES CONFIGURE_DEPENDS "src/recomp/gen/*.c")
 # Core game sources
 set(GAME_SOURCES
     src/main.c
+    src/prof.c
     src/recomp_manual.c
     # Add game-specific sources here, e.g.:
     # src/asset_loader.c

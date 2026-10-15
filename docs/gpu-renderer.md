@@ -130,12 +130,24 @@ xemu.
 xemu asks QEMU which VRAM pages changed (`memory_region_test_and_clear_dirty`) to invalidate
 textures and vertex buffers, and installs access callbacks to download surfaces when the CPU
 touches them. Here guest RAM is a file mapping viewed at the base and at every mirror, so
-`GetWriteWatch` (private `VirtualAlloc` memory only) is not available. Plan:
-- first: the dirty query always answers "dirty". xemu already confirms texture changes with a
-  content hash, so this is correct, just slower;
-- then, if it shows in the profile: protect the pages of cached resources read-only in **every**
-  view and catch writes in the existing VEH (which already traps MMIO), feeding a dirty bitmap;
-- surface downloads: at flip behind a debug flag (keeps `RECOMP_FB_DUMP` working), and on CPU
+`GetWriteWatch` (private `VirtualAlloc` memory only) is not available.
+- First (2.H.3-2.H.4): the dirty query always answered "dirty". Correct (xemu confirms texture
+  changes with a content hash), but in the level it cost half of the method thread: every
+  texture bind walked the whole 512-entry texture LRU (`pgraph_gl_mark_textures_possibly_dirty`,
+  52% of the thread) and re-hashed the texture (XXH3, 7.5%).
+- **Now (2.H.8a): dirty once per kick** (`xemu_stubs.c`). A title can only expect the GPU to see
+  a CPU write after it kicked the pushbuffer (wrote DMA_PUT) following that write, and x86 makes
+  the data visible before the PUT. So per client (vertex `DIRTY_MEMORY_NV2A`, texture
+  `DIRTY_MEMORY_NV2A_TEX`) each 4 KiB page keeps the epoch of its last check; the epoch moves
+  when the live DMA_PUT value changes, and a page reads dirty only on its first check in an
+  epoch. Ranges xemu writes itself (`memory_region_set_client_dirty`: surface downloads, blits)
+  reset their pages. Reading the live PUT (ahead of what is executing) only adds re-checks.
+  ~34 epochs/s in the level (~3 kicks per frame). `RECOMP_PB_GPU_DIRTY=always` restores the
+  old answer for A/B runs. The texture-dirty walk dropped to ~6% of the thread, level fps
+  went from ~5-7.5 to ~10-20 (plan 2.H.8a).
+- Page protection on every view (writes caught in the VEH) is still the precise option if a
+  title writes resources without a kick in between; not needed so far.
+- Surface downloads: at flip behind a debug flag (keeps `RECOMP_FB_DUMP` working), and on CPU
   access once a title is seen needing it.
 
 ### Switch and fallback
@@ -363,5 +375,7 @@ stages. The texture-stage guard stays as a safety net.
 5. **2.H.6 Movies and render targets**: Sofdec frames (CPU writes into texture memory: the dirty
    query), surface downloads where the CPU reads them.
 6. **2.H.7 Level frame**: the level capture renders; fix gaps in the shims.
-7. **2.H.8 Performance**: dirty tracking by page protection if hashing costs; frame pacing (2.4).
+7. **2.H.8 Performance**: 2.H.8a done (profile with `RECOMP_PROF`, dirty once per kick, see
+   "Dirty tracking"); next the title/executor lockstep at the kickoff's WBC flush wait (2.H.8b),
+   then the GL driver stalls in uniform uploads and the decode cost; frame pacing (2.4).
 8. **2.H.9 Parity + default** (unchanged).

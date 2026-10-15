@@ -126,6 +126,7 @@ int mksm_gpu_init(const MksmGpuMemory *mem, int opengl)
     qemu_cond_init(&d->pfifo.fifo_cond);
     qemu_cond_init(&d->pfifo.fifo_idle_cond);
     s_pfifo = mem->pfifo;
+    xemu_stubs_set_dma_put(mem->dma_put);
     d->vga.get_resolution = scanout_get_resolution;
     d->vga.get_params = scanout_get_params;
     d->vga.cr[NV_PRMCIO_INTERLACE_MODE] = NV_PRMCIO_INTERLACE_MODE_DISABLED;
@@ -157,10 +158,11 @@ static void report(void)
     last_ns = now;
     fprintf(stderr,
             "[XGPU] methods %lu, objects %lu, draws %lu, flips %lu, nop notifies %lu, "
-            "semaphores %lu, bad handles %lu, irq updates %lu, masked stages %lu, "
-            "presents %lu (no surface %lu, last %ux%u, %lu non-black px)\n",
+            "semaphores %lu, bad handles %lu, irq updates %lu, dirty epochs %lu, "
+            "masked stages %lu, presents %lu (no surface %lu, last %ux%u, %lu non-black px)\n",
             s_stats.methods, s_stats.objects, s_stats.draws, s_stats.flips, s_stats.nops,
             s_stats.semaphores, s_stats.bad_handles, xemu_stub_counts.update_irq,
+            xemu_stub_counts.dirty_epochs,
             s_stats.masked_stages, s_stats.presents, s_stats.no_surface, s_stats.last_w, s_stats.last_h,
             s_stats.last_nonblack);
 }

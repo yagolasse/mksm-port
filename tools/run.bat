@@ -1,7 +1,8 @@
 @echo off
 rem Run the recompiled exe against an extracted game folder and capture its output.
 rem Windows (cmd) twin of tools/run.sh: keep the defaults of the two scripts in sync.
-rem tools/smoke_test.py (RUN_ENV) uses the same defaults too.
+rem tools/smoke_test.py (RUN_ENV) uses the same defaults too, except the two display ones
+rem (RECOMP_PB_GPU, RECOMP_FB_WINDOW): it runs headless on the software executor unless --gpu.
 rem
 rem The exe is a GUI-subsystem program, so its printf/stderr output only goes
 rem somewhere when redirected; this script writes both into a log file and
@@ -38,6 +39,9 @@ rem      builds by hand get a host event, so waits on them block instead of
 rem      failing at once (the XDK timer thread needs it). RECOMP_TITLE_KEVENTS_SKIP
 rem      defaults to D3D's event 0x003F29CC, which a GPU interrupt sets that the
 rem      runtime doesn't model: waiting on it for real hangs the boot.
+rem      RECOMP_PB_GPU defaults to 1 (0 = the software executor): xemu's PGRAPH on
+rem      OpenGL draws the frames. Movies (Sofdec) are still black on it (plan 2.H.6).
+rem      RECOMP_FB_WINDOW defaults to 1 (0 turns it off): the game window.
 setlocal
 
 set "PORT=%~dp0.."
@@ -77,6 +81,9 @@ if not defined RECOMP_HEAP_RECLAIM set "RECOMP_HEAP_RECLAIM=1"
 if "%RECOMP_HEAP_RECLAIM%"=="0" set "RECOMP_HEAP_RECLAIM="
 if not defined RECOMP_TITLE_KEVENTS set "RECOMP_TITLE_KEVENTS=1"
 if not defined RECOMP_TITLE_KEVENTS_SKIP set "RECOMP_TITLE_KEVENTS_SKIP=0x003F29CC"
+if not defined RECOMP_PB_GPU set "RECOMP_PB_GPU=1"
+if not defined RECOMP_FB_WINDOW set "RECOMP_FB_WINDOW=1"
+if "%RECOMP_FB_WINDOW%"=="0" set "RECOMP_FB_WINDOW="
 
 for %%I in ("%LOG%") do if not exist "%%~dpI" mkdir "%%~dpI"
 echo exe:  %EXE%

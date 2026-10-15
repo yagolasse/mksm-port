@@ -101,7 +101,8 @@ an object nothing references, and a plain link drops it ("No available renderer"
 The exe takes the extracted game folder (holding `default.xbe`) from its first argument, else
 `MKSM_GAME_DIR`, else `game\` in the working directory (`resolve_game_dir` in `src/main.c`).
 It's a GUI-subsystem exe, so stdout only appears when redirected. Use a run script, which
-defaults to `../game_files` and logs to `../logs/run_<timestamp>.log`:
+defaults to `../game_files` and logs to `../logs/run_<timestamp>.log`, and turns on the GPU path and the
+game window (`RECOMP_PB_GPU=1`, `RECOMP_FB_WINDOW=1`; `=0` turns either off):
 ```bash
 tools/run.sh                                  # MKSM_GAME_DIR / MKSM_EXE / MKSM_LOG override
 RECOMP_WATCHDOG_SECS=10 timeout 60 tools/run.sh
@@ -164,7 +165,8 @@ Headless: `RECOMP_PAD_PRESS=0x10,3000,300` (mask,period,hold ms) or `RECOMP_PAD_
 Expect crashes during bring-up. The VEH handler in `main.c` prints the faulting guest function, the
 guest stack, and recent ICALL targets. Fix by adding overrides in `recomp_manual.c` or runtime
 support. Useful env vars from the toolkit: `RECOMP_WATCHDOG_SECS`, `RECOMP_AC97_READY`.
-`RECOMP_PB_GPU=1` (opt-in, toolkit patches 0009-0010) hands every decoded method to xemu's PGRAPH
+`RECOMP_PB_GPU=1` (default in the run scripts since 2.H.8c1, `=0` = software executor; toolkit patches
+0009-0010) hands every decoded method to xemu's PGRAPH
 (OpenGL renderer) instead of the software executor (`[XGPU]` lines every 5 s); each flip presents the
 surface drawn last into the framebuffer window (`RECOMP_FB_WINDOW=1`) and waits for a 59.94 Hz VBlank.
 `RECOMP_PB_GPU_RENDERER=null` = xemu's null renderer (draws nothing), `RECOMP_PB_GPU_VBLANK=<Hz>` sets

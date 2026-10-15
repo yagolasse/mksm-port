@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run the recompiled exe against an extracted game folder and capture its output.
 # tools/run.bat is the Windows (cmd) twin: keep the defaults of the two scripts in sync.
-# tools/smoke_test.py (RUN_ENV) uses the same defaults too.
+# tools/smoke_test.py (RUN_ENV) uses the same defaults too, except the two display ones
+# (RECOMP_PB_GPU, RECOMP_FB_WINDOW): it runs headless on the software executor unless --gpu.
 #
 # The exe is a GUI-subsystem program, so its printf/stderr output only goes
 # somewhere when redirected; this script pipes both into a log file.
@@ -35,6 +36,9 @@
 #      failing at once (the XDK timer thread needs it). RECOMP_TITLE_KEVENTS_SKIP
 #      defaults to D3D's event 0x003F29CC, which a GPU interrupt sets that the
 #      runtime doesn't model: waiting on it for real hangs the boot.
+#      RECOMP_PB_GPU defaults to 1 (0 = the software executor): xemu's PGRAPH on
+#      OpenGL draws the frames. Movies (Sofdec) are still black on it (plan 2.H.6).
+#      RECOMP_FB_WINDOW defaults to 1 (0 or empty turns it off): the game window.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -77,6 +81,13 @@ else
 fi
 export RECOMP_TITLE_KEVENTS="${RECOMP_TITLE_KEVENTS-1}"
 export RECOMP_TITLE_KEVENTS_SKIP="${RECOMP_TITLE_KEVENTS_SKIP-0x003F29CC}"
+export RECOMP_PB_GPU="${RECOMP_PB_GPU-1}"
+RECOMP_FB_WINDOW="${RECOMP_FB_WINDOW-1}"
+if [ -z "$RECOMP_FB_WINDOW" ] || [ "$RECOMP_FB_WINDOW" = 0 ]; then
+    unset RECOMP_FB_WINDOW
+else
+    export RECOMP_FB_WINDOW
+fi
 
 mkdir -p "$(dirname "$LOG")"
 LOG="$(cd "$(dirname "$LOG")" && pwd)/$(basename "$LOG")"

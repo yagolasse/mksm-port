@@ -15,8 +15,33 @@
 #include "ui/xemu-settings.h"
 #include "xemu_stubs.h"
 
-/* xemu's settings: the renderer selection is the only field PGRAPH reads. */
-struct config g_config = { .display = { .renderer = CONFIG_DISPLAY_RENDERER_NULL } };
+#include <direct.h>
+
+/* xemu's settings, only the fields PGRAPH and the GL renderer read. No on-disk shader cache:
+ * shaders are generated and compiled at run time (a cache can come with 2.H.8). */
+struct config g_config = {
+    .display = { .renderer = CONFIG_DISPLAY_RENDERER_NULL, .quality = { .surface_scale = 1 } },
+    .perf = { .cache_shaders = false },
+};
+
+/* xemu-version.h: the GL shader cache keys its files on it. */
+const char *xemu_version = "mksm-pc";
+
+/* The GL renderer creates "<base>shaders" at init even with the cache off, so point it at a
+ * per-user folder rather than the working directory. */
+const char *xemu_settings_get_base_path(void)
+{
+    static char path[MAX_PATH];
+    if (!path[0]) {
+        const char *base = getenv("LOCALAPPDATA");
+        if (base && snprintf(path, sizeof(path), "%s\\mksm-pc\\", base) < (int)sizeof(path)) {
+            _mkdir(path);
+        } else {
+            strcpy(path, ".\\");
+        }
+    }
+    return path;
+}
 
 /* nv2a.c: register block names for nv2a_reg_log_*; the MMIO ops are not ported. */
 const NV2ABlockInfo blocktable[NV_NUM_BLOCKS] = {
@@ -109,6 +134,43 @@ hwaddr nv_clip_gpu_tile_blit(NV2AState *d, hwaddr blit_base_address, hwaddr len)
 uint64_t memory_region_size(MemoryRegion *mr)
 {
     return mr->size;
+}
+
+/* No dirty bitmap (guest RAM is a file mapping, see port/docs/gpu-renderer.md): every range
+ * reads as dirty, so vertex data is re-uploaded and textures re-hashed (xemu confirms texture
+ * changes by content hash). Marking dirty is then a no-op. */
+bool memory_region_test_and_clear_dirty(MemoryRegion *mr, hwaddr addr, hwaddr size,
+                                        unsigned client)
+{
+    (void)mr; (void)addr; (void)size; (void)client;
+    return true;
+}
+
+void memory_region_set_client_dirty(MemoryRegion *mr, hwaddr addr, hwaddr size, unsigned client)
+{
+    (void)mr; (void)addr; (void)size; (void)client;
+}
+
+/* QEMU accelerator: report TCG. In xemu that selects CPU access callbacks for surfaces (below,
+ * never fired yet) over the dirty bitmap: with "always dirty", the bitmap path would re-upload
+ * every surface from guest RAM over what the GPU drew. Surface downloads on CPU access are
+ * plan 2.H.6. */
+bool tcg_enabled(void)
+{
+    return true;
+}
+
+MemAccessCallback *mem_access_callback_insert(CPUState *cpu, MemoryRegion *mr, hwaddr offset,
+                                              hwaddr len, MemAccessCallbackFunc func,
+                                              void *opaque)
+{
+    (void)cpu; (void)mr; (void)offset; (void)len; (void)func; (void)opaque;
+    return NULL;
+}
+
+void mem_access_callback_remove_by_ref(CPUState *cpu, MemAccessCallback *cb)
+{
+    (void)cpu; (void)cb;
 }
 
 /* QEMU timers: only QEMU_CLOCK_REALTIME is read (profiling, frame timing). */

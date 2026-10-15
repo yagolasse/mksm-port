@@ -237,6 +237,51 @@ imported by the top-level build (see `CLAUDE.md`, Build):
   matter for the null renderer (semaphores and reports land in the window); check it when draws
   start reading vertex/texture memory (2.H.5).
 
+## The GL backend build (2.H.4a)
+
+The OpenGL renderer (`pgraph/gl/*`, 11 files) and the GLSL generators (`pgraph/glsl/*`, 7) are in
+`mksm_gpu`, unmodified like the rest. What they needed around them:
+
+- **GL loader**: glad 2.0.8 (`src/gpu/glad`), generated for `gl:core=4.6` + the four extensions xemu
+  checks (`GL_EXT_texture_compression_s3tc`, `GL_ARB_ES2_compatibility`, `GL_EXT_texture_filter_anisotropic`,
+  `GL_KHR_debug`) and WGL (`ARB_create_context(_profile)`, `ARB_pixel_format`, extension strings,
+  `EXT_swap_control`). 4.6, not 4.0: xemu requests a 4.0 core context but calls later entry points
+  (`glProgramUniform*`, 4.1) that libepoxy resolves on demand. The driver returns a context that has
+  them; glad leaves absent ones NULL. `xemu/shim/epoxy/gl.h` maps `<epoxy/gl.h>` to glad and declares
+  `epoxy_has_gl_extension` (in `gloffscreen_wgl.c`, via `glGetStringi`).
+- **Contexts** (`gloffscreen_wgl.c`, replaces xemu's `gloffscreen/sdl.c`): one hidden window per context
+  (a pixel format is set once per window), RGBA8/D24S8 double-buffered, 4.0 core, sharing with the
+  context current on the calling thread (SDL's `SHARE_WITH_CURRENT_CONTEXT`). The WGL extension entry
+  points are loaded once through a throwaway legacy context; GL entry points when the first real context
+  is current. xemu's `early_context_init` creates the render and display contexts plus a temporary one for
+  `pgraph_gl_determine_gpu_properties` and leaves the **display** context current on that thread;
+  `pgraph_gl_init` (renderer init, `pgraph_init_thread`) makes the **render** context current on its thread.
+- **QEMU headers from xemu's tree** (unmodified, `src/gpu/xemu/include`, `xemu/util`): `qemu/lru.h`,
+  `qemu/queue.h` (replaces the empty shim), `qemu/mstring.h`, `qemu/fast-hash.h` + `util/fast-hash.c`
+  (xxHash 0.8.3 XXH3, vendored in `src/gpu/xxhash`).
+- **Shims**: `glib.h` (moved out of `qemu/osdep.h`; adds `GString`, `g_autoptr`, `G_GNUC_PRINTF`,
+  `g_malloc_n`, `g_assert_not_reached`), `typeof` (QEMU is gnu11, the lib builds as c11),
+  `QEMU_BUILD_BUG_MSG`, `qatomic_xchg/cmpxchg`, `qemu_thread_create/join` (Win32 threads),
+  `qemu_fopen/mkdir/unlink`, `TARGET_PAGE_ALIGN`, `VGADisplayParams` + `VGACommonState.get_resolution/
+  get_params` (to be filled by `mksm_gpu.c` in 2.H.4b), `xemu-version.h`, config fields
+  `display.quality.surface_scale` (1) and `perf.cache_shaders` (off).
+- **Dirty memory and accelerator** (`xemu_stubs.c`): `memory_region_test_and_clear_dirty` always returns
+  true and `memory_region_set_client_dirty` is a no-op (the "always dirty" plan above), so vertex data
+  is re-uploaded per draw range and textures re-hashed. `tcg_enabled()` returns **true**: under xemu's
+  KVM/WHPX path a surface asks the dirty bitmap whether the CPU wrote it, which with "always dirty" would
+  re-upload every surface from guest RAM over what the GPU drew; under TCG it registers a CPU
+  access callback instead, which here is inert (`mem_access_callback_insert` returns NULL). So surfaces
+  are never refreshed from guest memory until 2.H.6 adds a real trigger.
+- **Shader disk cache off** (`perf.cache_shaders = false`); `xemu_settings_get_base_path()` points at
+  `%LOCALAPPDATA%\mksm-pc\` because `pgraph_gl_init_shaders` creates `shaders/` there regardless, and
+  starts its (immediately returning) cache-load thread.
+- **Linking**: the imported `mksm_gpu` target carries `opengl32;gdi32;user32`. With the GL renderer in
+  the archive, `nv2a_context_init` runs its `early_context_init` even when the null renderer is
+  configured (xemu creates every registered renderer's contexts), so GL contexts exist in null mode too.
+
+Check: `gpu_link gl` (CTest `gpu_link_gl`) brings up the OpenGL renderer on a scratch device: GL 4.0
+core, NVIDIA RTX 2060 / driver 596.49 on the dev machine, no GL error after init, clean teardown.
+
 ## Order of work (plan 2.H.2-2.H.9)
 
 1. **2.H.2 Capture + replay**: done — the title screen (2.H.2a) and the first level frame (2.H.2b,
@@ -260,8 +305,9 @@ imported by the top-level build (see `CLAUDE.md`, Build):
    - **2.H.3b Hook**: the toolkit patch (`RECOMP_PB_GPU=1` routes methods to `pgraph_method`),
      `vram_ptr`/RAMIN views in `main.c`; the game boots to the title the same as before (sync
      still works), drawing nothing, and smoke `pad` still passes with `RECOMP_PB_GPU=0`.
-3. **2.H.4 GL backend up**: WGL context on the executor thread, epoxy/glad, `gl/` + `glsl/` built;
-   clears and flips shown in the window.
+3. **2.H.4 GL backend up**, in two steps: **2.H.4a** build (done, "The GL backend build" above);
+   **2.H.4b** in the game: OpenGL selected under `RECOMP_PB_GPU=1`, contexts on the ack thread, the
+   framebuffer surface presented into the game window at the flip, VBlank pacing at `FLIP_STALL`.
 4. **2.H.5 Draws**: the menu capture renders (vertex fetch, generated shaders, textures as xemu
    has them), compared against the software reference.
 5. **2.H.6 Movies and render targets**: Sofdec frames (CPU writes into texture memory: the dirty

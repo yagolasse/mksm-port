@@ -11,21 +11,47 @@ xemu NV2A PGRAPH renderer
 
   | License                                  | Files                                        |
   |------------------------------------------|----------------------------------------------|
-  | GPL-2.0 or GPL-3.0 (LICENSES/GPL-2.0.txt, | pgraph/vsh_regs.h                            |
-  | LICENSE)                                 |                                              |
-  | MIT (text in the file header)            | pgraph/s3tc.c, pgraph/s3tc.h                 |
+  | GPL-2.0 or GPL-3.0 (LICENSES/GPL-2.0.txt, | pgraph/vsh_regs.h, pgraph/glsl/psh.c,        |
+  | LICENSE)                                 | pgraph/glsl/vsh-prog.c, pgraph/glsl/vsh-prog.h|
+  | MIT (text in the file header)            | pgraph/s3tc.c, pgraph/s3tc.h,                |
+  |                                          | pgraph/thirdparty/gloffscreen/common.c,      |
+  |                                          | pgraph/thirdparty/gloffscreen/gloffscreen.h  |
   | LGPL-2.1-or-later (LICENSES/LGPL-2.1.txt) | everything else: nv2a.h, nv2a_int.h,         |
   |                                          | nv2a_regs.h, debug.h, trace.h, pgraph/*.c,   |
   |                                          | pgraph/*.h, pgraph/methods.h.inc,            |
-  |                                          | pgraph/null/renderer.c                       |
+  |                                          | pgraph/null/renderer.c, pgraph/gl/*,         |
+  |                                          | pgraph/glsl/* (but the GPL files above)      |
+
+  Also from xemu 36334d9, copied unmodified to src/gpu/xemu/ at xemu's paths:
+  | License                                  | Files                                        |
+  |------------------------------------------|----------------------------------------------|
+  | MIT (text in the file header)            | include/qemu/lru.h                           |
+  | BSD-3-Clause (text in the file header)   | include/qemu/queue.h (QEMU's, from NetBSD)   |
+  | GPL-2.0-or-later (QEMU's default for     | include/qemu/fast-hash.h,                    |
+  | files without a header; LICENSES/GPL-2.0) | include/qemu/mstring.h, util/fast-hash.c     |
 
   src/gpu/xemu/shim/ holds stand-ins for the QEMU/glib/xemu headers those files include (written
-  for this port, mirroring QEMU's interfaces; LGPL-2.1-or-later).
+  for this port, mirroring QEMU's interfaces; LGPL-2.1-or-later). src/gpu/gloffscreen_wgl.c is
+  this port's WGL implementation of the gloffscreen interface (MIT), in place of xemu's SDL one.
 
 nv2a_vsh_cpu
   Source:  https://github.com/xemu-project/nv2a_vsh_cpu, commit 561fe80 (the revision xemu pins)
   Path:    src/gpu/nv2a_vsh_cpu/ (src/*.c, src/*.h copied unmodified)
   License: The Unlicense (public domain), src/gpu/nv2a_vsh_cpu/LICENSE
+
+xxHash 0.8.3 (behind xemu's fast_hash)
+  Source:  https://github.com/Cyan4973/xxHash, tag v0.8.3 (the version xemu's wrap pins)
+  Path:    src/gpu/xxhash/ (xxhash.h, xxhash.c copied unmodified)
+  License: BSD-2-Clause, src/gpu/xxhash/LICENSE
+
+glad 2.0.8 (OpenGL / WGL loader, generated)
+  Path:    src/gpu/glad/ (generated: --api 'gl:core=4.6,wgl=1.0' --extensions
+           GL_ARB_ES2_compatibility,GL_EXT_texture_compression_s3tc,
+           GL_EXT_texture_filter_anisotropic,GL_KHR_debug,WGL_ARB_create_context,
+           WGL_ARB_create_context_profile,WGL_ARB_extensions_string,WGL_ARB_pixel_format,
+           WGL_EXT_extensions_string,WGL_EXT_swap_control c --loader)
+  License: generated code is WTFPL OR CC0-1.0; the Khronos API definitions it is built from are
+           Apache-2.0 (SPDX line in each file); khrplatform.h is MIT-style (text in the file)
 
 xboxrecomp
   Source:  https://github.com/sp00nznet/xboxrecomp (git submodule, external/xboxrecomp)

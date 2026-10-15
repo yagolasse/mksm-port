@@ -46,6 +46,12 @@ typedef uint64_t hwaddr;
 #define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))
 #define tostring(s) #s
 #define stringify(s) tostring(s)
+#define QEMU_BUILD_BUG_MSG(x, msg) _Static_assert(!(x), msg)
+#define QEMU_BUILD_BUG_ON(x) QEMU_BUILD_BUG_MSG(x, "not expecting: " #x)
+/* QEMU builds as gnu11; the vendored files spell __typeof__ as typeof. */
+#ifndef typeof
+#define typeof __typeof__
+#endif
 
 /* qemu/host-utils.h */
 static inline int ctz32(uint32_t val) { return val ? __builtin_ctz(val) : 32; }
@@ -64,39 +70,21 @@ static inline void stq_le_p(void *p, uint64_t v) { memcpy(p, &v, 8); }
 #define qatomic_set(ptr, i) __atomic_store_n(ptr, i, __ATOMIC_RELAXED)
 #define qatomic_inc(ptr) ((void)__atomic_fetch_add(ptr, 1, __ATOMIC_SEQ_CST))
 #define qatomic_dec(ptr) ((void)__atomic_fetch_sub(ptr, 1, __ATOMIC_SEQ_CST))
+#define qatomic_xchg(ptr, i) __atomic_exchange_n(ptr, i, __ATOMIC_SEQ_CST)
+#define qatomic_cmpxchg(ptr, old, new) ({                                  \
+    __typeof__(*(ptr)) _old = (old);                                       \
+    __atomic_compare_exchange_n(ptr, &_old, new, false, __ATOMIC_SEQ_CST,   \
+                                __ATOMIC_SEQ_CST);                         \
+    _old; })
 
-/* glib */
-typedef char gchar;
-typedef int gboolean;
-typedef void *gpointer;
-typedef unsigned int guint;
-#define g_malloc(n) malloc(n)
-#define g_malloc0(n) calloc(1, (n))
-#define g_realloc(p, n) realloc((p), (n))
-#define g_free(p) free(p)
-#define g_new(type, n) ((type *)malloc(sizeof(type) * (n)))
-#define g_new0(type, n) ((type *)calloc((n), sizeof(type)))
-#define g_strdup(s) _strdup(s)
-static inline void g_autoptr_cleanup_free(void *pp) { free(*(void **)pp); }
-#define g_autofree __attribute__((cleanup(g_autoptr_cleanup_free)))
-static inline gchar *g_strdup_vprintf(const gchar *fmt, va_list ap)
-{
-    va_list ap2;
-    va_copy(ap2, ap);
-    int n = vsnprintf(NULL, 0, fmt, ap2);
-    va_end(ap2);
-    gchar *s = (gchar *)malloc((size_t)n + 1);
-    vsnprintf(s, (size_t)n + 1, fmt, ap);
-    return s;
-}
-static inline gchar *g_strdup_printf(const gchar *fmt, ...)
-{
-    va_list ap;
-    va_start(ap, fmt);
-    gchar *s = g_strdup_vprintf(fmt, ap);
-    va_end(ap);
-    return s;
-}
+#include "glib.h"
+
+/* qemu/osdep.h file helpers (the GL shader cache) */
+#include <direct.h>
+#include <io.h>
+#define qemu_fopen(path, mode) fopen((path), (mode))
+#define qemu_mkdir(path) _mkdir(path)
+#define qemu_unlink(path) _unlink(path)
 
 /* The big QEMU lock: there is no QEMU here, PGRAPH runs on the pushbuffer thread. */
 static inline void bql_lock(void) {}

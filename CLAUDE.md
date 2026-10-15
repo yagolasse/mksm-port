@@ -21,8 +21,12 @@ statically recompiling the retail `default.xbe` to C with
 - `src/gpu/`: GPU renderer library `mksm_gpu` (xemu's PGRAPH; the game uses it with `RECOMP_PB_GPU=1`): its own
   CMake project built with clang-cl (see Build). `xemu/hw/xbox/nv2a/` = xemu files **copied unmodified**
   (same paths as in xemu, so they diff cleanly; never edit them, fix things in `xemu/shim/` or the glue);
-  `xemu/shim/` = stand-ins for the QEMU/glib/xemu headers they include; `nv2a_vsh_cpu/` = vendored
-  library; `xemu_stubs.c` = externals from unported xemu files; `mksm_gpu.c` = stands in for xemu's PFIFO
+  `xemu/include/`, `xemu/util/` = QEMU headers/sources from xemu's tree that the GL renderer uses
+  (`qemu/lru.h`, `queue.h`, `mstring.h`, `fast-hash`), also unmodified;
+  `xemu/shim/` = stand-ins for the QEMU/glib/xemu headers they include (incl. `epoxy/gl.h` → glad);
+  `nv2a_vsh_cpu/`, `xxhash/` = vendored libraries; `glad/` = generated GL 4.6 core/WGL loader;
+  `gloffscreen_wgl.c` = xemu's GL context layer on WGL (hidden windows, 4.0 core, shared contexts);
+  `xemu_stubs.c` = externals from unported xemu files; `mksm_gpu.c` = stands in for xemu's PFIFO
   (RAMHT lookup, acks the NOP-notify and flip-stall waits); `mksm_gpu.h` = the plain-C interface for
   cl-built code. Licenses: `LICENSE` (GPL-3.0, the combined work), `LICENSES/`, `NOTICE` (file → license)
 - `external/xboxrecomp/`: toolkit git submodule (pinned). Prefer fixing things in our `src/` first;
@@ -112,8 +116,11 @@ so they need no game data. Run them after changing a tool:
 ```bash
 python -m unittest discover -s tests  # or: ctest --test-dir build -C Release -R tools
 ```
-`gpu_link` (CTest, ~0.1 s): a cl/link.exe exe that brings up xemu's PGRAPH with the null renderer through
-`mksm_gpu_selftest()`; run it after touching `src/gpu`.
+`gpu_link` / `gpu_link_gl` (CTest, ~1 s each): a cl/link.exe exe that brings up xemu's PGRAPH through
+`mksm_gpu_selftest()` with the null renderer / the OpenGL renderer (`gpu_link gl`, needs a GL 4.0 core
+driver; prints the GL version and device); run them after touching `src/gpu`. Linking the GL renderer
+means GL contexts are created in both modes (xemu's `nv2a_context_init` runs every renderer's
+`early_context_init`).
 Run the smoke test after every re-lift or rebuild (a re-lift can break a path that used to work):
 ```bash
 python tools/smoke_test.py            # or: ctest --test-dir build -C Release --output-on-failure

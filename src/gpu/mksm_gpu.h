@@ -13,9 +13,10 @@
 extern "C" {
 #endif
 
-/* Brings up xemu's PGRAPH with the null renderer on a scratch NV2AState, prints one line to
- * stdout, tears it down. Returns 0 on success. Used by the gpu_link check (plan 2.H.3a). */
-int mksm_gpu_selftest(void);
+/* Brings up xemu's PGRAPH with the null (opengl = 0) or OpenGL renderer on a scratch
+ * NV2AState, prints a status line to stdout, tears it down. Returns 0 on success. Used by the
+ * gpu_link checks (plan 2.H.3a, 2.H.4a). */
+int mksm_gpu_selftest(int opengl);
 
 /* Host views of the guest memory PGRAPH reads and writes. */
 typedef struct MksmGpuMemory {

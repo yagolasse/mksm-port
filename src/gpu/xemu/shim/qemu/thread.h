@@ -39,3 +39,41 @@ static inline void qemu_event_destroy(QemuEvent *e) { CloseHandle(e->h); }
 static inline void qemu_event_set(QemuEvent *e) { SetEvent(e->h); }
 static inline void qemu_event_reset(QemuEvent *e) { ResetEvent(e->h); }
 static inline void qemu_event_wait(QemuEvent *e) { WaitForSingleObject(e->h, INFINITE); }
+
+/* QEMU threads: only joinable ones are created (the GL shader cache's disk threads). */
+#define QEMU_THREAD_JOINABLE 0
+#define QEMU_THREAD_DETACHED 1
+typedef struct QemuThreadStart {
+    void *(*fn)(void *);
+    void *arg;
+} QemuThreadStart;
+static DWORD WINAPI qemu_thread_trampoline(LPVOID p)
+{
+    QemuThreadStart start = *(QemuThreadStart *)p;
+    free(p);
+    start.fn(start.arg);
+    return 0;
+}
+static inline void qemu_thread_create(QemuThread *t, const char *name, void *(*fn)(void *),
+                                      void *arg, int mode)
+{
+    (void)name;
+    QemuThreadStart *start = (QemuThreadStart *)malloc(sizeof(*start));
+    start->fn = fn;
+    start->arg = arg;
+    t->h = CreateThread(NULL, 0, qemu_thread_trampoline, start, 0, NULL);
+    assert(t->h);
+    if (mode == QEMU_THREAD_DETACHED) {
+        CloseHandle(t->h);
+        t->h = NULL;
+    }
+}
+static inline void *qemu_thread_join(QemuThread *t)
+{
+    if (t->h) {
+        WaitForSingleObject(t->h, INFINITE);
+        CloseHandle(t->h);
+        t->h = NULL;
+    }
+    return NULL;
+}

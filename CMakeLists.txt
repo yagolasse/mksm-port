@@ -141,7 +141,9 @@ if(MKSM_CLANG_CL AND EXISTS "${MKSM_CLANG_CL}" AND MKSM_NINJA)
     add_library(mksm_gpu STATIC IMPORTED GLOBAL)
     set_target_properties(mksm_gpu PROPERTIES
         IMPORTED_LOCATION "${MKSM_GPU_LIB}"
-        INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu")
+        INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu"
+        # The OpenGL renderer: WGL contexts on hidden windows (gloffscreen_wgl.c).
+        INTERFACE_LINK_LIBRARIES "opengl32;gdi32;user32")
     add_dependencies(mksm_gpu mksm_gpu_build)
 
     add_executable(gpu_link src/gpu/gpu_link.c)
@@ -164,9 +166,11 @@ endif()
 # never in the repo: without default.xbe in MKSM_GAME_DIR it is skipped.
 #   ctest --test-dir build -C Release --output-on-failure [-R tools|smoke]
 enable_testing()
-# gpu_link: xemu's PGRAPH + null renderer come up from a cl/link.exe-built exe.
+# gpu_link: xemu's PGRAPH + null renderer come up from a cl/link.exe-built exe;
+# gpu_link_gl: the same with the OpenGL renderer (needs a GL 4.0 core driver).
 if(TARGET gpu_link)
     add_test(NAME gpu_link COMMAND gpu_link)
+    add_test(NAME gpu_link_gl COMMAND gpu_link gl)
 endif()
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)

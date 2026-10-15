@@ -28,6 +28,8 @@ typedef struct MksmGpuMemory {
                                        (RAMHT location/size, CACHE1 channel id) */
     const volatile uint32_t *dma_put; /* the channel's DMA_PUT: texture and vertex memory is
                                          re-checked once per kick (NULL: on every use) */
+    volatile uint32_t *pgraph_fence; /* the title's view of NV_PGRAPH_PATT_COLOR0, which D3D
+                                        polls for its pushbuffer fence (NULL: not kept) */
 } MksmGpuMemory;
 
 /* Sets up xemu's PGRAPH on a device that uses these views, with the OpenGL (opengl = 1) or
@@ -41,6 +43,11 @@ int mksm_gpu_init(const MksmGpuMemory *mem, int opengl);
 typedef void (*MksmGpuPresentFn)(const uint32_t *xrgb, unsigned width, unsigned height,
                                  unsigned draws);
 void mksm_gpu_set_present(MksmGpuPresentFn fn);
+
+/* Receives the parameter of each software notify (NO_OPERATION with a non-zero parameter),
+ * which on hardware interrupts the title's GPU handler. Runs on the method thread. */
+typedef void (*MksmGpuNotifyFn)(uint32_t param);
+void mksm_gpu_set_notify(MksmGpuNotifyFn fn);
 
 /* VBlank pacing: with hz > 0 (the default is 59.94, NTSC) a flip waits for the next
  * VBlank, the way the title's FLIP_STALL waits for the CRTC. 0 turns it off. */

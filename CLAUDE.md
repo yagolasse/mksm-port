@@ -178,8 +178,11 @@ samples every thread's stack each period (default 1000 us) for dur_ms, then prin
 with >= 2% CPU: CPU time, start routine, top exclusive/inclusive functions (`module!symbol`; guest
 code shows as `sub_XXXXXXXX`, the renderer lib has /Z7 debug info). For the level with the `pad`
 script: `RECOMP_PROF=65000,20000 python tools/smoke_test.py --gpu --only pad`.
-`RECOMP_WBC_ACK=1` (experimental, hangs the GPU path, plan 2.H.8b): a thread acks D3D's kickoff
-flush wait at once instead of the ack thread doing it after each executed segment.
+`RECOMP_WBC_ACK=1` (experimental, GPU path only, plan 2.H.8b): a thread acks D3D's kickoff flush
+wait at once instead of the ack thread doing it after each executed segment, so the title runs ahead
+of the executor. GPU boots run with it; the level still breaks (the ring walk meets overwritten
+commands, logged as `[PB] walk left the contiguous window`; 2.H.8b2). On the software executor it
+hangs (no fence mirror / software methods there).
 `RECOMP_PB_EXEC=1` (set by the run scripts) is required: D3D init waits on GPU semaphore releases,
 which only the pushbuffer executor performs.
 The run scripts also set `RECOMP_AC97_READY=1` (emulated APU, so `DirectSoundCreate` succeeds) and

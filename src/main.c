@@ -230,6 +230,14 @@ typedef struct MCPXAPUState MCPXAPUState;
 
 typedef void (*nv2a_pb_method_hook_fn)(uint32_t subch, uint32_t method, uint32_t param);
 extern void nv2a_pb_set_method_hook(nv2a_pb_method_hook_fn fn);
+extern int xbox_Nv2aSoftwareMethod(uint32_t param);
+
+/* Software notifies go to the toolkit, which does what D3D's interrupt handler would
+ * (method 5 sets the event D3D's pushbuffer-space wait blocks on). */
+static void gpu_notify(uint32_t param)
+{
+    xbox_Nv2aSoftwareMethod(param);
+}
 extern void xbox_FramebufferWindowPresentPixels(const uint32_t *xrgb, uint32_t width,
                                                 uint32_t height);
 extern void xbox_FramebufferWindowFrameStats(uint32_t draws);
@@ -241,6 +249,7 @@ extern void xbox_FramebufferWindowFrameStats(uint32_t draws);
 #define GPU_PRAMIN_OFF   0x00700000u
 #define GPU_PRAMIN_SIZE  (1u << 20)
 #define GPU_DMA_PUT_OFF  0x00800040u        /* channel 0's DMA_PUT (USER block) */
+#define GPU_FENCE_OFF    0x00400B10u        /* NV_PGRAPH_PATT_COLOR0 */
 
 /* Each GPU frame goes to the framebuffer window (RECOMP_FB_WINDOW), as the software
  * executor's flip does with guest memory. */
@@ -250,11 +259,12 @@ static void gpu_present(const uint32_t *xrgb, unsigned width, unsigned height, u
     xbox_FramebufferWindowFrameStats(draws);
 }
 
-static void gpu_init_from_env(void)
+/* Returns true when the GPU renderer is up. */
+static bool gpu_init_from_env(void)
 {
     const char *e = getenv("RECOMP_PB_GPU");
     if (!e || strcmp(e, "1") != 0)
-        return;
+        return false;
     const char *renderer = getenv("RECOMP_PB_GPU_RENDERER");
     int opengl = !(renderer && strcmp(renderer, "null") == 0);
     const char *vblank = getenv("RECOMP_PB_GPU_VBLANK");
@@ -268,6 +278,7 @@ static void gpu_init_from_env(void)
         .ramin_size = GPU_PRAMIN_SIZE,
         .pfifo = (const volatile uint32_t *)(base + GPU_APERTURE_VA + GPU_PFIFO_OFF),
         .dma_put = (const volatile uint32_t *)(base + GPU_APERTURE_VA + GPU_DMA_PUT_OFF),
+        .pgraph_fence = (volatile uint32_t *)(base + GPU_APERTURE_VA + GPU_FENCE_OFF),
     };
     /* RECOMP_PB_GPU_DIRTY=always: every texture/vertex range reads as dirty on every use
      * (the pre-2.H.8 behaviour, for A/B runs and as a fallback). */
@@ -276,17 +287,20 @@ static void gpu_init_from_env(void)
         mem.dma_put = NULL;
     if (mksm_gpu_init(&mem, opengl) != 0) {
         fprintf(stderr, "[BOOT] RECOMP_PB_GPU: PGRAPH init failed, software executor\n");
-        return;
+        return false;
     }
     mksm_gpu_set_present(gpu_present);
+    mksm_gpu_set_notify(gpu_notify);
     nv2a_pb_set_method_hook(mksm_gpu_method);
     fprintf(stderr, "[BOOT] RECOMP_PB_GPU: pushbuffer -> xemu PGRAPH\n");
+    return true;
 }
 #else
-static void gpu_init_from_env(void)
+static bool gpu_init_from_env(void)
 {
     if (getenv("RECOMP_PB_GPU"))
         fprintf(stderr, "[BOOT] RECOMP_PB_GPU ignored: built without mksm_gpu\n");
+    return false;
 }
 #endif
 
@@ -295,9 +309,13 @@ static void gpu_init_from_env(void)
  * but only once per pass, after executing the whole previous segment (and, with the GPU
  * renderer, the present and the VBlank wait), so the title and the GPU run in lockstep:
  * the title spends ~93% of its time in that spin in the level (plan 2.H.8). Host memory is
- * coherent, so there is nothing to flush, and RECOMP_WBC_ACK=1 has this thread ack the bit
- * within ~0.25 ms. Opt-in: with it, the GPU path hangs ~10 s into the boot in D3D's
- * pushbuffer-space wait (the title runs ahead of the executor; plan 2.H.8b). */
+ * coherent, so there is nothing to flush, and this thread acks the bit within ~0.25 ms.
+ * Running ahead, the title then waits on two things only the GPU path provides: D3D's
+ * pushbuffer fence (PGRAPH PATT_COLOR0, mirrored by mksm_gpu) and software method 5
+ * (gpu_notify → xbox_Nv2aSoftwareMethod); with both, GPU boots run without a hang. Still
+ * opt-in (RECOMP_WBC_ACK=1, GPU path only; the software executor has neither and hangs):
+ * in the level the ring walk then meets commands the title has already overwritten
+ * (plan 2.H.8b2). */
 #define WBC_FLUSH_VA   (0xFD000000u + 0x100410u)    /* NV_PFB_WBC */
 #define WBC_FLUSH_BUSY 0x00010000u
 

@@ -343,7 +343,25 @@ whose `END` never came, or a stage program change without its texture setup, and
 PUT (`nv2a_pb_scan_ring`). A walk that never meets PUT is logged (`[PB] ring walk ... never reached
 PUT`); `RECOMP_PB_WRAP_TRACE=1` logs the first wraps with the JUMP address and how many bytes the
 old bounds would have skipped. After it: 10 of 10 short GPU boots with 0 asserts and 0 masked
-stages. The texture-stage guard stays as a safety net.
+stages. The texture-stage guard stays as a safety net. The walk also stops (and logs `[PB] walk left
+the contiguous window`) if a JUMP or CALL leads outside the contiguous window, instead of faulting.
+
+## Running ahead of the executor (2.H.8b)
+
+D3D's kickoff waits for the WBC flush bit, which the toolkit's ack thread clears only after executing
+the previous segment, so title and renderer run in lockstep. Acking it at once (`RECOMP_WBC_ACK=1`)
+lets the title run ahead, and then it depends on two pieces of GPU feedback the hook-based design
+did not provide:
+- **The pushbuffer fence.** D3D tracks GPU progress through a PGRAPH register that a graphics
+  object method writes (xemu keeps it in `pg->regs`, not in the guest's register page). The glue
+  copies it to the guest page after each method (`MksmGpuMemory.pgraph_fence`, `[XGPU] fences`).
+- **Software methods.** `NO_OPERATION` with a parameter raises an interrupt whose handler (in the
+  title's D3D) does work by parameter; nothing delivers PGRAPH interrupts here. The glue hands each
+  parameter to a callback (`mksm_gpu_set_notify`); `main.c` passes it to the toolkit's
+  `xbox_Nv2aSoftwareMethod`, which reproduces method 5 (set the pushbuffer-space event; the others
+  are logged).
+With both, GPU boots run with the ack on. Still open: in the level the ring walk meets commands
+already overwritten (2.H.8b2), so the ack stays opt-in.
 
 ## Order of work (plan 2.H.2-2.H.9)
 
@@ -376,6 +394,7 @@ stages. The texture-stage guard stays as a safety net.
    query), surface downloads where the CPU reads them.
 6. **2.H.7 Level frame**: the level capture renders; fix gaps in the shims.
 7. **2.H.8 Performance**: 2.H.8a done (profile with `RECOMP_PROF`, dirty once per kick, see
-   "Dirty tracking"); next the title/executor lockstep at the kickoff's WBC flush wait (2.H.8b),
+   "Dirty tracking"); 2.H.8b1 done (fence + software method 5, "Running ahead of the executor");
+   next the level ring overwrite with the ack on (2.H.8b2),
    then the GL driver stalls in uniform uploads and the decode cost; frame pacing (2.4).
 8. **2.H.9 Parity + default** (unchanged).

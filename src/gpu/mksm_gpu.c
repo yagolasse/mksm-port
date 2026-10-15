@@ -10,8 +10,12 @@
  * puller's stalls. Nothing here delivers NV2A interrupts to the title, and the stream can't
  * be held back, so the two waits PGRAPH can enter are completed at once, the way the
  * title's interrupt handler and the VBlank would:
- *   - NO_OPERATION with a parameter (a software notify): the error interrupt is acked;
+ *   - NO_OPERATION with a parameter (a software notify): the error interrupt is acked, and
+ *     the parameter goes to the notify callback, which does what the title's handler would;
  *   - FLIP_STALL: one VBlank's NV_PGRAPH_INCREMENT (read buffer + 1).
+ * PGRAPH's registers live in xemu's state, not in the guest's register page, so the one the
+ * title reads back is copied there: NV_PGRAPH_PATT_COLOR0, D3D's pushbuffer fence (see
+ * mirror_fence).
  * The software executor never raised either, so the title sees the same behaviour.
  * pfifo_kick / nv2a_update_irq stay call counters (xemu_stubs.c): there is no FIFO thread
  * to wake, and no interrupt line.
@@ -35,11 +39,13 @@
 static NV2AState *s_dev;
 static MemoryRegion s_vram;
 static const volatile uint32_t *s_pfifo;
+static volatile uint32_t *s_fence;
 static MksmGpuPresentFn s_present;
+static MksmGpuNotifyFn s_notify;
 static double s_vblank_hz = 60000.0 / 1001.0;
 
 static struct {
-    unsigned long methods, objects, draws, flips, nops, semaphores, bad_handles;
+    unsigned long methods, objects, draws, flips, nops, fences, semaphores, bad_handles;
     unsigned long presents, no_surface, masked_stages;
     unsigned long frame_draws;      /* draws since the last flip */
     unsigned long last_nonblack;    /* non-black pixels of the last presented frame */
@@ -103,6 +109,11 @@ void mksm_gpu_set_present(MksmGpuPresentFn fn)
     s_present = fn;
 }
 
+void mksm_gpu_set_notify(MksmGpuNotifyFn fn)
+{
+    s_notify = fn;
+}
+
 void mksm_gpu_set_vblank_hz(double hz)
 {
     s_vblank_hz = hz;
@@ -126,6 +137,7 @@ int mksm_gpu_init(const MksmGpuMemory *mem, int opengl)
     qemu_cond_init(&d->pfifo.fifo_cond);
     qemu_cond_init(&d->pfifo.fifo_idle_cond);
     s_pfifo = mem->pfifo;
+    s_fence = mem->pgraph_fence;
     xemu_stubs_set_dma_put(mem->dma_put);
     d->vga.get_resolution = scanout_get_resolution;
     d->vga.get_params = scanout_get_params;
@@ -158,13 +170,27 @@ static void report(void)
     last_ns = now;
     fprintf(stderr,
             "[XGPU] methods %lu, objects %lu, draws %lu, flips %lu, nop notifies %lu, "
-            "semaphores %lu, bad handles %lu, irq updates %lu, dirty epochs %lu, "
+            "fences %lu, semaphores %lu, bad handles %lu, irq updates %lu, dirty epochs %lu, "
             "masked stages %lu, presents %lu (no surface %lu, last %ux%u, %lu non-black px)\n",
             s_stats.methods, s_stats.objects, s_stats.draws, s_stats.flips, s_stats.nops,
-            s_stats.semaphores, s_stats.bad_handles, xemu_stub_counts.update_irq,
+            s_stats.fences, s_stats.semaphores, s_stats.bad_handles, xemu_stub_counts.update_irq,
             xemu_stub_counts.dirty_epochs,
             s_stats.masked_stages, s_stats.presents, s_stats.no_surface, s_stats.last_w, s_stats.last_h,
             s_stats.last_nonblack);
+}
+
+/* D3D's pushbuffer fence: it sends a context-pattern object's SET_MONOCHROME_COLOR0 with a
+ * (pushbuffer position, 5-bit counter) word, which PGRAPH keeps in NV_PGRAPH_PATT_COLOR0, and
+ * reads that register to learn how far the GPU has got (free pushbuffer space, and the wait
+ * after a kick for the counter it just sent). Copied to the guest's register page whenever
+ * it changes; called under pgraph.lock. */
+static void mirror_fence(PGRAPHState *pg)
+{
+    uint32_t v = pgraph_reg_r(pg, NV_PGRAPH_PATT_COLOR0);
+    if (s_fence && *s_fence != v) {
+        *s_fence = v;
+        s_stats.fences++;
+    }
 }
 
 /* Remembers the colour surface a draw or clear writes, as xemu's surface binding computes
@@ -381,6 +407,7 @@ void mksm_gpu_method(uint32_t subch, uint32_t method, uint32_t param)
         restore_pending = true;
     }
     pgraph_method(d, subch, method, param, &param, 1, 1, true);
+    mirror_fence(pg);
     if (restore_pending && subch == 0 && method == NV097_SET_BEGIN_END &&
         param == NV097_SET_BEGIN_END_OP_END) {
         pgraph_reg_w(pg, NV_PGRAPH_SHADERPROG, restore_prog);
@@ -408,9 +435,13 @@ void mksm_gpu_method(uint32_t subch, uint32_t method, uint32_t param)
         }
     }
 
-    /* The title's interrupt handler acks the notify (it writes NV_PGRAPH_INTR). */
+    /* The title's interrupt handler services the notify and acks it (it writes
+     * NV_PGRAPH_INTR). */
     if (pg->waiting_for_nop) {
         s_stats.nops++;
+        if (s_notify) {
+            s_notify(param);
+        }
         pgraph_write(d, NV_PGRAPH_INTR, NV_PGRAPH_INTR_ERROR, 4);
     }
     /* The VBlank moves the read buffer on (NV_PGRAPH_INCREMENT), which ends the stall. */

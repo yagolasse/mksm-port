@@ -23,9 +23,10 @@
  * Scanout (OpenGL renderer): the title never writes PCRTC_START (D3D's VBlank handler would,
  * and there is none), so the flip shows the surface the title drew into last, as the software
  * executor does. That address goes into pcrtc.start and the VGA hooks report its pitch and
- * size, then xemu's own pgraph_gl_sync renders it into the display buffer, which is read back
- * and handed to the present callback. In xemu the UI thread asks for this and waits; here it
- * runs on the method thread at the flip, before the VBlank wait.
+ * size. The surface is read back without waiting for the GPU and handed to the present
+ * callback one flip later (present_async; RECOMP_PB_GPU_PRESENT=sync = xemu's own display
+ * pass, pgraph_gl_sync, as xemu's UI thread asks for it). Both run on the method thread at
+ * the flip, before the VBlank wait.
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
@@ -47,6 +48,7 @@ static double s_vblank_hz = 60000.0 / 1001.0;
 static struct {
     unsigned long methods, objects, draws, flips, nops, fences, semaphores, bad_handles;
     unsigned long presents, no_surface, masked_stages;
+    unsigned long surf_downloads, surf_uploads, surf_to_tex; /* xemu's counters, summed */
     unsigned long frame_draws;      /* draws since the last flip */
     unsigned long last_nonblack;    /* non-black pixels of the last presented frame */
     unsigned last_w, last_h;
@@ -183,11 +185,13 @@ static void report(void)
     fprintf(stderr,
             "[XGPU] methods %lu, objects %lu, draws %lu, flips %lu, nop notifies %lu, "
             "fences %lu, semaphores %lu, bad handles %lu, irq updates %lu, dirty epochs %lu, "
-            "tex pages hashed %lu changed %lu, masked stages %lu, presents %lu (no surface %lu, last %ux%u, %lu non-black px)\n",
+            "tex pages hashed %lu changed %lu, surface downloads %lu uploads %lu to-tex %lu, "
+            "masked stages %lu, presents %lu (no surface %lu, last %ux%u, %lu non-black px)\n",
             s_stats.methods, s_stats.objects, s_stats.draws, s_stats.flips, s_stats.nops,
             s_stats.fences, s_stats.semaphores, s_stats.bad_handles, xemu_stub_counts.update_irq,
             xemu_stub_counts.dirty_epochs, xemu_stub_counts.tex_pages_hashed,
             xemu_stub_counts.tex_pages_changed,
+            s_stats.surf_downloads, s_stats.surf_uploads, s_stats.surf_to_tex,
             s_stats.masked_stages, s_stats.presents, s_stats.no_surface, s_stats.last_w, s_stats.last_h,
             s_stats.last_nonblack);
 }
@@ -263,48 +267,20 @@ static void maybe_dump(const uint32_t *xrgb, unsigned w, unsigned h)
     fprintf(stderr, "[XGPU] dumped flip %lu (%ux%u) to %s\n", s_stats.flips, w, h, path);
 }
 
-/* The flip's scanout, OpenGL only: render the last-drawn surface into xemu's display buffer
- * (pgraph_gl_sync, as the UI's get_framebuffer_surface would), read it back, present it.
- * Called with pgraph.lock held. */
-static void present_scanout(NV2AState *d)
+/* Hands one frame (0xAARRGGBB words, rows `src_step` words apart, the first row at `src`)
+ * to the present callback as top-down 0x00RRGGBB rows. */
+static void present_pixels(const uint32_t *src, ptrdiff_t src_step, unsigned w, unsigned h,
+                           unsigned draws)
 {
-    PGRAPHState *pg = &d->pgraph;
-    PGRAPHGLState *r = pg->gl_renderer_state;
-    if (!r || !s_scanout.addr) {
-        s_stats.no_surface++;
-        return;
-    }
-    SurfaceBinding *surface = pgraph_gl_surface_get_within(d, s_scanout.addr);
-    if (!surface || !surface->color || !surface->width || !surface->height) {
-        s_stats.no_surface++;
-        return;
-    }
-    s_scanout.width = surface->width;
-    s_scanout.height = surface->height;
-    d->pcrtc.start = s_scanout.addr;
-    pgraph_gl_sync(d);
-
     static uint32_t *pixels;
     static size_t cap;
-    unsigned w = (unsigned)r->gl_display_buffer_width, h = (unsigned)r->gl_display_buffer_height;
     size_t n = (size_t)w * h;
     if (n > cap) {
-        pixels = (uint32_t *)g_realloc(pixels, n * 8);
+        pixels = (uint32_t *)g_realloc(pixels, n * 4);
         cap = n;
     }
-    /* Read into the second half of the buffer, then flip the rows (GL is bottom-up) into
-     * the first. GL_BGRA + 8_8_8_8_REV gives 0xAARRGGBB words. */
-    uint32_t *gl_rows = pixels + n;
-    glo_set_current(g_nv2a_context_display);
-    glBindTexture(GL_TEXTURE_2D, r->gl_display_buffer);
-    glPixelStorei(GL_PACK_ALIGNMENT, 4);
-    glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, gl_rows);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glo_set_current(g_nv2a_context_render);
-
     unsigned long nonblack = 0;
-    for (unsigned y = 0; y < h; y++) {
-        const uint32_t *src = gl_rows + (size_t)(h - 1 - y) * w;
+    for (unsigned y = 0; y < h; y++, src += src_step) {
         uint32_t *dst = pixels + (size_t)y * w;
         for (unsigned x = 0; x < w; x++) {
             uint32_t v = src[x] & 0x00FFFFFFu;
@@ -318,7 +294,140 @@ static void present_scanout(NV2AState *d)
     s_stats.last_nonblack = nonblack;
     maybe_dump(pixels, w, h);
     if (s_present) {
-        s_present(pixels, w, h, (unsigned)s_stats.frame_draws);
+        s_present(pixels, w, h, draws);
+    }
+}
+
+/* The scanout surface: the one the title drew into last, as xemu's pgraph_gl_sync finds it. */
+static SurfaceBinding *scanout_surface(NV2AState *d)
+{
+    if (!d->pgraph.gl_renderer_state || !s_scanout.addr) {
+        return NULL;
+    }
+    SurfaceBinding *surface = pgraph_gl_surface_get_within(d, s_scanout.addr);
+    if (!surface || !surface->color || !surface->width || !surface->height) {
+        return NULL;
+    }
+    s_scanout.width = surface->width;
+    s_scanout.height = surface->height;
+    return surface;
+}
+
+/* RECOMP_PB_GPU_PRESENT=sync: xemu's own display path, as the UI's get_framebuffer_surface
+ * would use it: pgraph_gl_sync renders the surface into the display buffer in the display
+ * context (waiting for the GPU twice), then a synchronous glGetTexImage reads it back. */
+static void present_sync(NV2AState *d, SurfaceBinding *surface)
+{
+    (void)surface;
+    PGRAPHGLState *r = d->pgraph.gl_renderer_state;
+    d->pcrtc.start = s_scanout.addr;
+    pgraph_gl_sync(d);
+
+    static uint32_t *gl_rows;
+    static size_t cap;
+    unsigned w = (unsigned)r->gl_display_buffer_width, h = (unsigned)r->gl_display_buffer_height;
+    size_t n = (size_t)w * h;
+    if (n > cap) {
+        gl_rows = (uint32_t *)g_realloc(gl_rows, n * 4);
+        cap = n;
+    }
+    /* GL_BGRA + 8_8_8_8_REV gives 0xAARRGGBB words; the display buffer is bottom-up. */
+    glo_set_current(g_nv2a_context_display);
+    glBindTexture(GL_TEXTURE_2D, r->gl_display_buffer);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, gl_rows);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glo_set_current(g_nv2a_context_render);
+    present_pixels(gl_rows + (size_t)(h - 1) * w, -(ptrdiff_t)w, w, h,
+                   (unsigned)s_stats.frame_draws);
+}
+
+/* The default present: the scanout surface is read straight from its texture in the render
+ * context into a pixel-pack buffer, and that buffer is mapped one flip later, when the GPU
+ * has long finished it. No context switch, no wait for the GPU; the window shows each frame
+ * one flip late. xemu's display pass only adds the PVIDEO overlay (its registers are never
+ * written here) and the scale to the CRTC mode (which is the surface size here), so a plain
+ * read of the surface gives the same pixels. The surface texture's first row is the top one.
+ * A surface format GL can't convert to BGRA8 (none seen) would need the display pass. */
+static void present_async(NV2AState *d, SurfaceBinding *surface)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHGLState *r = pg->gl_renderer_state;
+    static GLuint fbo, pbo[2];
+    static struct {
+        GLsync fence;
+        unsigned w, h, draws;
+    } slot[2];
+    static unsigned cur;
+
+    if (!fbo) {
+        glGenFramebuffers(1, &fbo);
+        glGenBuffers(2, pbo);
+    }
+    if (surface->upload_pending) {
+        pgraph_gl_upload_surface_data(d, surface, !tcg_enabled());
+    }
+
+    /* Start this frame's read. */
+    unsigned scale = pg->surface_scale_factor ? pg->surface_scale_factor : 1;
+    unsigned w = surface->width * scale, h = surface->height * scale;
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           surface->gl_buffer, 0);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo[cur]);
+    if (slot[cur].w * slot[cur].h != w * h) {
+        glBufferData(GL_PIXEL_PACK_BUFFER, (GLsizeiptr)w * h * 4, NULL, GL_STREAM_READ);
+    }
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    glReadPixels(0, 0, (GLsizei)w, (GLsizei)h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, r->gl_framebuffer);
+    if (slot[cur].fence) {
+        glDeleteSync(slot[cur].fence);
+    }
+    slot[cur].fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    slot[cur].w = w;
+    slot[cur].h = h;
+    slot[cur].draws = (unsigned)s_stats.frame_draws;
+    glFlush();
+
+    /* Present the previous frame's. */
+    unsigned prev = cur ^ 1;
+    cur = prev;
+    if (slot[prev].fence) {
+        glClientWaitSync(slot[prev].fence, GL_SYNC_FLUSH_COMMANDS_BIT, 5000000000ull);
+        glDeleteSync(slot[prev].fence);
+        slot[prev].fence = NULL;
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo[prev]);
+        const uint32_t *px = (const uint32_t *)glMapBufferRange(
+            GL_PIXEL_PACK_BUFFER, 0, (GLsizeiptr)slot[prev].w * slot[prev].h * 4,
+            GL_MAP_READ_BIT);
+        if (px) {
+            present_pixels(px, slot[prev].w, slot[prev].w, slot[prev].h, slot[prev].draws);
+            glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        }
+    }
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+}
+
+/* The flip's scanout, OpenGL only. Called with pgraph.lock held. */
+static void present_scanout(NV2AState *d)
+{
+    static int sync = -1;
+    if (sync < 0) {
+        const char *e = getenv("RECOMP_PB_GPU_PRESENT");
+        sync = e && strcmp(e, "sync") == 0;
+    }
+    SurfaceBinding *surface = scanout_surface(d);
+    if (!surface) {
+        s_stats.no_surface++;
+        return;
+    }
+    if (sync) {
+        present_sync(d, surface);
+    } else {
+        present_async(d, surface);
     }
 }
 
@@ -460,6 +569,12 @@ void mksm_gpu_method(uint32_t subch, uint32_t method, uint32_t param)
     /* The VBlank moves the read buffer on (NV_PGRAPH_INCREMENT), which ends the stall. */
     if (pg->waiting_for_flip) {
         s_stats.flips++;
+        /* FLIP_STALL just closed xemu's frame counters (nv2a_profile_flip_stall). */
+        const int *c = g_nv2a_stats.frame_history[(g_nv2a_stats.frame_ptr + NV2A_PROF_NUM_FRAMES - 1) %
+                                                  NV2A_PROF_NUM_FRAMES].counters;
+        s_stats.surf_downloads += (unsigned long)c[NV2A_PROF_SURF_DOWNLOAD];
+        s_stats.surf_uploads += (unsigned long)c[NV2A_PROF_SURF_UPLOAD];
+        s_stats.surf_to_tex += (unsigned long)c[NV2A_PROF_SURF_TO_TEX];
         qemu_mutex_lock(&pg->lock);
         present_scanout(d);
         qemu_mutex_unlock(&pg->lock);

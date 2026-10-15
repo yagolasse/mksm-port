@@ -315,11 +315,16 @@ core, NVIDIA RTX 2060 / driver 596.49 on the dev machine, no GL error after init
 - **Scanout**: the title never writes `PCRTC_START` (D3D's VBlank handler does that on hardware), so
   `mksm_gpu.c` remembers the colour surface of each draw/clear (colour DMA base + surface offset, as
   xemu's surface binding computes it) and at `FLIP_STALL` treats that one as scanned out: it sets
-  `pcrtc.start`, answers xemu's `vga.get_resolution/get_params` hooks from the surface (size, pitch as
-  line offset; interlace off), and calls xemu's `pgraph_gl_sync` under `pgraph.lock`, which renders it
-  into the display buffer. That texture is read back (`glGetTexImage`, BGRA), flipped top-down and
-  handed to the present callback. In xemu the UI thread requests this and waits on `sync_complete`;
-  here it runs inline on the method thread.
+  `pcrtc.start` and answers xemu's `vga.get_resolution/get_params` hooks from the surface (size, pitch
+  as line offset; interlace off). **Present (since 2.H.8c2b)**: the surface texture is read in the
+  render context with `glReadPixels` (BGRA) into one of two pixel-pack buffers plus a fence, and the
+  other buffer (the previous flip's) is mapped and handed to the present callback: the window shows
+  each frame one flip late, but nothing waits for the GPU and no context switch happens. xemu's
+  display pass would add only the PVIDEO overlay (registers never written here) and the scale to the
+  CRTC mode (= the surface size here); the surface texture's first row is the top one.
+  `RECOMP_PB_GPU_PRESENT=sync` = the old path for A/B: xemu's `pgraph_gl_sync` (renders into the
+  display buffer in the display context, two `glClientWaitSync` fences, two `wglMakeCurrent`), then a
+  synchronous `glGetTexImage`. In xemu the UI thread requests that and waits on `sync_complete`.
 - **Window**: `main.c`'s callback passes the frame to the toolkit's `xbox_FramebufferWindowPresentPixels`
   (patch 0010; the GDI window shows it instead of guest memory) and the frame stats for the title bar.
   `RECOMP_PB_GPU_DUMP` writes one presented frame as BMP.
@@ -395,12 +400,16 @@ and the only limit. 2.H.8c1 removed fixed costs that had nothing to do with rend
 - **`getenv` per trapped APU access** (patch 0016), on a game thread.
 
 Level fps went from ~23 to 49-60 (60 = the VBlank pacing cap). What is left on the method thread:
-- **Synchronous readbacks** (~11-15%): the driver spins (`GetExitCodeThread` →
+- **Synchronous readbacks** (~11-15%; ~8.6% since 2.H.8c2b moved the present off them): the driver spins (`GetExitCodeThread` →
   `NtQueryInformationThread`, which is what the profile showed as an unknown routine) until the GPU
   catches up, inside `glReadPixels` / `glGetTexImage`. Callers (`RECOMP_PROF_FOCUS`): the present
   path's frame readback at each flip, xemu's surface downloads when a draw binds a surface the GPU
   just drew as a texture (`pgraph_gl_surface_download_if_dirty`), `update_surface_part`, and the
-  context switches of `pgraph_gl_sync` at the flip.
+  context switches of `pgraph_gl_sync` at the flip. What is left after 2.H.8c2b is all surface
+  downloads (`[XGPU] surface downloads`: ~3.9k over a pad run, under one per frame): a texture that
+  overlaps a GPU-drawn surface without being bindable as that surface (`bind_textures`), and
+  surfaces evicted as incompatible or overlapping (`update_surface_part`). Removing them means GPU-side
+  copies instead of the VRAM round trip, a change to xemu's surface logic.
 - **The texture-dirty walk** (29% after the fixes above; **~10-12% since 2.H.8c2a**, the per-page
   content hash under "Dirty tracking without QEMU"; ~7% of re-hashed texture pages still change): xemu marks textures possibly dirty only
   when QEMU's dirty bitmap reports a CPU write to a texture page, which is rare; each call walks all

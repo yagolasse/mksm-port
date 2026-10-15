@@ -174,6 +174,9 @@ the pacing (0 = uncapped), `RECOMP_PB_GPU_DUMP=<file.bmp>` (+ `RECOMP_PB_GPU_DUM
 600) dumps one presented frame. `RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
 changed on every use (default: once per pushbuffer kick, texture pages only when their content hash
 changed, see `docs/gpu-renderer.md`; for A/B runs); `=kick` drops the texture-page hash.
+`RECOMP_PB_GPU_PRESENT=sync` presents through xemu's display pass and a synchronous readback (the
+pre-2.H.8c2b path, for A/B); by default the scanout surface is read into a pixel-pack buffer and
+shown one flip later. The `[XGPU]` line also counts xemu's surface downloads/uploads/surface-to-texture.
 `RECOMP_PB_GPU_GLCHECK=1` makes `glGetError` real again (xemu asserts it per draw; by default the shim
 answers `GL_NO_ERROR`, a guess that each call can stall NVIDIA's threaded driver; not measured alone).
 Movies (Sofdec) play on this path too (user, 2026-10-15, after 2.H.8c1). It still needs

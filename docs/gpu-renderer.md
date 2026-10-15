@@ -141,10 +141,37 @@ software path stays as the reference for captures (2.H.2). The toolkit's
 
 Handled by xemu's own epilogue (see above). The toolkit's software fix stays in the software path.
 
+## Frame capture + replay (2.H.2)
+
+`nv2a_pb_capture.c` (toolkit, patch 0006) records one frame as a self-contained file so a renderer
+can be built and checked without a 60 s boot. Design, revised from 2.H.1:
+
+- **Capture** (`RECOMP_PB_CAPTURE=<path>`, `RECOMP_PB_CAPTURE_FLIP=<N>` default 1): every decoded
+  method is mirrored into a last-value shadow table (per subchannel + method, action methods
+  excluded) and the frame is recorded as `(subch, method, param)` triples.
+- **File layout** (`MKPB` v2, little-endian): sizes + counts + the flip number + the contiguous
+  high-water mark, then three guest-memory blobs (main RAM 64 MiB, the contiguous window 64 MiB,
+  the NV2A aperture 16 MiB), a prelude, and the frame. The prelude replays the shadow as ordinary
+  commands and re-uploads the vertex program + constants as `_PROGRAM_LOAD`/`_CONSTANT_LOAD` +
+  data (`0x0B00`/`0x0B80`, whose data words auto-increment, so a "last value" cannot capture
+  them).
+- **No executor structs are snapshotted** — replay runs "prelude + frame" through whatever
+  renderer is selected, which is the whole point (xemu's PGRAPH cannot read a dump of the
+  software executor's `s_gpu`/vsh structs).
+- **Replay** (`RECOMP_PB_REPLAY=<path>`): maps memory normally (no "map without XBE" path), stops
+  the ack thread, restores the three regions **and the contiguous high-water mark**, replays
+  prelude + frame, dumps `<path>.replay.bmp`, exits.
+
+The parity check (replay `.bmp` == in-run `.ref.bmp`) caught one real bug: `dma_resolve` maps a
+physical offset against `xbox_ContiguousAllocatedBytes()`, so a replay with a fresh empty arena
+resolved vertex arrays and textures differently. The capture now snapshots that high-water mark.
+The software path's host-side z buffer is the one thing left out; frames start with a clear, so it
+is rebuilt on replay.
+
 ## Order of work (plan 2.H.2-2.H.9)
 
-1. **2.H.2 Capture + replay** (unchanged): one frame's methods + the guest memory its draws read,
-   replayable through either renderer. The fast loop for everything below.
+1. **2.H.2 Capture + replay**: done for the title screen (2.H.2a); the level frame (2.H.2b) is
+   left — reach the level headless and capture it the same way.
 2. **2.H.3 Port + null renderer**: xemu's `pgraph.c` and its common files + `null/renderer.c` +
    shims build in `src/gpu/xemu/`; toolkit hook patch; with `RECOMP_PB_GPU=1` the game boots to
    the title the same as before (sync still works), drawing nothing.

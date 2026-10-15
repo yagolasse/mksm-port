@@ -101,6 +101,25 @@ class SmokeChecksTest(unittest.TestCase):
         self.assertEqual(failures_cap(BOOT, 3, GOOD_BOOT + wrote),
                          ["[PBCAP] wrote after WADCRC.BIN"])
 
+    def test_failed_assert(self):
+        text = GOOD_BOOT + "Assertion failed: entry.valid, file pgraph.c, line 42\n"
+        self.assertEqual(failures(BOOT, 3, text), ["1 failed asserts"])
+
+    def test_gpu_mode(self):
+        up = "[XGPU] renderer 'Null' up on thread 1234\n"
+        stats = ("[XGPU] methods 900000, objects 12, draws %d, flips 300, nop notifies 0, "
+                 "semaphores 50, bad handles %d, irq updates 0\n")
+        base = GOOD_BOOT.replace("[GPU] draws", "[GPU] drawz")  # no software draw lines
+        good = base + up + stats % (10, 0) + stats % (BOOT.min_draws, 0)
+        gpu_failures = [m for ok, m in smoke_test.check(BOOT, 3, good, gpu=True) if not ok]
+        self.assertEqual(gpu_failures, [])
+        # software draw lines don't count in GPU mode, and vice versa
+        self.assertEqual(len(failures(BOOT, 3, good)), 1)
+        bad = base + stats % (BOOT.min_draws, 2)
+        gpu_failures = [m for ok, m in smoke_test.check(BOOT, 3, bad, gpu=True) if not ok]
+        self.assertEqual(gpu_failures, ["xemu PGRAPH renderer up",
+                                        "2 object handles not in RAMHT"])
+
     def test_bmp_nonblack(self):
         # 2x2 24-bit bottom-up BMP, rows padded to 8 bytes: one non-black pixel
         rows = bytes([0, 0, 0, 0, 0, 0, 0, 0]) + bytes([0, 0, 0, 9, 9, 9, 0, 0])

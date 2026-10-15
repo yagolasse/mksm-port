@@ -47,6 +47,7 @@ add_library(mksm_gpu STATIC
     ${XEMU_NV2A}/pgraph/vertex.c
     ${XEMU_NV2A}/pgraph/null/renderer.c
     xemu_stubs.c
+    mksm_gpu.c
     gpu_selftest.c
     $<TARGET_OBJECTS:nv2a_vsh_cpu>
 )
@@ -63,5 +64,8 @@ target_compile_options(mksm_gpu PRIVATE
     -Wno-microsoft -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter
     -Wno-sign-compare -Wno-missing-field-initializers -Wno-gnu-zero-variadic-macro-arguments
 )
+# Asserts stay on, as in xemu (QEMU refuses to build with NDEBUG): they are its consistency
+# checks, and a failed one prints "Assertion failed" (mksm_gpu_init routes it to stderr).
+target_compile_options(mksm_gpu PRIVATE /UNDEBUG)
 target_compile_options(nv2a_vsh_cpu PRIVATE -Wno-microsoft)
 target_compile_definitions(nv2a_vsh_cpu PRIVATE _CRT_SECURE_NO_WARNINGS)

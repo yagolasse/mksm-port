@@ -218,6 +218,50 @@ static void print_guest_context(void *rip)
  * Declared rather than included so this does not depend on src/apu being on
  * the include path. */
 typedef struct MCPXAPUState MCPXAPUState;
+/* GPU renderer (plan 2.H): RECOMP_PB_GPU=1 hands every decoded pushbuffer method to xemu's
+ * PGRAPH (src/gpu) instead of the toolkit's software executor. RECOMP_PB_EXEC=1 is still
+ * needed: it is what makes the ack thread decode the pushbuffer at all. */
+#ifdef MKSM_HAVE_GPU
+#include "gpu/mksm_gpu.h"
+
+typedef void (*nv2a_pb_method_hook_fn)(uint32_t subch, uint32_t method, uint32_t param);
+extern void nv2a_pb_set_method_hook(nv2a_pb_method_hook_fn fn);
+
+#define GPU_VRAM_VA      0x80000000u        /* the contiguous window = physical view */
+#define GPU_VRAM_SIZE    (64u << 20)
+#define GPU_APERTURE_VA  0xFD000000u        /* NV2A registers, plain memory here */
+#define GPU_PFIFO_OFF    0x00002000u
+#define GPU_PRAMIN_OFF   0x00700000u
+#define GPU_PRAMIN_SIZE  (1u << 20)
+
+static void gpu_init_from_env(void)
+{
+    const char *e = getenv("RECOMP_PB_GPU");
+    if (!e || strcmp(e, "1") != 0)
+        return;
+    uint8_t *base = (uint8_t *)xbox_GetMemoryOffset();
+    MksmGpuMemory mem = {
+        .vram = base + GPU_VRAM_VA,
+        .vram_size = GPU_VRAM_SIZE,
+        .ramin = base + GPU_APERTURE_VA + GPU_PRAMIN_OFF,
+        .ramin_size = GPU_PRAMIN_SIZE,
+        .pfifo = (const volatile uint32_t *)(base + GPU_APERTURE_VA + GPU_PFIFO_OFF),
+    };
+    if (mksm_gpu_init(&mem) != 0) {
+        fprintf(stderr, "[BOOT] RECOMP_PB_GPU: PGRAPH init failed, software executor\n");
+        return;
+    }
+    nv2a_pb_set_method_hook(mksm_gpu_method);
+    fprintf(stderr, "[BOOT] RECOMP_PB_GPU: pushbuffer -> xemu PGRAPH\n");
+}
+#else
+static void gpu_init_from_env(void)
+{
+    if (getenv("RECOMP_PB_GPU"))
+        fprintf(stderr, "[BOOT] RECOMP_PB_GPU ignored: built without mksm_gpu\n");
+}
+#endif
+
 extern MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr);
 extern MCPXAPUState *g_apu_state;
 extern bool apu_hook_handle_mmio(PCONTEXT ctx, uintptr_t fault_addr,
@@ -396,6 +440,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     g_xbox_mem_offset = xbox_GetMemoryOffset();
     printf("Xbox memory mapped. Offset: 0x%llX\n", (unsigned long long)g_xbox_mem_offset);
+
+    /* RECOMP_PB_GPU=1: before the replay below, so a capture can replay through it too. */
+    gpu_init_from_env();
 
     /* Replay a captured frame instead of booting the game (RECOMP_PB_REPLAY).
      *

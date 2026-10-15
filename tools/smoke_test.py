@@ -19,6 +19,7 @@ Usage:
     python tools/smoke_test.py [--game-dir DIR] [--exe EXE] [--log-dir DIR]
                                [--only boot|pad]
                                [--capture-ms MS | --capture-flip N] [--capture-path PATH]
+                               [--gpu]
 
 The game dir (holding default.xbe) defaults to MKSM_GAME_DIR, else
 ../game_files. No game data lives in this repo; without it the test exits 77
@@ -38,6 +39,12 @@ combining with --only boot is an error.
 The capture file must exist, and [PBCAP] wrote must come after WADCRC.BIN opens
 (the level load), so a title-screen or movie frame is not accepted as a level
 frame.
+
+--gpu runs the checkpoints with RECOMP_PB_GPU=1: the pushbuffer goes to xemu's
+PGRAPH (src/gpu, null renderer for now) instead of the software executor. The
+draw count then comes from its [XGPU] stats line, which must also show no
+dropped object handles, and the renderer must have come up. Not combinable
+with a capture (the capture's reference frame is the software executor's).
 """
 
 import argparse
@@ -126,6 +133,8 @@ RE_PAD_STEP = r"PAD: t=\d+ ms step %d "
 RE_PBCAP_ARMED = re.compile(r"\[PBCAP\] armed at flip (\d+)")
 RE_PBCAP_WROTE = re.compile(r"\[PBCAP\] wrote ")
 RE_FLIPS = re.compile(r"\((\d+) flips\)")
+RE_XGPU_UP = re.compile(r"\[XGPU\] renderer '([^']+)' up")
+RE_XGPU_STATS = re.compile(r"^\[XGPU\] methods \d+, .*?draws (\d+), .*?bad handles (\d+)", re.M)
 
 
 def _path_pos(text, name):
@@ -180,12 +189,15 @@ def run(cp, exe, game_dir, log, extra_env=None, secs=None):
     return code
 
 
-def check(cp, code, text, capture_after=None):
-    """Return a list of (ok, message)."""
+def check(cp, code, text, capture_after=None, gpu=False):
+    """Return a list of (ok, message). gpu: the run used RECOMP_PB_GPU=1."""
     results = []
     results.append((code in (0, 3), f"exit code {code} (0 or 3 = watchdog expected)"))
     crashes = text.count("[CRASH]")
     results.append((crashes == 0, f"{crashes} [CRASH]"))
+    # xemu's PGRAPH keeps its asserts (abort() exits 3, like the watchdog).
+    asserts = text.count("Assertion failed")
+    results.append((asserts == 0, f"{asserts} failed asserts"))
     unresolved = sorted(set(re.findall(r"Failed to resolve VA (0x[0-9A-Fa-f]+)", text)))
     results.append((not unresolved, f"{len(unresolved)} unresolved ICALL targets "
                     + " ".join(unresolved[:10])))
@@ -202,7 +214,16 @@ def check(cp, code, text, capture_after=None):
     # RECOMP_APU_DSP_ACK=auto found DirectSound's doorbell; without the ack
     # the boot stalls in DSOUND init.
     results.append((bool(RE_DSP_ACK.search(text)), "DSP doorbell acknowledged"))
-    draws = [int(d) for d in RE_DRAWS.findall(text)]
+    if gpu:
+        m = RE_XGPU_UP.search(text)
+        results.append((bool(m), "xemu PGRAPH renderer up"
+                        + (f" ({m.group(1)})" if m else "")))
+        stats = [(int(d), int(b)) for d, b in RE_XGPU_STATS.findall(text)]
+        draws = [d for d, _ in stats]
+        bad = max((b for _, b in stats), default=0)
+        results.append((bad == 0, f"{bad} object handles not in RAMHT"))
+    else:
+        draws = [int(d) for d in RE_DRAWS.findall(text)]
     n = max(draws, default=0)
     results.append((n >= cp.min_draws, f"{n} draws (need >= {cp.min_draws})"))
     paths = RE_PATH.findall(text)
@@ -242,6 +263,8 @@ def main():
                      help="capture the pad frame at this FLIP_STALL number")
     ap.add_argument("--capture-path",
                     help="capture file path (default <log_dir>/pbcap_level_<N>.pbcap)")
+    ap.add_argument("--gpu", action="store_true",
+                    help="RECOMP_PB_GPU=1: run on xemu's PGRAPH, not the software executor")
     args = ap.parse_args()
 
     game_dir = Path(args.game_dir).resolve()
@@ -257,6 +280,10 @@ def main():
     stamp = time.strftime("%Y%m%d_%H%M%S")
 
     capture = args.capture_ms is not None or args.capture_flip is not None
+    if capture and args.gpu:
+        print("FAIL: --gpu can't be combined with a capture (its reference frame is the "
+              "software executor's)")
+        return 1
     capture_env = {}
     capture_path = None
     capture_secs = None
@@ -286,11 +313,13 @@ def main():
             continue
         log = (log_dir / f"smoke_{stamp}_{cp.name}.log").resolve()
         secs = max(cp.secs, capture_secs) if capture_secs else None
-        code = run(cp, exe, game_dir, log, extra_env=capture_env if capture else None,
-                   secs=secs)
+        extra = dict(capture_env)
+        if args.gpu:
+            extra["RECOMP_PB_GPU"] = "1"
+        code = run(cp, exe, game_dir, log, extra_env=extra or None, secs=secs)
         text = log.read_text(encoding="utf-8", errors="replace")
         cap_after = "WADCRC.BIN" if (capture and cp.name == "pad") else None
-        for ok, msg in check(cp, code, text, capture_after=cap_after):
+        for ok, msg in check(cp, code, text, capture_after=cap_after, gpu=args.gpu):
             print(f"  {'ok  ' if ok else 'FAIL'} {msg}")
             if not ok:
                 failed.append(f"{cp.name}: {msg}")

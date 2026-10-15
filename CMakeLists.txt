@@ -114,8 +114,8 @@ endif()
 #
 # xemu's renderer is GNU C that cl rejects, so src/gpu is its own CMake project
 # built with clang-cl + Ninja (MSVC-ABI objects) and imported here as a static
-# library. cl-built code talks to it only through src/gpu/mksm_gpu.h. Not linked
-# into the game yet (plan 2.H.3b); gpu_link is the cl/link.exe link check.
+# library. cl-built code talks to it only through src/gpu/mksm_gpu.h; gpu_link is
+# the cl/link.exe link check.
 # The null renderer registers itself from a constructor in an object nothing
 # references, so consumers must link the archive whole.
 set(MKSM_CLANG_CL "C:/clang+llvm-18.1.8-x86_64-pc-windows-msvc/bin/clang-cl.exe" CACHE FILEPATH
@@ -146,6 +146,12 @@ if(MKSM_CLANG_CL AND EXISTS "${MKSM_CLANG_CL}" AND MKSM_NINJA)
 
     add_executable(gpu_link src/gpu/gpu_link.c)
     target_link_libraries(gpu_link PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,mksm_gpu>")
+
+    # The game: RECOMP_PB_GPU=1 hands the pushbuffer to it (src/main.c). The lib is always
+    # Release /MD, so the Debug (/MDd) config builds without it.
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        "$<$<NOT:$<CONFIG:Debug>>:$<LINK_LIBRARY:WHOLE_ARCHIVE,mksm_gpu>>")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:MKSM_HAVE_GPU=1>")
 else()
     message(STATUS "mksm_gpu skipped: set MKSM_CLANG_CL to clang-cl.exe and put ninja on PATH")
 endif()

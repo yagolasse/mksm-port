@@ -18,11 +18,12 @@ statically recompiling the retail `default.xbe` to C with
 - `src/main.c`: host entry: loads the XBE, maps Xbox memory, inits kernel/bridge, calls the guest entry `0x000F40CA`
 - `src/recomp_manual.c`: hand-written overrides (`recomp_lookup_manual`) and ICALL diagnostics
 - `src/recomp/gen/`: generated C (not in git)
-- `src/gpu/`: GPU renderer library `mksm_gpu` (xemu's PGRAPH, not linked into the game yet): its own
+- `src/gpu/`: GPU renderer library `mksm_gpu` (xemu's PGRAPH; the game uses it with `RECOMP_PB_GPU=1`): its own
   CMake project built with clang-cl (see Build). `xemu/hw/xbox/nv2a/` = xemu files **copied unmodified**
   (same paths as in xemu, so they diff cleanly; never edit them, fix things in `xemu/shim/` or the glue);
   `xemu/shim/` = stand-ins for the QEMU/glib/xemu headers they include; `nv2a_vsh_cpu/` = vendored
-  library; `xemu_stubs.c` = externals from unported xemu files; `mksm_gpu.h` = the plain-C interface for
+  library; `xemu_stubs.c` = externals from unported xemu files; `mksm_gpu.c` = stands in for xemu's PFIFO
+  (RAMHT lookup, acks the NOP-notify and flip-stall waits); `mksm_gpu.h` = the plain-C interface for
   cl-built code. Licenses: `LICENSE` (GPL-3.0, the combined work), `LICENSES/`, `NOTICE` (file → license)
 - `external/xboxrecomp/`: toolkit git submodule (pinned). Prefer fixing things in our `src/` first;
   toolkit changes should go upstream or into a fork
@@ -88,7 +89,7 @@ Use `--parallel N`, not `-- /m`: Git Bash rewrites `/m` into a path (`M:/`) and 
 into `build/mksm_gpu/mksm_gpu.lib` (always Release, `/MD`) and imported as target `mksm_gpu`. It needs
 `MKSM_CLANG_CL` (cache var, default `C:/clang+llvm-18.1.8-x86_64-pc-windows-msvc/bin/clang-cl.exe`; that
 folder actually holds clang 22.1.8) and `ninja` on PATH, else it is skipped with a status message.
-Link it with `$<LINK_LIBRARY:WHOLE_ARCHIVE,mksm_gpu>`: the null renderer registers from a constructor in
+The game links it in non-Debug configs only (`MKSM_HAVE_GPU`; the lib is `/MD`). Link it with `$<LINK_LIBRARY:WHOLE_ARCHIVE,mksm_gpu>`: the null renderer registers from a constructor in
 an object nothing references, and a plain link drops it ("No available renderer", then a crash).
 ## Run
 The exe takes the extracted game folder (holding `default.xbe`) from its first argument, else
@@ -135,6 +136,10 @@ from the first pushbuffer method; the run lasts at least MS/1000 + 15 s) is the 
 opens and that the `.ref.bmp` is non-black (>= 30000 px). Replay a capture with `RECOMP_PB_REPLAY=<path>`
 and byte-compare `<path>.ref.bmp` vs `<path>.replay.bmp`. Captures are ~144 MB; clean up old ones.
 
+`--gpu` runs the checkpoints with `RECOMP_PB_GPU=1` (xemu's PGRAPH, null renderer for now): draws come
+from the `[XGPU]` stats line, which must show 0 bad handles, and the renderer must come up. Every run
+also fails on `Assertion failed` (xemu keeps its asserts on; `abort()` exits 3 like the watchdog).
+
 ## Input
 The game's statically linked XAPI drives the USB host controllers directly, so pads come from the
 toolkit's emulated OHCI (`RECOMP_USB`, wired up in `main.c`: `xbox_OhciInit` + the VEH MMIO trap).
@@ -149,6 +154,9 @@ Headless: `RECOMP_PAD_PRESS=0x10,3000,300` (mask,period,hold ms) or `RECOMP_PAD_
 Expect crashes during bring-up. The VEH handler in `main.c` prints the faulting guest function, the
 guest stack, and recent ICALL targets. Fix by adding overrides in `recomp_manual.c` or runtime
 support. Useful env vars from the toolkit: `RECOMP_WATCHDOG_SECS`, `RECOMP_AC97_READY`.
+`RECOMP_PB_GPU=1` (opt-in, toolkit patch 0009) hands every decoded method to xemu's PGRAPH instead of
+the software executor (`[XGPU]` lines every 5 s; nothing is drawn yet, the window stays stale);
+it still needs `RECOMP_PB_EXEC=1`, which is what makes the ack thread decode the pushbuffer.
 `RECOMP_PB_EXEC=1` (set by the run scripts) is required: D3D init waits on GPU semaphore releases,
 which only the pushbuffer executor performs.
 The run scripts also set `RECOMP_AC97_READY=1` (emulated APU, so `DirectSoundCreate` succeeds) and

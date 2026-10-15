@@ -208,6 +208,35 @@ imported by the top-level build (see `CLAUDE.md`, Build):
 - Init order as in xemu: `pgraph_init(d)` (device init), `nv2a_context_init()` (renderer
   selection), `pgraph_init_thread(d)` (on the thread that will run PGRAPH, the ack thread here).
 
+## The hook (2.H.3b)
+
+- **Toolkit** (patch 0009, MIT): `nv2a_pb_set_method_hook(fn)` (`src/kernel/nv2a_pb_hook.h`). With a
+  hook set, `nv2a_pb_exec_method` records the method for the capture, calls the hook and returns;
+  at `FLIP_STALL` it still bumps the title's swap counter (`xbox_Nv2aFrameCounterFlip`) and runs the
+  capture's frame boundary. The software executor's semaphore, report and flip handling is skipped.
+- **`main.c`**: `RECOMP_PB_GPU=1` → `mksm_gpu_init` with `vram` = the contiguous window
+  (`0x80000000`, 64 MiB), `ramin` = PRAMIN in the aperture (`0xFD700000`, 1 MiB) and the aperture's
+  PFIFO block (the title's `NV_PFIFO_RAMHT` / `CACHE1_PUSH1`), then registers `mksm_gpu_method`.
+  Done before the replay branch, so `RECOMP_PB_REPLAY` also goes through it.
+- **`mksm_gpu.c`** plays xemu's PFIFO puller: object handles (`SET_OBJECT`, methods 0x180-0x1FC) go
+  through xemu's RAMHT hash, then `pgraph_method` runs under `pgraph.lock` with one word available.
+  Skipped: the context switch (one channel; `CTX_CONTROL` is marked valid at init) and the
+  puller's stalls. The two waits PGRAPH can enter are ended at once, through xemu's own
+  `pgraph_write`, as the title's ISR / the VBlank would: a `NO_OPERATION` notify gets its
+  `NV_PGRAPH_INTR` ack, a `FLIP_STALL` gets one `NV_PGRAPH_INCREMENT` (read buffer + 1).
+  `pfifo_kick` / `nv2a_update_irq` stay counters: there is no FIFO thread and no interrupt line.
+  The renderer comes up (`pgraph_init_thread`) on the first method's thread, the ack thread.
+- **Asserts on** (`/UNDEBUG`, as QEMU requires), reported on stderr (`_set_error_mode`).
+- Observed (boot, null renderer): D3D sends one `NO_OPERATION` notify per present (notifies ≈
+  flips), 5 objects bound, ~3 semaphore releases per frame, no RAMHT miss. Uncapped, the title
+  runs ~4x as many flips as on the software path.
+- **Known gap**: this runtime keeps the contiguous window and main RAM as separate memory; the
+  software executor's `dma_resolve` sends physical offsets below the contiguous high-water mark to
+  the window and others to main RAM. xemu has one `vram_ptr` (the window), so a DMA target that
+  the title allocated outside the contiguous arena would be read from the wrong place. Doesn't
+  matter for the null renderer (semaphores and reports land in the window); check it when draws
+  start reading vertex/texture memory (2.H.5).
+
 ## Order of work (plan 2.H.2-2.H.9)
 
 1. **2.H.2 Capture + replay**: done — the title screen (2.H.2a) and the first level frame (2.H.2b,

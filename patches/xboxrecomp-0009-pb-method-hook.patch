@@ -1,0 +1,99 @@
+From ab63675d99a59b9b55f8956a81798bc0ecf55acc Mon Sep 17 00:00:00 2001
+From: Yago Lasse <yagolasse@gmail.com>
+Date: Thu, 15 Oct 2026 11:08:05 -0300
+Subject: [PATCH] nv2a: method hook hands the decoded pushbuffer to an external
+ renderer
+
+nv2a_pb_set_method_hook() registers a function that receives every decoded
+(subchannel, method, parameter) instead of the software executor, e.g. a
+port of a full NV2A PGRAPH that owns semaphores, reports and flips itself.
+The runtime keeps only the frame-boundary work at FLIP_STALL (the title's
+swap counter and the frame capture); capture recording still sees every
+method first.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/kernel/nv2a_pb_exec.c | 20 ++++++++++++++++++++
+ src/kernel/nv2a_pb_hook.h | 28 ++++++++++++++++++++++++++++
+ 2 files changed, 48 insertions(+)
+ create mode 100644 src/kernel/nv2a_pb_hook.h
+
+diff --git a/src/kernel/nv2a_pb_exec.c b/src/kernel/nv2a_pb_exec.c
+index 2b8d5cb..a5233a2 100644
+--- a/src/kernel/nv2a_pb_exec.c
++++ b/src/kernel/nv2a_pb_exec.c
+@@ -38,6 +38,7 @@
+ #include "nv2a_vsh_interp.h"
+ #include "nv2a_combiner.h"
+ #include "nv2a_pb_capture.h"
++#include "nv2a_pb_hook.h"
+ #if defined(_WIN32)
+ #include <windows.h>
+ #define NV_TLS __declspec(thread)
+@@ -2941,10 +2942,29 @@ static void tex_stage_method(uint32_t method, uint32_t param)
+         record_tex_reg(method, param);
+ }
+ 
++static nv2a_pb_method_hook_fn s_method_hook;
++
++void nv2a_pb_set_method_hook(nv2a_pb_method_hook_fn fn)
++{
++    s_method_hook = fn;
++}
++
+ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
+ {
+     nv2a_pb_capture_method(subch, method, param);
+ 
++    /* An external renderer owns the stream (nv2a_pb_hook.h). Only the frame
++     * boundary is still the runtime's: the title counts its swaps, and the
++     * capture writes its file there. */
++    if (s_method_hook) {
++        s_method_hook(subch, method, param);
++        if (subch == 0 && method == NV097_FLIP_STALL) {
++            xbox_Nv2aFrameCounterFlip();
++            nv2a_pb_capture_flip();
++        }
++        return;
++    }
++
+     static int inited;
+     if (!inited) {
+         inited = 1;
+diff --git a/src/kernel/nv2a_pb_hook.h b/src/kernel/nv2a_pb_hook.h
+new file mode 100644
+index 0000000..d8ba062
+--- /dev/null
++++ b/src/kernel/nv2a_pb_hook.h
+@@ -0,0 +1,28 @@
++/**
++ * Hand the decoded pushbuffer to an external renderer.
++ *
++ * nv2a_pb_scan decodes the title's pushbuffer on the ack thread and calls
++ * nv2a_pb_exec_method for every (subchannel, method, parameter). A title can
++ * register a hook that takes over from there: a port of a full NV2A PGRAPH
++ * (e.g. xemu's) that owns all graphics state, including semaphore releases,
++ * reports and flips. While a hook is set the software executor does nothing
++ * but what the runtime needs around a frame boundary at FLIP_STALL: the
++ * title's swap counter (xbox_Nv2aFrameCounterFlip) and the frame capture.
++ * Capture recording (nv2a_pb_capture_method) still sees every method first.
++ *
++ * Set it before the title submits its first method and leave it set: the two
++ * executors don't share state, so switching midway loses everything set up so
++ * far. The hook runs on the ack thread (or the replay thread).
++ */
++#ifndef XBOXRECOMP_NV2A_PB_HOOK_H
++#define XBOXRECOMP_NV2A_PB_HOOK_H
++
++#include <stdint.h>
++
++typedef void (*nv2a_pb_method_hook_fn)(uint32_t subch, uint32_t method,
++                                       uint32_t param);
++
++/* NULL restores the software executor. */
++void nv2a_pb_set_method_hook(nv2a_pb_method_hook_fn fn);
++
++#endif
+-- 
+2.53.0.windows.2
+

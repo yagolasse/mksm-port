@@ -1,0 +1,67 @@
+cmake_minimum_required(VERSION 3.24)
+
+# ============================================================================
+# mksm_gpu: xemu's NV2A PGRAPH renderer (vendored unmodified, see ../../NOTICE)
+#
+# Built on its own with clang-cl: the xemu files use GNU C that MSVC cl rejects
+# (statement-expression macros, case ranges, __attribute__((constructor)),
+# g_autofree). clang-cl accepts them and emits MSVC-ABI objects that link into
+# the cl-built game exe. The top-level CMakeLists.txt builds this directory as
+# an ExternalProject (Ninja + MKSM_CLANG_CL) and links it from cl code through
+# the plain-C header mksm_gpu.h. Built directly:
+#   cmake -S src/gpu -B build-gpu -G Ninja -DCMAKE_BUILD_TYPE=Release
+#         -DCMAKE_C_COMPILER=<clang-cl.exe>
+# ============================================================================
+
+project(mksm_gpu C)
+
+if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" OR NOT CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
+    message(FATAL_ERROR "mksm_gpu needs clang-cl (got ${CMAKE_C_COMPILER_ID} "
+        "simulating '${CMAKE_C_SIMULATE_ID}': ${CMAKE_C_COMPILER})")
+endif()
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+# Same CRT as the game exe's Release build (cl, /MD).
+set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreadedDLL)
+
+set(XEMU_NV2A ${CMAKE_CURRENT_SOURCE_DIR}/xemu/hw/xbox/nv2a)
+set(VSH_CPU ${CMAKE_CURRENT_SOURCE_DIR}/nv2a_vsh_cpu)
+
+# nv2a_vsh_cpu (Unlicense): pgraph.c uses it to track vertex-program context writes.
+add_library(nv2a_vsh_cpu OBJECT
+    ${VSH_CPU}/nv2a_vsh_cpu.c
+    ${VSH_CPU}/nv2a_vsh_disassembler.c
+    ${VSH_CPU}/nv2a_vsh_emulator.c
+    ${VSH_CPU}/nv2a_vsh_emulator_execution_state.c
+)
+
+# The core files xemu's pgraph/meson.build builds, plus the null renderer, plus our glue.
+add_library(mksm_gpu STATIC
+    ${XEMU_NV2A}/pgraph/pgraph.c
+    ${XEMU_NV2A}/pgraph/profile.c
+    ${XEMU_NV2A}/pgraph/rdi.c
+    ${XEMU_NV2A}/pgraph/s3tc.c
+    ${XEMU_NV2A}/pgraph/swizzle.c
+    ${XEMU_NV2A}/pgraph/texture.c
+    ${XEMU_NV2A}/pgraph/vertex.c
+    ${XEMU_NV2A}/pgraph/null/renderer.c
+    xemu_stubs.c
+    gpu_selftest.c
+    $<TARGET_OBJECTS:nv2a_vsh_cpu>
+)
+target_include_directories(mksm_gpu PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/xemu/shim
+    ${CMAKE_CURRENT_SOURCE_DIR}/xemu
+    ${VSH_CPU}
+)
+target_compile_definitions(mksm_gpu PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+# The vendored code is written for GCC/clang on QEMU's warning set; don't drown the build in
+# warnings we are not going to fix in files we keep unmodified.
+target_compile_options(mksm_gpu PRIVATE
+    -Wno-microsoft -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter
+    -Wno-sign-compare -Wno-missing-field-initializers -Wno-gnu-zero-variadic-macro-arguments
+)
+target_compile_options(nv2a_vsh_cpu PRIVATE -Wno-microsoft)
+target_compile_definitions(nv2a_vsh_cpu PRIVATE _CRT_SECURE_NO_WARNINGS)

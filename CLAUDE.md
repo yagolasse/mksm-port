@@ -18,6 +18,12 @@ statically recompiling the retail `default.xbe` to C with
 - `src/main.c`: host entry: loads the XBE, maps Xbox memory, inits kernel/bridge, calls the guest entry `0x000F40CA`
 - `src/recomp_manual.c`: hand-written overrides (`recomp_lookup_manual`) and ICALL diagnostics
 - `src/recomp/gen/`: generated C (not in git)
+- `src/gpu/`: GPU renderer library `mksm_gpu` (xemu's PGRAPH, not linked into the game yet): its own
+  CMake project built with clang-cl (see Build). `xemu/hw/xbox/nv2a/` = xemu files **copied unmodified**
+  (same paths as in xemu, so they diff cleanly; never edit them, fix things in `xemu/shim/` or the glue);
+  `xemu/shim/` = stand-ins for the QEMU/glib/xemu headers they include; `nv2a_vsh_cpu/` = vendored
+  library; `xemu_stubs.c` = externals from unported xemu files; `mksm_gpu.h` = the plain-C interface for
+  cl-built code. Licenses: `LICENSE` (GPL-3.0, the combined work), `LICENSES/`, `NOTICE` (file → license)
 - `external/xboxrecomp/`: toolkit git submodule (pinned). Prefer fixing things in our `src/` first;
   toolkit changes should go upstream or into a fork
 - `tools/run.sh`, `tools/run.bat`: run the exe with the needed env defaults, log to `../logs/`
@@ -78,6 +84,12 @@ cmake -S . -B build
 cmake --build build --config Release --parallel 6
 ```
 Use `--parallel N`, not `-- /m`: Git Bash rewrites `/m` into a path (`M:/`) and MSBuild fails.
+`src/gpu` (xemu's renderer, GNU C that `cl` rejects) is built as an ExternalProject with clang-cl + Ninja
+into `build/mksm_gpu/mksm_gpu.lib` (always Release, `/MD`) and imported as target `mksm_gpu`. It needs
+`MKSM_CLANG_CL` (cache var, default `C:/clang+llvm-18.1.8-x86_64-pc-windows-msvc/bin/clang-cl.exe`; that
+folder actually holds clang 22.1.8) and `ninja` on PATH, else it is skipped with a status message.
+Link it with `$<LINK_LIBRARY:WHOLE_ARCHIVE,mksm_gpu>`: the null renderer registers from a constructor in
+an object nothing references, and a plain link drops it ("No available renderer", then a crash).
 ## Run
 The exe takes the extracted game folder (holding `default.xbe`) from its first argument, else
 `MKSM_GAME_DIR`, else `game\` in the working directory (`resolve_game_dir` in `src/main.c`).
@@ -99,6 +111,8 @@ so they need no game data. Run them after changing a tool:
 ```bash
 python -m unittest discover -s tests  # or: ctest --test-dir build -C Release -R tools
 ```
+`gpu_link` (CTest, ~0.1 s): a cl/link.exe exe that brings up xemu's PGRAPH with the null renderer through
+`mksm_gpu_selftest()`; run it after touching `src/gpu`.
 Run the smoke test after every re-lift or rebuild (a re-lift can break a path that used to work):
 ```bash
 python tools/smoke_test.py            # or: ctest --test-dir build -C Release --output-on-failure

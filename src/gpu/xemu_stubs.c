@@ -1,0 +1,177 @@
+/*
+ * Definitions the vendored xemu PGRAPH files need from parts of xemu/QEMU that are not ported
+ * (nv2a.c, pfifo.c, QEMU core, xemu UI). The nv_dma_* / nv_clip_gpu_tile_blit bodies follow
+ * xemu's hw/xbox/nv2a/nv2a.c (36334d9).
+ *
+ * Plan 2.H.3b decides the sync-relevant ones (pfifo_kick, nv2a_update_irq): for now they only
+ * count calls, so the link check can see them.
+ *
+ * Copyright (c) 2012 espes, (c) 2015 Jannik Vogel, (c) 2018-2025 Matt Borgerson (nv_dma_*)
+ * SPDX-License-Identifier: LGPL-2.1-or-later
+ */
+
+#include "hw/xbox/nv2a/nv2a_int.h"
+#include "ui/xemu-notifications.h"
+#include "ui/xemu-settings.h"
+#include "xemu_stubs.h"
+
+/* xemu's settings: the renderer selection is the only field PGRAPH reads. */
+struct config g_config = { .display = { .renderer = CONFIG_DISPLAY_RENDERER_NULL } };
+
+/* nv2a.c: register block names for nv2a_reg_log_*; the MMIO ops are not ported. */
+const NV2ABlockInfo blocktable[NV_NUM_BLOCKS] = {
+#define ENTRY(NAME, OFFSET, SIZE) [NV_##NAME] = { .name = #NAME, .offset = OFFSET, .size = SIZE }
+    ENTRY(PMC,      0x000000, 0x001000),
+    ENTRY(PBUS,     0x001000, 0x001000),
+    ENTRY(PFIFO,    0x002000, 0x002000),
+    ENTRY(PRMA,     0x007000, 0x001000),
+    ENTRY(PVIDEO,   0x008000, 0x001000),
+    ENTRY(PTIMER,   0x009000, 0x001000),
+    ENTRY(PCOUNTER, 0x00a000, 0x001000),
+    ENTRY(PVPE,     0x00b000, 0x001000),
+    ENTRY(PTV,      0x00d000, 0x001000),
+    ENTRY(PRMFB,    0x0a0000, 0x020000),
+    ENTRY(PRMVIO,   0x0c0000, 0x001000),
+    ENTRY(PFB,      0x100000, 0x001000),
+    ENTRY(PSTRAPS,  0x101000, 0x001000),
+    ENTRY(PGRAPH,   0x400000, 0x002000),
+    ENTRY(PCRTC,    0x600000, 0x001000),
+    ENTRY(PRMCIO,   0x601000, 0x001000),
+    ENTRY(PRAMDAC,  0x680000, 0x001000),
+    ENTRY(PRMDIO,   0x681000, 0x001000),
+    ENTRY(USER,     0x800000, 0x800000),
+#undef ENTRY
+};
+
+XemuStubCounts xemu_stub_counts;
+
+/* pfifo.c: wakes xemu's FIFO thread. There is none here (the toolkit's ack thread feeds
+ * methods); 2.H.3b decides what a kick means. */
+void pfifo_kick(NV2AState *d)
+{
+    (void)d;
+    xemu_stub_counts.pfifo_kick++;
+}
+
+/* nv2a.c: raises the PCI interrupt from the pending/enabled masks. The toolkit does not model
+ * GPU interrupts yet; 2.H.3b decides. */
+void nv2a_update_irq(NV2AState *d)
+{
+    (void)d;
+    xemu_stub_counts.update_irq++;
+}
+
+DMAObject nv_dma_load(NV2AState *d, hwaddr dma_obj_address)
+{
+    assert(dma_obj_address < memory_region_size(&d->ramin));
+
+    uint32_t *dma_obj = (uint32_t *)(d->ramin_ptr + dma_obj_address);
+    uint32_t flags = ldl_le_p(dma_obj);
+    uint32_t limit = ldl_le_p(dma_obj + 1);
+    uint32_t frame = ldl_le_p(dma_obj + 2);
+
+    return (DMAObject){
+        .dma_class  = GET_MASK(flags, NV_DMA_CLASS),
+        .dma_target = GET_MASK(flags, NV_DMA_TARGET),
+        .address    = (frame & NV_DMA_ADDRESS) | GET_MASK(flags, NV_DMA_ADJUST),
+        .limit      = limit,
+    };
+}
+
+void *nv_dma_map(NV2AState *d, hwaddr dma_obj_address, hwaddr *len)
+{
+    DMAObject dma = nv_dma_load(d, dma_obj_address);
+
+    dma.address &= 0x07FFFFFF;
+    assert(dma.address < memory_region_size(d->vram));
+    *len = dma.limit;
+    return d->vram_ptr + dma.address;
+}
+
+hwaddr nv_clip_gpu_tile_blit(NV2AState *d, hwaddr blit_base_address, hwaddr len)
+{
+    const uint32_t *regs = d->pfb.regs;
+    hwaddr blit_end = blit_base_address + len;
+    for (int i = 0; i < NV_NUM_GPU_TILES; ++i) {
+        uint32_t base_and_flags = regs[NV_PFB_TILE_BASE_ADDRESS_AND_FLAGS(i)];
+        if (!(base_and_flags & NV_PFB_TILE_FLAGS_VALID)) {
+            continue;
+        }
+        uint32_t limit = regs[NV_PFB_TILE_LIMIT(i)];
+        if (blit_base_address < limit && blit_end > limit) {
+            return limit + 1 - blit_base_address;
+        }
+    }
+    return len;
+}
+
+/* QEMU memory API: regions are plain host buffers here. */
+uint64_t memory_region_size(MemoryRegion *mr)
+{
+    return mr->size;
+}
+
+/* QEMU timers: only QEMU_CLOCK_REALTIME is read (profiling, frame timing). */
+int64_t qemu_clock_get_ns(QEMUClockType type)
+{
+    static LARGE_INTEGER freq;
+    LARGE_INTEGER now;
+    (void)type;
+    if (!freq.QuadPart) {
+        QueryPerformanceFrequency(&freq);
+    }
+    QueryPerformanceCounter(&now);
+    return (int64_t)((double)now.QuadPart * 1e9 / (double)freq.QuadPart);
+}
+
+/* QEMU CPUs: only used by the live renderer switch, which this port never triggers (the
+ * renderer is fixed at init). */
+static CPUState cpu0;
+
+CPUState *qemu_get_cpu(int index)
+{
+    return index == 0 ? &cpu0 : NULL;
+}
+
+void async_safe_run_on_cpu(CPUState *cpu, run_on_cpu_func func, run_on_cpu_data data)
+{
+    func(cpu, data);
+}
+
+/* qapi/error.h */
+void error_setg(Error **errp, const char *fmt, ...)
+{
+    if (!errp || *errp) {
+        return;
+    }
+    va_list ap;
+    va_start(ap, fmt);
+    Error *err = (Error *)g_malloc0(sizeof(*err));
+    err->msg = g_strdup_vprintf(fmt, ap);
+    va_end(ap);
+    *errp = err;
+}
+
+const char *error_get_pretty(const Error *err)
+{
+    return err->msg;
+}
+
+void error_free(Error *err)
+{
+    if (err) {
+        g_free(err->msg);
+        g_free(err);
+    }
+}
+
+/* xemu UI notifications: logged. */
+void xemu_queue_notification(const char *msg)
+{
+    fprintf(stderr, "[XEMU] %s\n", msg);
+}
+
+void xemu_queue_error_message(const char *msg)
+{
+    fprintf(stderr, "[XEMU] error: %s\n", msg);
+}

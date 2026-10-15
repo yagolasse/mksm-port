@@ -179,6 +179,35 @@ resolved vertex arrays and textures differently. The capture now snapshots that 
 The software path's host-side z buffer is the one thing left out; frames start with a clear, so it
 is rebuilt on replay.
 
+## The vendored library (2.H.3a)
+
+`src/gpu/` is a separate CMake project (`mksm_gpu`, static lib) built with clang-cl + Ninja and
+imported by the top-level build (see `CLAUDE.md`, Build):
+
+- `xemu/hw/xbox/nv2a/`: xemu's files at the same relative paths, unmodified (their git blobs equal
+  xemu `36334d9`'s), so `#include "hw/xbox/nv2a/nv2a_int.h"` resolves as in xemu.
+- `xemu/shim/`: the QEMU/glib/xemu headers they include, at QEMU's paths. Real content only where
+  PGRAPH uses it: complete by-value types in `NV2AState` (`PCIDevice`, `VGACommonState`,
+  `MemoryRegion` = `{size, ptr}`, ...), Win32 `QemuMutex` (critical section) / `QemuCond`
+  (condition variable) / `QemuEvent` (manual-reset event), glib allocation + `g_strdup_printf` +
+  `g_autofree` (cleanup attribute), `qatomic_*` (`__atomic` builtins), bitmaps, `bql_lock` as a
+  no-op, and `xemu-config.h` with just `g_config.display.renderer`. The QEMU trace header is
+  generated from xemu's `trace-events` as typed no-op inlines.
+- `xemu_stubs.c`: what PGRAPH calls in unported files. `nv_dma_load`/`nv_dma_map`/
+  `nv_clip_gpu_tile_blit` are xemu's bodies (DMA objects in RAMIN, mapped into `vram_ptr`);
+  `blocktable` has names only; `pfifo_kick` and `nv2a_update_irq` only count calls (2.H.3b decides
+  what they do here); the live renderer switch's `async_safe_run_on_cpu` runs inline (never
+  triggered: the renderer is fixed). `nv2a_context_init`, `nv2a_*_framebuffer_surface` and
+  `nv2a_*_surface_scale_factor` turned out to live in `pgraph.c`, not in unported files.
+- `mksm_gpu.h`: the plain-C interface for `cl`-built code (the xemu headers need GNU C). So far only
+  `mksm_gpu_selftest()`, which the `gpu_link` check (a `cl`/`link.exe` exe, CTest) calls. That
+  check also showed MSVC's `link.exe` consumes the clang-cl archive with no extra runtime symbols.
+- **Whole-archive link**: `null/renderer.c` registers itself from `__attribute__((constructor))`
+  and nothing references its object, so a normal static link drops it; xemu then finds no
+  renderer and crashes. Consumers link `$<LINK_LIBRARY:WHOLE_ARCHIVE,mksm_gpu>`.
+- Init order as in xemu: `pgraph_init(d)` (device init), `nv2a_context_init()` (renderer
+  selection), `pgraph_init_thread(d)` (on the thread that will run PGRAPH, the ack thread here).
+
 ## Order of work (plan 2.H.2-2.H.9)
 
 1. **2.H.2 Capture + replay**: done — the title screen (2.H.2a) and the first level frame (2.H.2b,
@@ -186,7 +215,7 @@ is rebuilt on replay.
    The level's software reference is dark but populated (195k non-black px, 24k colours); the
    software rasterizer still draws the level mostly off-surface/untextured, which the GPU path fixes.
 2. **2.H.3 Port + null renderer**, in two steps:
-   - **2.H.3a Vendor + link**: the core files xemu's `pgraph/meson.build` builds (`pgraph.c`,
+   - **2.H.3a Vendor + link** (done; as built, see "The vendored library" below): the core files xemu's `pgraph/meson.build` builds (`pgraph.c`,
      `profile.c`, `rdi.c`, `s3tc.c`, `swizzle.c`, `texture.c`, `vertex.c`) + their headers,
      `null/renderer.c`, and `nv2a.h`/`nv2a_int.h`/`nv2a_regs.h`/`debug.h`, byte-identical, in
      `src/gpu/xemu/`. `pgraph.h` includes the GPL `vsh_regs.h`, so `LICENSE` (GPL-3.0) + `NOTICE`

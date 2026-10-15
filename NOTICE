@@ -1,0 +1,32 @@
+mksm_recomp is licensed under the GNU General Public License, version 3 (LICENSE).
+
+It includes third-party code under its own licenses. GPL-3.0 is the one version that all of
+them allow for the combined work.
+
+xemu NV2A PGRAPH renderer
+  Source:  https://github.com/xemu-project/xemu, commit 36334d9 (hw/xbox/nv2a)
+  Path:    src/gpu/xemu/hw/xbox/nv2a/ (copied unmodified, same layout as in xemu)
+  Authors: espes, Jannik Vogel, Matt Borgerson, Wilhelm Kovatch and other xemu contributors
+           (see each file's header)
+
+  | License                                  | Files                                        |
+  |------------------------------------------|----------------------------------------------|
+  | GPL-2.0 or GPL-3.0 (LICENSES/GPL-2.0.txt, | pgraph/vsh_regs.h                            |
+  | LICENSE)                                 |                                              |
+  | MIT (text in the file header)            | pgraph/s3tc.c, pgraph/s3tc.h                 |
+  | LGPL-2.1-or-later (LICENSES/LGPL-2.1.txt) | everything else: nv2a.h, nv2a_int.h,         |
+  |                                          | nv2a_regs.h, debug.h, trace.h, pgraph/*.c,   |
+  |                                          | pgraph/*.h, pgraph/methods.h.inc,            |
+  |                                          | pgraph/null/renderer.c                       |
+
+  src/gpu/xemu/shim/ holds stand-ins for the QEMU/glib/xemu headers those files include (written
+  for this port, mirroring QEMU's interfaces; LGPL-2.1-or-later).
+
+nv2a_vsh_cpu
+  Source:  https://github.com/xemu-project/nv2a_vsh_cpu, commit 561fe80 (the revision xemu pins)
+  Path:    src/gpu/nv2a_vsh_cpu/ (src/*.c, src/*.h copied unmodified)
+  License: The Unlicense (public domain), src/gpu/nv2a_vsh_cpu/LICENSE
+
+xboxrecomp
+  Source:  https://github.com/sp00nznet/xboxrecomp (git submodule, external/xboxrecomp)
+  License: see external/xboxrecomp/LICENSE and external/xboxrecomp/LICENSES

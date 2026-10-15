@@ -110,6 +110,46 @@ if(MSVC)
     )
 endif()
 
+# ── GPU renderer library (xemu PGRAPH, src/gpu) ─────────────────
+#
+# xemu's renderer is GNU C that cl rejects, so src/gpu is its own CMake project
+# built with clang-cl + Ninja (MSVC-ABI objects) and imported here as a static
+# library. cl-built code talks to it only through src/gpu/mksm_gpu.h. Not linked
+# into the game yet (plan 2.H.3b); gpu_link is the cl/link.exe link check.
+# The null renderer registers itself from a constructor in an object nothing
+# references, so consumers must link the archive whole.
+set(MKSM_CLANG_CL "C:/clang+llvm-18.1.8-x86_64-pc-windows-msvc/bin/clang-cl.exe" CACHE FILEPATH
+    "clang-cl for the GPU renderer library (src/gpu); empty or missing skips it")
+find_program(MKSM_NINJA ninja)
+if(MKSM_CLANG_CL AND EXISTS "${MKSM_CLANG_CL}" AND MKSM_NINJA)
+    include(ExternalProject)
+    set(MKSM_GPU_BIN "${CMAKE_BINARY_DIR}/mksm_gpu")
+    set(MKSM_GPU_LIB "${MKSM_GPU_BIN}/mksm_gpu.lib")
+    # Always Release with /MD: only the game's Release build will link it.
+    ExternalProject_Add(mksm_gpu_build
+        SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu"
+        BINARY_DIR "${MKSM_GPU_BIN}"
+        CMAKE_GENERATOR Ninja
+        CMAKE_ARGS
+            -DCMAKE_BUILD_TYPE=Release
+            "-DCMAKE_C_COMPILER=${MKSM_CLANG_CL}"
+            "-DCMAKE_MAKE_PROGRAM=${MKSM_NINJA}"
+        BUILD_ALWAYS ON
+        INSTALL_COMMAND ""
+        BUILD_BYPRODUCTS "${MKSM_GPU_LIB}"
+    )
+    add_library(mksm_gpu STATIC IMPORTED GLOBAL)
+    set_target_properties(mksm_gpu PROPERTIES
+        IMPORTED_LOCATION "${MKSM_GPU_LIB}"
+        INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu")
+    add_dependencies(mksm_gpu mksm_gpu_build)
+
+    add_executable(gpu_link src/gpu/gpu_link.c)
+    target_link_libraries(gpu_link PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,mksm_gpu>")
+else()
+    message(STATUS "mksm_gpu skipped: set MKSM_CLANG_CL to clang-cl.exe and put ninja on PATH")
+endif()
+
 # ── Tests ───────────────────────────────────────────────────────
 #
 # tools: unit tests for the Python tools (tests/), no game data needed.
@@ -118,6 +158,10 @@ endif()
 # never in the repo: without default.xbe in MKSM_GAME_DIR it is skipped.
 #   ctest --test-dir build -C Release --output-on-failure [-R tools|smoke]
 enable_testing()
+# gpu_link: xemu's PGRAPH + null renderer come up from a cl/link.exe-built exe.
+if(TARGET gpu_link)
+    add_test(NAME gpu_link COMMAND gpu_link)
+endif()
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
     set(MKSM_GAME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../game_files" CACHE PATH

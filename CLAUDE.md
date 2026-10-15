@@ -29,9 +29,10 @@ statically recompiling the retail `default.xbe` to C with
 - `tests/`: unit tests for `tools/*.py` on synthetic inputs (no game data), see Testing
 - `seeds/`: extra function entry points for `tools.disasm --seed-functions` (see Pipeline)
 - `patches/`: our toolkit changes not yet upstream; apply them in `external/xboxrecomp` after cloning
-  (`git am ../../patches/*.patch`). Write them from bash (`git format-patch -1 <sha> --stdout >
-  file`): PowerShell's `>` saves UTF-16 with CRLF, which `git am` rejects ("Patch format detection
-  failed")
+  (`git am ../../patches/*.patch`). Regenerate them with `bash tools/regen_patches.sh [slug ...]`
+  (one slug per new submodule commit): it writes them from git, then checks that the series applies
+  on upstream and reproduces the pin. Never write them with PowerShell's `>`: it saves UTF-16 with
+  CRLF, which `git am` rejects ("Patch format detection failed")
 
 ## Pipeline (run from `external/xboxrecomp`, game data in `../../../game_files`)
 ```bash

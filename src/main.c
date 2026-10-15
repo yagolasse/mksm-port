@@ -397,6 +397,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     g_xbox_mem_offset = xbox_GetMemoryOffset();
     printf("Xbox memory mapped. Offset: 0x%llX\n", (unsigned long long)g_xbox_mem_offset);
 
+    /* Replay a captured frame instead of booting the game (RECOMP_PB_REPLAY).
+     *
+     * The normal memory setup has already run (sections mapped, 64 MiB RAM +
+     * mirrors + contiguous window + NV2A aperture). The capture restores the
+     * two regions the frame's draws read, replays prelude + frame through the
+     * software executor, and dumps a BMP -- then exits without starting the
+     * game. This is the fast loop for the GPU renderer work (2.H.3+). */
+    {
+        const char *replay = getenv("RECOMP_PB_REPLAY");
+        if (replay && replay[0]) {
+            extern int nv2a_pb_capture_replay(const char *path);
+            int rc = nv2a_pb_capture_replay(replay);
+            xbox_MemoryLayoutShutdown();
+            free(xbe_data);
+            return rc;
+        }
+    }
+
     /* Bring up the emulated APU.
      *
      * Gated on the same variable that unmaps its registers, because the two

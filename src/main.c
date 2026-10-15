@@ -281,7 +281,8 @@ static bool gpu_init_from_env(void)
         .pgraph_fence = (volatile uint32_t *)(base + GPU_APERTURE_VA + GPU_FENCE_OFF),
     };
     /* RECOMP_PB_GPU_DIRTY=always: every texture/vertex range reads as dirty on every use
-     * (the pre-2.H.8 behaviour, for A/B runs and as a fallback). */
+     * (the pre-2.H.8 behaviour, for A/B runs and as a fallback). =kick (the per-kick answer
+     * without the texture-page hash) is read in mksm_gpu_init. */
     const char *dirty = getenv("RECOMP_PB_GPU_DIRTY");
     if (dirty && strcmp(dirty, "always") == 0)
         mem.dma_put = NULL;

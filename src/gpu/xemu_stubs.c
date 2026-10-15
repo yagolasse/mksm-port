@@ -14,6 +14,7 @@
 #include "ui/xemu-notifications.h"
 #include "ui/xemu-settings.h"
 #include "xemu_stubs.h"
+#include "xxhash.h"
 
 #include <direct.h>
 
@@ -147,15 +148,23 @@ uint64_t memory_region_size(MemoryRegion *mr)
  * checks in the same kick only the pages not checked since. xemu then confirms texture
  * changes by content hash and re-uploads vertex data. Without a DMA_PUT register
  * (xemu_stubs_set_dma_put not called) every range is dirty, as before.
- * Ranges xemu writes itself (surface downloads, blits) are marked dirty for the clients. */
+ * Texture pages also keep a content hash: a page checked again in a later kick reads dirty
+ * only if its bytes changed. Every texture page that reads dirty costs xemu a walk of its
+ * whole texture cache (pgraph_gl_mark_textures_possibly_dirty), and most textures never
+ * change, so this is what keeps the walks rare (plan 2.H.8c2a).
+ * Ranges xemu writes itself (surface downloads, blits) are marked dirty for the clients
+ * (texture pages: re-hashed on their next check). */
 static const volatile uint32_t *s_dma_put;
 static uint32_t s_last_put, s_epoch = 1;
 static uint32_t *s_page_epoch[2];   /* DIRTY_MEMORY_NV2A, _NV2A_TEX: epoch of the last check */
+static uint64_t *s_tex_page_hash;   /* _NV2A_TEX: content hash at the last check */
+static bool s_tex_hash = true;
 static size_t s_pages;
 
-void xemu_stubs_set_dma_put(const volatile uint32_t *dma_put)
+void xemu_stubs_set_dma_put(const volatile uint32_t *dma_put, bool tex_hash)
 {
     s_dma_put = dma_put;
+    s_tex_hash = tex_hash;
 }
 
 static uint32_t *page_epochs(MemoryRegion *mr, unsigned client)
@@ -167,6 +176,9 @@ static uint32_t *page_epochs(MemoryRegion *mr, unsigned client)
     if (!s_page_epoch[i]) {
         s_pages = mr->size >> TARGET_PAGE_BITS;
         s_page_epoch[i] = (uint32_t *)g_malloc0(s_pages * sizeof(uint32_t));
+        if (client == DIRTY_MEMORY_NV2A_TEX && s_tex_hash) {
+            s_tex_page_hash = (uint64_t *)g_malloc0(s_pages * sizeof(uint64_t));
+        }
     }
     return s_page_epoch[i];
 }
@@ -184,11 +196,24 @@ bool memory_region_test_and_clear_dirty(MemoryRegion *mr, hwaddr addr, hwaddr si
         s_epoch++;
         xemu_stub_counts.dirty_epochs++;
     }
+    uint64_t *hashes = client == DIRTY_MEMORY_NV2A_TEX ? s_tex_page_hash : NULL;
     bool dirty = false;
     size_t last = size ? (size_t)((addr + size - 1) >> TARGET_PAGE_BITS) : 0;
     for (size_t p = (size_t)(addr >> TARGET_PAGE_BITS); p <= last && p < s_pages; p++) {
-        if (epochs[p] != s_epoch) {
-            epochs[p] = s_epoch;
+        if (epochs[p] == s_epoch) {
+            continue;
+        }
+        bool seen = epochs[p] != 0;
+        epochs[p] = s_epoch;
+        if (!hashes) {
+            dirty = true;
+            continue;
+        }
+        uint64_t h = XXH3_64bits(mr->ptr + (p << TARGET_PAGE_BITS), TARGET_PAGE_SIZE);
+        xemu_stub_counts.tex_pages_hashed++;
+        if (!seen || h != hashes[p]) {
+            hashes[p] = h;
+            xemu_stub_counts.tex_pages_changed++;
             dirty = true;
         }
     }
@@ -201,9 +226,12 @@ void memory_region_set_client_dirty(MemoryRegion *mr, hwaddr addr, hwaddr size, 
     if (!epochs || !size) {
         return;
     }
+    /* Texture pages with a hash only need re-hashing (any epoch but the current one): a
+     * download that wrote back the bytes already there changes no texture. */
+    bool rehash = client == DIRTY_MEMORY_NV2A_TEX && s_tex_page_hash;
     size_t last = (size_t)((addr + size - 1) >> TARGET_PAGE_BITS);
     for (size_t p = (size_t)(addr >> TARGET_PAGE_BITS); p <= last && p < s_pages; p++) {
-        epochs[p] = 0;
+        epochs[p] = rehash && epochs[p] ? s_epoch - 1 : 0;
     }
 }
 

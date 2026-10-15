@@ -172,7 +172,8 @@ surface drawn last into the framebuffer window (`RECOMP_FB_WINDOW=1`) and waits 
 `RECOMP_PB_GPU_RENDERER=null` = xemu's null renderer (draws nothing), `RECOMP_PB_GPU_VBLANK=<Hz>` sets
 the pacing (0 = uncapped), `RECOMP_PB_GPU_DUMP=<file.bmp>` (+ `RECOMP_PB_GPU_DUMP_FLIP=<N>`, default
 600) dumps one presented frame. `RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
-changed on every use (default: once per pushbuffer kick, see `docs/gpu-renderer.md`; for A/B runs).
+changed on every use (default: once per pushbuffer kick, texture pages only when their content hash
+changed, see `docs/gpu-renderer.md`; for A/B runs); `=kick` drops the texture-page hash.
 `RECOMP_PB_GPU_GLCHECK=1` makes `glGetError` real again (xemu asserts it per draw; by default the shim
 answers `GL_NO_ERROR`, a guess that each call can stall NVIDIA's threaded driver; not measured alone).
 Movies (Sofdec) play on this path too (user, 2026-10-15, after 2.H.8c1). It still needs
@@ -181,10 +182,13 @@ Movies (Sofdec) play on this path too (user, 2026-10-15, after 2.H.8c1). It stil
 samples every thread's stack each period (default 1000 us) for dur_ms, then prints `[PROF]` per thread
 with >= 2% CPU: CPU time, start routine, top exclusive/inclusive functions (`module!symbol`; guest
 code shows as `sub_XXXXXXXX`, the renderer lib has /Z7 debug info). For the level with the `pad`
-script: `RECOMP_PROF=65000,20000 python tools/smoke_test.py --gpu --only pad`.
+script: `RECOMP_PROF=62000,15000 python tools/smoke_test.py --gpu --only pad`.
 `RECOMP_PROF_FOCUS=<text>` also prints each thread's most common call chains through the first frame whose
-symbol contains the text (who calls it). Keep the window ending a few seconds before the watchdog: a
-65000,20000 run once died with 0xC0000374 while the report was still printing at the 90 s watchdog.
+symbol contains the text (who calls it). The report takes a few seconds; end the window well before the
+watchdog (`62000,15000` for the pad level). The 0xC0000374 exits seen while it printed were a prof.c
+bug (a start routine resolved after the per-symbol arrays were sized), fixed in 2.H.8c2a.
+Headroom runs with `RECOMP_PB_GPU_VBLANK=0` don't work with the pad script: uncapped menus and movie
+run too fast for its time-based steps and it misses the movie skip.
 `RECOMP_WBC_ACK` (plan 2.H.8b): a thread acks D3D's kickoff flush wait at once instead of the ack
 thread doing it after each executed segment, so the title runs ahead of the executor. **On by default
 on the GPU path** (`=0` turns it off for A/B runs, `=1` forces it); it relies on the fence mirror,

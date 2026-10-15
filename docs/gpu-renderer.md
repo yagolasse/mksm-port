@@ -145,6 +145,13 @@ touches them. Here guest RAM is a file mapping viewed at the base and at every m
   ~34 epochs/s in the level (~3 kicks per frame). `RECOMP_PB_GPU_DIRTY=always` restores the
   old answer for A/B runs. The texture-dirty walk dropped to ~6% of the thread, level fps
   went from ~5-7.5 to ~10-20 (plan 2.H.8a).
+- **Plus a content hash per texture page (2.H.8c2a)**: once the cheaper fixes of 2.H.8c1 were in,
+  the walk was back at 29% of the thread, because every texture's first check in every kick read
+  dirty. Now each `DIRTY_MEMORY_NV2A_TEX` page also keeps an XXH3 of its 4 KiB from its last
+  check; when the epoch has moved the page is re-hashed and reads dirty only if the hash changed
+  (or on its first check, or after `memory_region_set_client_dirty`). The vertex client keeps the
+  plain once-per-kick answer. `RECOMP_PB_GPU_DIRTY=kick` turns the hash off for A/B runs; the
+  `[XGPU]` line counts `tex pages hashed` / `changed`.
 - Page protection on every view (writes caught in the VEH) is still the precise option if a
   title writes resources without a kick in between; not needed so far.
 - Surface downloads: at flip behind a debug flag (keeps `RECOMP_FB_DUMP` working), and on CPU
@@ -394,7 +401,8 @@ Level fps went from ~23 to 49-60 (60 = the VBlank pacing cap). What is left on t
   path's frame readback at each flip, xemu's surface downloads when a draw binds a surface the GPU
   just drew as a texture (`pgraph_gl_surface_download_if_dirty`), `update_surface_part`, and the
   context switches of `pgraph_gl_sync` at the flip.
-- **The texture-dirty walk** (29% after the fixes above): xemu marks textures possibly dirty only
+- **The texture-dirty walk** (29% after the fixes above; **~10-12% since 2.H.8c2a**, the per-page
+  content hash under "Dirty tracking without QEMU"; ~7% of re-hashed texture pages still change): xemu marks textures possibly dirty only
   when QEMU's dirty bitmap reports a CPU write to a texture page, which is rare; each call walks all
   (up to 512) cached textures. Our "dirty once per kick" answer makes the first check of every
   texture in every kick a walk. Fix options: make the TEX query report real changes (a per-page

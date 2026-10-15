@@ -356,6 +356,12 @@ static void report(DWORD wall_ms)
             ids[i * PROF_MAX_FRAMES + d] = resolve(s_samples[i].pc[d]);
         }
     }
+    /* Start routines too, before the per-symbol arrays are sized: a symbol resolved later
+     * grows s_nsyms past them (the memsets below then wrote out of bounds: 0xC0000374). */
+    unsigned starts[PROF_MAX_THREADS];
+    for (unsigned t = 0; t < s_nthreads; t++) {
+        starts[t] = s_threads[t].start_routine ? resolve(s_threads[t].start_routine) : 0;
+    }
     fprintf(stderr, "[PROF] %zu samples over %lu ms (period %lu us, %u threads seen)%s\n",
             s_nsamples, wall_ms, s_period_us, s_nthreads,
             s_nsamples == s_cap ? ", buffer full" : "");
@@ -386,7 +392,7 @@ static void report(DWORD wall_ms)
                 }
             }
         }
-        unsigned start = th->start_routine ? resolve(th->start_routine) : 0;
+        unsigned start = starts[t];
         fprintf(stderr, "[PROF] thread %lu (%s): %lu samples, CPU %.0f ms = %.0f%% of the window\n",
                 th->tid, th->start_routine ? s_syms[start].name : "?", th->samples,
                 cpu / 1e4, wall_ms ? cpu / 1e4 * 100.0 / wall_ms : 0.0);

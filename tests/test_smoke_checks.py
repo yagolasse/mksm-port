@@ -1,6 +1,8 @@
 """smoke_test.py's log checks on synthetic logs (does not run the exe)."""
 
+import struct
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -99,6 +101,18 @@ class SmokeChecksTest(unittest.TestCase):
         self.assertEqual(failures_cap(BOOT, 3, GOOD_BOOT + wrote),
                          ["[PBCAP] wrote after WADCRC.BIN"])
 
+    def test_bmp_nonblack(self):
+        # 2x2 24-bit bottom-up BMP, rows padded to 8 bytes: one non-black pixel
+        rows = bytes([0, 0, 0, 0, 0, 0, 0, 0]) + bytes([0, 0, 0, 9, 9, 9, 0, 0])
+        head = b"BM" + struct.pack("<IHHI", 54 + len(rows), 0, 0, 54) \
+            + struct.pack("<IiiHHIIiiII", 40, 2, 2, 1, 24, 0, len(rows), 0, 0, 0, 0)
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "f.bmp"
+            p.write_bytes(head + rows)
+            self.assertEqual(smoke_test._bmp_nonblack(p), 1)
+            p.write_bytes(head + rows[:3])   # truncated: 0, not a crash
+            self.assertEqual(smoke_test._bmp_nonblack(p), 0)
+            self.assertEqual(smoke_test._bmp_nonblack(Path(d) / "missing.bmp"), 0)
 
 
 if __name__ == "__main__":

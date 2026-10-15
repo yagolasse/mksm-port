@@ -29,7 +29,9 @@ statically recompiling the retail `default.xbe` to C with
 - `tests/`: unit tests for `tools/*.py` on synthetic inputs (no game data), see Testing
 - `seeds/`: extra function entry points for `tools.disasm --seed-functions` (see Pipeline)
 - `patches/`: our toolkit changes not yet upstream; apply them in `external/xboxrecomp` after cloning
-  (`git am ../../patches/*.patch`)
+  (`git am ../../patches/*.patch`). Write them from bash (`git format-patch -1 <sha> --stdout >
+  file`): PowerShell's `>` saves UTF-16 with CRLF, which `git am` rejects ("Patch format detection
+  failed")
 
 ## Pipeline (run from `external/xboxrecomp`, game data in `../../../game_files`)
 ```bash
@@ -110,9 +112,10 @@ Add a checkpoint each time the game gets further. Game dir: `--game-dir`, else `
 else `../game_files`; without game data it exits 77 (CTest skip). `--only boot|pad` runs one.
 
 Frame capture (for the GPU renderer work): `--capture-ms MS | --capture-flip N` records one pad
-frame as a self-contained `MKPB` file plus a software-reference `.bmp` (toolkit patches 0006/0007),
-running only the `pad` checkpoint. `--capture-ms` (arm at the first flip after that many ms) is the
-reproducible choice; `--capture-flip` is the Nth `FLIP_STALL`. `--capture-path` sets the file path
+frame as a self-contained `MKPB` file plus a software-reference `.bmp` (toolkit patches 0006-0008),
+running only the `pad` checkpoint. `--capture-ms` (arm at the first flip after that many ms, counted
+from the first pushbuffer method; the run lasts at least MS/1000 + 15 s) is the reproducible choice;
+`--capture-flip` is the Nth `FLIP_STALL`. The two are mutually exclusive. `--capture-path` sets the file path
 (default `../logs/pbcap_level_<N>.pbcap`). The test then requires `[PBCAP] wrote` after `WADCRC.BIN`
 opens and that the `.ref.bmp` is non-black (>= 30000 px). Replay a capture with `RECOMP_PB_REPLAY=<path>`
 and byte-compare `<path>.ref.bmp` vs `<path>.replay.bmp`. Captures are ~144 MB; clean up old ones.

@@ -30,8 +30,11 @@ The env defaults match tools/run.sh and tools/run.bat: keep the three in sync.
 (the MKPB file + a software-reference .bmp) by setting RECOMP_PB_CAPTURE plus
 RECOMP_PB_CAPTURE_MS (arm at the first flip after that many ms; reproducible,
 since the pad script is wall-clock based) or RECOMP_PB_CAPTURE_FLIP (the Nth
-FLIP_STALL; only reproducible if the boot path is bit-identical). Capture runs
-only the pad checkpoint and require it: combining with --only boot is an error.
+FLIP_STALL; only reproducible if the boot path is bit-identical); the two are
+mutually exclusive. The ms clock starts at the first pushbuffer method, not at
+process start, and a --capture-ms run lasts at least MS/1000 + 15 s so the
+write isn't cut off. Capture runs only the pad checkpoint and requires it:
+combining with --only boot is an error.
 The capture file must exist, and [PBCAP] wrote must come after WADCRC.BIN opens
 (the level load), so a title-screen or movie frame is not accepted as a level
 frame.
@@ -81,6 +84,9 @@ KNOWN_WILD = {0x00000140}
 # A level frame has ~195k non-black pixels; a black/loading frame ~11k of
 # near-zero noise. This floor rejects the latter without needing an eyeball.
 CAPTURE_MIN_NONBLACK = 30000
+
+# With --capture-ms the pad run lasts at least T/1000 + this many seconds.
+CAPTURE_TAIL_SECS = 15
 
 
 class Checkpoint:
@@ -148,25 +154,26 @@ def _bmp_nonblack(path):
                 if d[i] or d[i + 1] or d[i + 2]:
                     n += 1
         return n
-    except (OSError, struct.error):
+    except (OSError, struct.error, IndexError):   # IndexError: truncated file
         return 0
 
 
-def run(cp, exe, game_dir, log, extra_env=None):
+def run(cp, exe, game_dir, log, extra_env=None, secs=None):
+    secs = secs or cp.secs
     env = dict(os.environ)
     env.update(RUN_ENV)
     env.update(cp.env)
     if extra_env:
         env.update(extra_env)
-    env["RECOMP_WATCHDOG_SECS"] = str(cp.secs)
-    print(f"[{cp.name}] running {cp.secs} s, log {log}", flush=True)
+    env["RECOMP_WATCHDOG_SECS"] = str(secs)
+    print(f"[{cp.name}] running {secs} s, log {log}", flush=True)
     start = time.monotonic()
     with open(log, "wb") as f:
         try:
             # From the exe's folder, like the run scripts.
             code = subprocess.run([str(exe), str(game_dir)], cwd=exe.parent, env=env,
                                   stdout=f, stderr=subprocess.STDOUT,
-                                  timeout=cp.secs + 60).returncode
+                                  timeout=secs + 60).returncode
         except subprocess.TimeoutExpired:
             code = None
     print(f"[{cp.name}] exit {code} after {time.monotonic() - start:.0f} s", flush=True)
@@ -228,10 +235,11 @@ def main():
     ap.add_argument("--exe", default=str(PORT / "build" / "Release" / "mksm_recomp.exe"))
     ap.add_argument("--log-dir", default=str(PORT.parent / "logs"))
     ap.add_argument("--only", choices=[c.name for c in CHECKPOINTS], action="append")
-    ap.add_argument("--capture-ms", type=int,
-                    help="capture the pad frame at the first flip after this many ms")
-    ap.add_argument("--capture-flip", type=int,
-                    help="capture the pad frame at this FLIP_STALL number")
+    cap = ap.add_mutually_exclusive_group()
+    cap.add_argument("--capture-ms", type=int,
+                     help="capture the pad frame at the first flip after this many ms")
+    cap.add_argument("--capture-flip", type=int,
+                     help="capture the pad frame at this FLIP_STALL number")
     ap.add_argument("--capture-path",
                     help="capture file path (default <log_dir>/pbcap_level_<N>.pbcap)")
     args = ap.parse_args()
@@ -251,6 +259,7 @@ def main():
     capture = args.capture_ms is not None or args.capture_flip is not None
     capture_env = {}
     capture_path = None
+    capture_secs = None
     if capture:
         if args.only and "pad" not in args.only:
             print("FAIL: --capture-ms/--capture-flip record a pad frame, so they "
@@ -264,6 +273,10 @@ def main():
         capture_env["RECOMP_PB_CAPTURE"] = str(capture_path)
         if args.capture_ms is not None:
             capture_env["RECOMP_PB_CAPTURE_MS"] = str(args.capture_ms)
+            # The capture clock starts a little after the process, and the
+            # write needs one more flip (~250 ms in the level) plus ~288 MB of
+            # copies: leave a tail so the watchdog doesn't cut it off.
+            capture_secs = args.capture_ms // 1000 + CAPTURE_TAIL_SECS
         if args.capture_flip is not None:
             capture_env["RECOMP_PB_CAPTURE_FLIP"] = str(args.capture_flip)
 
@@ -272,7 +285,9 @@ def main():
         if args.only and cp.name not in args.only:
             continue
         log = (log_dir / f"smoke_{stamp}_{cp.name}.log").resolve()
-        code = run(cp, exe, game_dir, log, extra_env=capture_env if capture else None)
+        secs = max(cp.secs, capture_secs) if capture_secs else None
+        code = run(cp, exe, game_dir, log, extra_env=capture_env if capture else None,
+                   secs=secs)
         text = log.read_text(encoding="utf-8", errors="replace")
         cap_after = "WADCRC.BIN" if (capture and cp.name == "pad") else None
         for ok, msg in check(cp, code, text, capture_after=cap_after):

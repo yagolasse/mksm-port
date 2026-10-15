@@ -1,0 +1,36 @@
+From 03c13e459757dc26c95c1b66d1b4e8501dd7119b Mon Sep 17 00:00:00 2001
+From: Yago Lasse <yagolasse@gmail.com>
+Date: Thu, 15 Oct 2026 10:06:34 -0300
+Subject: [PATCH] nv2a: capture header: the CAPTURE_MS clock starts at the
+ first method, not boot
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/kernel/nv2a_pb_capture.h | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/src/kernel/nv2a_pb_capture.h b/src/kernel/nv2a_pb_capture.h
+index 300f411..151693d 100644
+--- a/src/kernel/nv2a_pb_capture.h
++++ b/src/kernel/nv2a_pb_capture.h
+@@ -5,10 +5,13 @@
+  * method is mirrored into a shadow table (last value per (subchannel, method))
+  * and, for one frame, into a method stream. RECOMP_PB_CAPTURE_FLIP=<N> picks
+  * the frame (the Nth FLIP_STALL); the default is the first frame. Alternatively
+- * RECOMP_PB_CAPTURE_MS=<T> arms at the first FLIP_STALL on/after T ms since
+- * boot (it overrides the flip count), which is the reproducible choice when
+- * the frame to capture follows a wall-clock trigger such as a scripted pad
+- * event. At the frame boundary the tool writes a self-contained file holding:
++ * RECOMP_PB_CAPTURE_MS=<T> arms at the first FLIP_STALL on/after T ms (it
++ * overrides the flip count), which is the reproducible choice when the frame
++ * to capture follows a wall-clock trigger such as a scripted pad event. The
++ * clock starts when the capture code first runs (the first pushbuffer method
++ * or flip), not at process start, so T sits a little behind the run's
++ * wall-clock time. At the frame boundary the tool writes a self-contained
++ * file holding:
+  *
+  *   - the three guest-memory regions the executor's draws read, snapshotted at
+  *     the start of the frame: main RAM (VA 0, 64 MiB, the image + heap that
+-- 
+2.53.0.windows.2
+

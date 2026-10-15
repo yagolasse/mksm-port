@@ -103,8 +103,10 @@ Shims needed (a `qemu_shim.h`-style header, as the toolkit already has for the A
 `g_malloc`/`g_free`/`g_strdup_printf` (nearly all glib use), `qemu/thread.h` mutexes and events,
 `MString`, `Lru`, `fast_hash`, `NV2AState` with `vram_ptr` = the contiguous window at
 `0x80000000` (the physical view, which is what xemu's VRAM offsets mean), and the dirty-page calls
-(below). `pgraph.c` also uses the external `nv2a_vsh_cpu` library for context-write tracking;
-the toolkit's `nv2a_vsh_interp.c` can stand in if that library's license or build is a problem.
+(below). `pgraph.c` also uses the external `nv2a_vsh_cpu` library for context-write tracking
+(four calls: `nv2a_vsh_parse_program`, `nv2a_vsh_emu_initialize_xss_execution_state`,
+`nv2a_vsh_emu_execute_track_context_writes`, `nv2a_vsh_program_destroy`); vendor it if its
+license allows, else the toolkit's `nv2a_vsh_interp.c` can stand in behind the same four calls.
 
 ### Threading
 
@@ -149,9 +151,10 @@ can be built and checked without a 60 s boot. Design, revised from 2.H.1:
 - **Capture** (`RECOMP_PB_CAPTURE=<path>`, `RECOMP_PB_CAPTURE_FLIP=<N>` default 1): every decoded
   method is mirrored into a last-value shadow table (per subchannel + method, action methods
   excluded) and the frame is recorded as `(subch, method, param)` triples. `RECOMP_PB_CAPTURE_MS=<T>`
-  (patch 0007) arms instead at the first flip >= T ms since boot; it overrides the flip count and
-  is the reproducible choice when the frame follows a wall-clock trigger (a scripted pad event),
-  because the flip count depends on how fast the uncapped title/movie frames were drawn.
+  (patch 0007) arms instead at the first flip >= T ms after the capture code first runs (the first
+  pushbuffer method, a little after process start); it overrides the flip count and is the
+  reproducible choice when the frame follows a wall-clock trigger (a scripted pad event), because
+  the flip count depends on how fast the uncapped title/movie frames were drawn.
 - **File layout** (`MKPB` v2, little-endian): sizes + counts + the flip number + the contiguous
   high-water mark, then three guest-memory blobs (main RAM 64 MiB, the contiguous window 64 MiB,
   the NV2A aperture 16 MiB), a prelude, and the frame. The prelude replays the shadow as ordinary
@@ -177,9 +180,23 @@ is rebuilt on replay.
    `RECOMP_PB_CAPTURE_MS=85000`, capture `../logs/pbcap_level_85000.pbcap`, replays byte-identically).
    The level's software reference is dark but populated (195k non-black px, 24k colours); the
    software rasterizer still draws the level mostly off-surface/untextured, which the GPU path fixes.
-2. **2.H.3 Port + null renderer**: xemu's `pgraph.c` and its common files + `null/renderer.c` +
-   shims build in `src/gpu/xemu/`; toolkit hook patch; with `RECOMP_PB_GPU=1` the game boots to
-   the title the same as before (sync still works), drawing nothing.
+2. **2.H.3 Port + null renderer**, in two steps:
+   - **2.H.3a Vendor + link**: the core files xemu's `pgraph/meson.build` builds (`pgraph.c`,
+     `profile.c`, `rdi.c`, `s3tc.c`, `swizzle.c`, `texture.c`, `vertex.c`) + their headers,
+     `null/renderer.c`, and `nv2a.h`/`nv2a_int.h`/`nv2a_regs.h`/`debug.h`, byte-identical, in
+     `src/gpu/xemu/`. `pgraph.h` includes the GPL `vsh_regs.h`, so `LICENSE` (GPL-3.0) + `NOTICE`
+     land in the same commit. QEMU headers (`nv2a_int.h` alone pulls ~20: `qemu/osdep.h`,
+     `hw/pci/*`, `migration/vmstate.h`, `trace.h`, ...) become a stub include tree that mirrors
+     their paths, so the vendored files stay unmodified and diff cleanly against xemu. Externals
+     that live in files not ported (`nv2a.c`/`pfifo.c`: `pfifo_kick`, `nv2a_update_irq`,
+     `nv2a_reg_log_*`, `nv2a_*_framebuffer_surface`, `nv2a_*_surface_scale_factor`,
+     `nv2a_context_init`; QEMU/UI: `qemu_get_cpu`, `memory_region_size`, `xemu_queue_*`,
+     `trace_nv2a_*`) go in one stubs file, the sync-relevant ones (`pfifo_kick`,
+     `nv2a_update_irq`) marked as 2.H.3b decisions. Gate: a link-check exe that calls
+     `pgraph_init` + the null renderer's init links with no unresolved symbols.
+   - **2.H.3b Hook**: the toolkit patch (`RECOMP_PB_GPU=1` routes methods to `pgraph_method`),
+     `vram_ptr`/RAMIN views in `main.c`; the game boots to the title the same as before (sync
+     still works), drawing nothing, and smoke `pad` still passes with `RECOMP_PB_GPU=0`.
 3. **2.H.4 GL backend up**: WGL context on the executor thread, epoxy/glad, `gl/` + `glsl/` built;
    clears and flips shown in the window.
 4. **2.H.5 Draws**: the menu capture renders (vertex fetch, generated shaders, textures as xemu

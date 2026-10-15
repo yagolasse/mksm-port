@@ -312,10 +312,11 @@ static bool gpu_init_from_env(void)
  * coherent, so there is nothing to flush, and this thread acks the bit within ~0.25 ms.
  * Running ahead, the title then waits on two things only the GPU path provides: D3D's
  * pushbuffer fence (PGRAPH PATT_COLOR0, mirrored by mksm_gpu) and software method 5
- * (gpu_notify → xbox_Nv2aSoftwareMethod); with both, GPU boots run without a hang. Still
- * opt-in (RECOMP_WBC_ACK=1, GPU path only; the software executor has neither and hangs):
- * in the level the ring walk then meets commands the title has already overwritten
- * (plan 2.H.8b2). */
+ * (gpu_notify → xbox_Nv2aSoftwareMethod), and a DMA_GET that moves during the ring walk
+ * (toolkit patch 0014; with GET set only after each segment, D3D took a stale GET as "the GPU
+ * passed the ring's end" and overwrote commands not yet executed). On by default on the GPU
+ * path; RECOMP_WBC_ACK=0 turns it off, =1 forces it on (the software executor has no fence
+ * mirror or software methods and hangs with it). */
 #define WBC_FLUSH_VA   (0xFD000000u + 0x100410u)    /* NV_PFB_WBC */
 #define WBC_FLUSH_BUSY 0x00010000u
 
@@ -336,10 +337,10 @@ static DWORD WINAPI wbc_ack_thread(LPVOID param)
     return 0;
 }
 
-static void wbc_ack_start(void)
+static void wbc_ack_start(bool gpu)
 {
     const char *e = getenv("RECOMP_WBC_ACK");
-    if (!e || strcmp(e, "1") != 0)
+    if (e ? strcmp(e, "1") != 0 : !gpu)
         return;
     void *wbc = (uint8_t *)xbox_GetMemoryOffset() + WBC_FLUSH_VA;
     HANDLE th = CreateThread(NULL, 0, wbc_ack_thread, wbc, 0, NULL);
@@ -530,8 +531,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     printf("Xbox memory mapped. Offset: 0x%llX\n", (unsigned long long)g_xbox_mem_offset);
 
     /* RECOMP_PB_GPU=1: before the replay below, so a capture can replay through it too. */
-    gpu_init_from_env();
-    wbc_ack_start();
+    wbc_ack_start(gpu_init_from_env());
 
     /* Replay a captured frame instead of booting the game (RECOMP_PB_REPLAY).
      *

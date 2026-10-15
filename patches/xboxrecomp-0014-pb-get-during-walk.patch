@@ -1,0 +1,66 @@
+From 9f86d9657fe41e28871e989b72e2927ad7640bdd Mon Sep 17 00:00:00 2001
+From: Yago Lasse <yagolasse@gmail.com>
+Date: Thu, 15 Oct 2026 15:12:30 -0300
+Subject: [PATCH] nv2a: move DMA_GET during the ring walk, not only after it
+
+GET was set to PUT once the whole segment had run. A title that runs ahead
+of the executor sees semaphores and fences written as the walk reaches them,
+then reads GET as the GPU's position; D3D's make-space code took a GET left
+at the start of a long segment (below its write pointer) as the GPU having
+passed the end of the ring, and overwrote commands not yet executed. The
+walk now sets GET to the next header's position as it goes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/kernel/nv2a_pb_scan.c | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/src/kernel/nv2a_pb_scan.c b/src/kernel/nv2a_pb_scan.c
+index bc51de6..bf23ef6 100644
+--- a/src/kernel/nv2a_pb_scan.c
++++ b/src/kernel/nv2a_pb_scan.c
+@@ -33,6 +33,9 @@
+ 
+ extern ptrdiff_t xbox_GetMemoryOffset(void);
+ 
++/* NV_USER DMA_GET in the register aperture (NV2A base 0xFD000000 + 0x800044). */
++#define NV2A_USER_DMA_GET_VA 0xFD800044u
++
+ #define PB_MAX_METHODS 4096
+ 
+ static struct { uint32_t method, subch, count; } s_seen[PB_MAX_METHODS];
+@@ -167,16 +170,30 @@ void nv2a_pb_scan_report(void)
+  *
+  * With `ring` set the walk is the GPU's own: it follows the main ring's JUMPs
+  * and stops exactly at end_va (PUT), wherever that is after the jump. The last
+- * JUMP followed is kept for the wrap trace. */
++ * JUMP followed is kept for the wrap trace.
++ *
++ * The ring walk also moves DMA_GET as it goes, the way the GPU's fetch does.
++ * Setting it only once the whole segment had run was enough while the title
++ * waited at every kickoff, but a title that runs ahead reads two kinds of GPU
++ * progress: the semaphores and fences that the executor writes as it reaches
++ * them, and GET. D3D's make-space code waits for a fence, then takes GET as the
++ * GPU's position: a GET still at the start of a long segment, below the title's
++ * write pointer, reads as "the GPU has already passed the end of the ring", and
++ * the title overwrote commands the walk had not reached. On hardware GET is never
++ * behind an executed fence. It is the position of the next header, so it never
++ * claims a command that hasn't run; inside a CALL it stays at the call site. */
+ uint32_t nv2a_pb_ring_jump_from, nv2a_pb_ring_jump_to;
+ 
+ static uint32_t pb_walk(uint32_t va, uint32_t end_va, int in_call, int ring,
+                         uint32_t *jumps, uint32_t *unknown)
+ {
+     const uint8_t *mem = (const uint8_t *)xbox_GetMemoryOffset();
++    volatile uint32_t *get = (volatile uint32_t *)(mem + NV2A_USER_DMA_GET_VA);
+     uint32_t words = 0;
+ 
+     while ((ring ? va != end_va : va < end_va) && words < 0x100000u) {
++        if (ring)
++            *get = va & 0x0FFFFFFFu;
+         if (va - XBOX_CONTIG_BASE >= XBOX_CONTIG_SIZE) {
+             /* A JUMP or CALL out of the window: the walk is reading
+              * something that isn't commands (stale or overwritten ring). */
+-- 
+2.53.0.windows.2
+

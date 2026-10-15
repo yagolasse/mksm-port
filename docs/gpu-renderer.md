@@ -360,8 +360,16 @@ did not provide:
   parameter to a callback (`mksm_gpu_set_notify`); `main.c` passes it to the toolkit's
   `xbox_Nv2aSoftwareMethod`, which reproduces method 5 (set the pushbuffer-space event; the others
   are logged).
-With both, GPU boots run with the ack on. Still open: in the level the ring walk meets commands
-already overwritten (2.H.8b2), so the ack stays opt-in.
+- **A GET that moves.** The toolkit used to set DMA_GET = PUT only after executing a whole segment
+  (in the level up to ~600 KB of the 1 MB ring). The fences and semaphores in that segment are
+  written as the walk reaches them, so D3D's fence wait finished mid-walk; its make-space code then
+  read GET as the GPU's position, found it below its write pointer, took that as "the GPU has passed
+  the end of the ring", and overwrote commands the walk had not reached yet (xemu asserts on the
+  broken draws, or the walk followed a JUMP out of garbage). On hardware GET is never behind an
+  executed fence. Patch 0014 sets GET to the next header's position as the walk goes.
+With all three the ack is on by default on the GPU path (`RECOMP_WBC_ACK=0` turns it off). The game
+thread's spin at the kickoff is gone (95% → 4% of its samples); it now waits for ring space, so the
+method thread is the limit (2.H.8c).
 
 ## Order of work (plan 2.H.2-2.H.9)
 

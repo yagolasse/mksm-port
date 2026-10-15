@@ -10,6 +10,12 @@
  * time, its start routine, and the functions with the most exclusive (innermost frame) and inclusive
  * (anywhere on the stack) samples, as module!symbol from the PDBs dbghelp can find.
  *
+ *   RECOMP_PROF_FOCUS=<text>
+ *
+ * Also prints, per thread, the most common call chains through the first frame whose symbol
+ * contains <text> (that frame and its callers, innermost first): the flat lists say where the
+ * time goes, this says who calls it.
+ *
  * Nothing is allocated or locked while a thread is suspended (the frames go into a buffer
  * set up front), so a thread holding the heap lock can't deadlock the sampler.
  *
@@ -265,8 +271,82 @@ static void print_top(const char *title, unsigned long *counts, unsigned long to
     free(order);
 }
 
+#define PROF_CHAINS 256
+#define PROF_CHAIN_FRAMES 10
+
+/* RECOMP_PROF_FOCUS: the call chains through a symbol, per thread. */
+static void print_focus(unsigned t, const unsigned *ids, const char *focus)
+{
+    static struct { unsigned f[PROF_CHAIN_FRAMES]; unsigned n; unsigned long count; } ch[PROF_CHAINS];
+    unsigned nch = 0;
+    unsigned long hits = 0, other = 0;
+    for (size_t i = 0; i < s_nsamples; i++) {
+        if (s_samples[i].thread != t) {
+            continue;
+        }
+        const unsigned *f = &ids[i * PROF_MAX_FRAMES];
+        unsigned d = 0;
+        while (d < s_samples[i].depth && !strstr(s_syms[f[d]].name, focus)) {
+            d++;
+        }
+        if (d == s_samples[i].depth) {
+            continue;
+        }
+        hits++;
+        unsigned n = s_samples[i].depth - d;
+        if (n > PROF_CHAIN_FRAMES) {
+            n = PROF_CHAIN_FRAMES;
+        }
+        unsigned c = 0;
+        for (; c < nch; c++) {
+            if (ch[c].n == n && !memcmp(ch[c].f, f + d, n * sizeof(unsigned))) {
+                break;
+            }
+        }
+        if (c == nch) {
+            if (nch == PROF_CHAINS) {
+                other++;
+                continue;
+            }
+            memcpy(ch[c].f, f + d, n * sizeof(unsigned));
+            ch[c].n = n;
+            ch[c].count = 0;
+            nch++;
+        }
+        ch[c].count++;
+    }
+    if (!hits) {
+        return;
+    }
+    fprintf(stderr, "    chains through '%s' (%lu samples, %u distinct%s):\n", focus, hits, nch,
+            other ? ", table full" : "");
+    for (unsigned k = 0; k < 8 && k < nch; k++) {
+        unsigned best = k;
+        for (unsigned c = k + 1; c < nch; c++) {
+            if (ch[c].count > ch[best].count) {
+                best = c;
+            }
+        }
+        if (best != k) {
+            unsigned tf[PROF_CHAIN_FRAMES], tn = ch[k].n;
+            unsigned long tc = ch[k].count;
+            memcpy(tf, ch[k].f, sizeof(tf));
+            ch[k] = ch[best];
+            memcpy(ch[best].f, tf, sizeof(tf));
+            ch[best].n = tn;
+            ch[best].count = tc;
+        }
+        fprintf(stderr, "      %5.1f%%  %6lu ", 100.0 * ch[k].count / hits, ch[k].count);
+        for (unsigned d = 0; d < ch[k].n; d++) {
+            fprintf(stderr, " %s %s", d ? "<" : "", s_syms[ch[k].f[d]].name);
+        }
+        fputc('\n', stderr);
+    }
+}
+
 static void report(DWORD wall_ms)
 {
+    const char *focus = getenv("RECOMP_PROF_FOCUS");
     SymRefreshModuleList(GetCurrentProcess());   /* DLLs loaded after SymInitialize */
     s_pcs_cap = 1u << 18;
     s_pcs = (PcEntry *)calloc(s_pcs_cap, sizeof(*s_pcs));
@@ -312,6 +392,9 @@ static void report(DWORD wall_ms)
                 cpu / 1e4, wall_ms ? cpu / 1e4 * 100.0 / wall_ms : 0.0);
         print_top("exclusive", excl, th->samples);
         print_top("inclusive", incl, th->samples);
+        if (focus && *focus) {
+            print_focus(t, ids, focus);
+        }
     }
     free(seen);
     free(incl);

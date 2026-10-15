@@ -24,6 +24,9 @@ struct config g_config = {
     .perf = { .cache_shaders = false },
 };
 
+/* epoxy/gl.h shim: glGetError reads the driver only when set (RECOMP_PB_GPU_GLCHECK=1). */
+int mksm_gl_check_errors;
+
 /* xemu-version.h: the GL shader cache keys its files on it. */
 const char *xemu_version = "mksm-pc";
 

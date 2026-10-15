@@ -125,6 +125,10 @@ int mksm_gpu_init(const MksmGpuMemory *mem, int opengl)
      * block a headless run. */
     _set_error_mode(_OUT_TO_STDERR);
 
+    /* Real glGetError checks (epoxy/gl.h shim) only on request: they stall the driver. */
+    const char *glcheck = getenv("RECOMP_PB_GPU_GLCHECK");
+    mksm_gl_check_errors = glcheck && *glcheck && *glcheck != '0';
+
     NV2AState *d = (NV2AState *)g_malloc0(sizeof(*d));
     s_vram.size = mem->vram_size;
     s_vram.ptr = (uint8_t *)mem->vram;
@@ -163,6 +167,11 @@ int mksm_gpu_init(const MksmGpuMemory *mem, int opengl)
 static void report(void)
 {
     static int64_t last_ns;
+    /* Runs after every method: read the clock only every 16k of them (a QPC per method was
+     * 6% of the method thread in a level). */
+    if (s_stats.methods & 0x3FFF) {
+        return;
+    }
     int64_t now = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
     if (now - last_ns < 5000000000LL) {
         return;

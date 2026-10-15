@@ -171,6 +171,8 @@ surface drawn last into the framebuffer window (`RECOMP_FB_WINDOW=1`) and waits 
 the pacing (0 = uncapped), `RECOMP_PB_GPU_DUMP=<file.bmp>` (+ `RECOMP_PB_GPU_DUMP_FLIP=<N>`, default
 600) dumps one presented frame. `RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
 changed on every use (default: once per pushbuffer kick, see `docs/gpu-renderer.md`; for A/B runs).
+`RECOMP_PB_GPU_GLCHECK=1` makes `glGetError` real again (xemu asserts it per draw; by default the shim
+answers `GL_NO_ERROR`, a guess that each call can stall NVIDIA's threaded driver; not measured alone).
 Movies (Sofdec) stay black on this path until 2.H.6. It still needs
 `RECOMP_PB_EXEC=1`, which is what makes the ack thread decode the pushbuffer.
 `RECOMP_PROF=<start_ms>,<dur_ms>[,<period_us>]`: sampling profiler (`src/prof.c`). After start_ms it
@@ -178,6 +180,9 @@ samples every thread's stack each period (default 1000 us) for dur_ms, then prin
 with >= 2% CPU: CPU time, start routine, top exclusive/inclusive functions (`module!symbol`; guest
 code shows as `sub_XXXXXXXX`, the renderer lib has /Z7 debug info). For the level with the `pad`
 script: `RECOMP_PROF=65000,20000 python tools/smoke_test.py --gpu --only pad`.
+`RECOMP_PROF_FOCUS=<text>` also prints each thread's most common call chains through the first frame whose
+symbol contains the text (who calls it). Keep the window ending a few seconds before the watchdog: a
+65000,20000 run once died with 0xC0000374 while the report was still printing at the 90 s watchdog.
 `RECOMP_WBC_ACK` (plan 2.H.8b): a thread acks D3D's kickoff flush wait at once instead of the ack
 thread doing it after each executed segment, so the title runs ahead of the executor. **On by default
 on the GPU path** (`=0` turns it off for A/B runs, `=1` forces it); it relies on the fence mirror,

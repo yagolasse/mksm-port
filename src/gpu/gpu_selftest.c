@@ -47,7 +47,7 @@ int mksm_gpu_selftest(int opengl)
     }
     if (opengl) {
         /* pgraph_gl_init leaves its render context current on this thread. */
-        GLenum err = glGetError();
+        GLenum err = glad_glGetError();
         printf("mksm_gpu: GL %s | %s | %s\n", (const char *)glGetString(GL_VERSION),
                (const char *)glGetString(GL_RENDERER), (const char *)glGetString(GL_VENDOR));
         if (err != GL_NO_ERROR) {

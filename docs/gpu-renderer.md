@@ -371,6 +371,45 @@ With all three the ack is on by default on the GPU path (`RECOMP_WBC_ACK=0` turn
 thread's spin at the kickoff is gone (95% → 4% of its samples); it now waits for ring space, so the
 method thread is the limit (2.H.8c).
 
+## Method-thread cost (2.H.8c)
+
+With the title running ahead, the method thread (ring walk + `pgraph_method` + GL) was 96% busy
+and the only limit. 2.H.8c1 removed fixed costs that had nothing to do with rendering:
+- **The survey's method counter** (patch 0015): `note()` in the ring walk searches the method
+  inventory linearly for every method word, and ran whenever the executor did, though only
+  `RECOMP_PB_SCAN` reads it. 35% of the thread → 1%.
+- **`glGetError`**: xemu asserts `glGetError() == GL_NO_ERROR` per draw, and asserts stay on in
+  this build. With NVIDIA's threaded driver each call can wait on the driver's worker thread, so
+  the `epoxy/gl.h` shim maps `glGetError` to `GL_NO_ERROR` unless `RECOMP_PB_GPU_GLCHECK=1`
+  (code that needs the real error calls `glad_glGetError`, as `gpu_selftest.c` does). Not measured
+  on its own (it went in with the rest); the driver stall it was aimed at turned out to be the
+  readbacks below.
+- **A clock read per method**: the `[XGPU]` stats check read QPC on every method; now every 16k.
+- **`getenv` per trapped APU access** (patch 0016), on a game thread.
+
+Level fps went from ~23 to 49-60 (60 = the VBlank pacing cap). What is left on the method thread:
+- **Synchronous readbacks** (~11-15%): the driver spins (`GetExitCodeThread` →
+  `NtQueryInformationThread`, which is what the profile showed as an unknown routine) until the GPU
+  catches up, inside `glReadPixels` / `glGetTexImage`. Callers (`RECOMP_PROF_FOCUS`): the present
+  path's frame readback at each flip, xemu's surface downloads when a draw binds a surface the GPU
+  just drew as a texture (`pgraph_gl_surface_download_if_dirty`), `update_surface_part`, and the
+  context switches of `pgraph_gl_sync` at the flip.
+- **The texture-dirty walk** (29% after the fixes above): xemu marks textures possibly dirty only
+  when QEMU's dirty bitmap reports a CPU write to a texture page, which is rare; each call walks all
+  (up to 512) cached textures. Our "dirty once per kick" answer makes the first check of every
+  texture in every kick a walk. Fix options: make the TEX query report real changes (a per-page
+  content hash compared when the epoch has moved; `memory_region_set_client_dirty` resets it), or
+  move the epoch per flip instead of per kick.
+- **Uniform uploads**: xemu re-uploads every uniform (all vertex constants) on every draw with no
+  change check (`// FIXME: Dirty tracking` in `gl/shaders.c`), so this is a cost xemu pays too. A
+  shadow of the last value per location in the shim, skipping identical `glUniform*v` calls, would
+  cut it without touching the vendored files; same for redundant `glBindTexture` of disabled stages.
+- **No thread split needed in xemu's design**: xemu runs fetch, decode, `pgraph_method` and every GL
+  call on one thread (`pfifo_thread`); other threads only post requests (`sync_pending`,
+  `flush_pending`, downloads) and wait on events. A decode thread feeding a GL thread would be new
+  design: a method queue, plus fences before every guest-visible write (semaphores, reports,
+  notifies) and the flip, and the GL contexts created on the GL thread.
+
 ## Order of work (plan 2.H.2-2.H.9)
 
 1. **2.H.2 Capture + replay**: done — the title screen (2.H.2a) and the first level frame (2.H.2b,
@@ -403,6 +442,6 @@ method thread is the limit (2.H.8c).
 6. **2.H.7 Level frame**: the level capture renders; fix gaps in the shims.
 7. **2.H.8 Performance**: 2.H.8a done (profile with `RECOMP_PROF`, dirty once per kick, see
    "Dirty tracking"); 2.H.8b1 done (fence + software method 5, "Running ahead of the executor");
-   next the level ring overwrite with the ack on (2.H.8b2),
-   then the GL driver stalls in uniform uploads and the decode cost; frame pacing (2.4).
+   2.H.8b2 done (GET moves during the walk); 2.H.8c1 done (fixed costs, "Method-thread cost");
+   next the texture-dirty walk, readbacks and uniform uploads (2.H.8c2); frame pacing (2.4).
 8. **2.H.9 Parity + default** (unchanged).

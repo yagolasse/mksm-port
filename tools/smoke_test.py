@@ -41,10 +41,12 @@ The capture file must exist, and [PBCAP] wrote must come after WADCRC.BIN opens
 frame.
 
 --gpu runs the checkpoints with RECOMP_PB_GPU=1: the pushbuffer goes to xemu's
-PGRAPH (src/gpu, null renderer for now) instead of the software executor. The
-draw count then comes from its [XGPU] stats line, which must also show no
-dropped object handles, and the renderer must have come up. Not combinable
-with a capture (the capture's reference frame is the software executor's).
+PGRAPH (src/gpu, OpenGL renderer; RECOMP_PB_GPU_RENDERER=null for the null one)
+instead of the software executor. The draw count then comes from its [XGPU]
+stats line, which must also show no dropped object handles, and the renderer
+must have come up. With OpenGL, flips must also have presented frames and one
+of them must have been non-black. Not combinable with a capture (the
+capture's reference frame is the software executor's).
 """
 
 import argparse
@@ -119,9 +121,12 @@ CHECKPOINTS = [
     # timer thread worked (boot-log #5) nothing opened after the accept.
     # 1.15d: skipping the movie opens WADCRC.BIN (only then) at 55-60 s, then
     # level data; 90 s leaves time for the slow frames after it.
+    # 2.H.4b: on the GPU path (60 fps) the menus take presses faster and the accept
+    # lands at step 7, so the files are anchored after step 5 (the first A, past the
+    # title): that still rules out the attract loop's OPENING.SFD.
     Checkpoint("pad", 90, {"RECOMP_PAD_SCRIPT": PAD_SCRIPT + "," + PAD_SKIP_MOVIE}, 25000,
                ["MIDWAY.SFD", "SaveMeta.xbx", "GAMEDATA.WAH"], last_pad_step=9,
-               files_after_step=(9, ["OPENING.SFD", "WADCRC.BIN"])),
+               files_after_step=(5, ["OPENING.SFD", "WADCRC.BIN"])),
 ]
 
 RE_DRAWS = re.compile(r"^\[GPU\] draws (\d+) ", re.M)
@@ -135,6 +140,7 @@ RE_PBCAP_WROTE = re.compile(r"\[PBCAP\] wrote ")
 RE_FLIPS = re.compile(r"\((\d+) flips\)")
 RE_XGPU_UP = re.compile(r"\[XGPU\] renderer '([^']+)' up")
 RE_XGPU_STATS = re.compile(r"^\[XGPU\] methods \d+, .*?draws (\d+), .*?bad handles (\d+)", re.M)
+RE_XGPU_PRESENTS = re.compile(r"^\[XGPU\] methods .*?presents (\d+) \(.*?(\d+) non-black px\)", re.M)
 
 
 def _path_pos(text, name):
@@ -222,6 +228,12 @@ def check(cp, code, text, capture_after=None, gpu=False):
         draws = [d for d, _ in stats]
         bad = max((b for _, b in stats), default=0)
         results.append((bad == 0, f"{bad} object handles not in RAMHT"))
+        if m and m.group(1) == "OpenGL":
+            pres = [(int(p), int(nb)) for p, nb in RE_XGPU_PRESENTS.findall(text)]
+            presents = max((p for p, _ in pres), default=0)
+            nonblack = max((nb for _, nb in pres), default=0)
+            results.append((presents > 0, f"{presents} frames presented"))
+            results.append((nonblack > 0, f"a presented frame has {nonblack} non-black px"))
     else:
         draws = [int(d) for d in RE_DRAWS.findall(text)]
     n = max(draws, default=0)

@@ -120,6 +120,24 @@ class SmokeChecksTest(unittest.TestCase):
         self.assertEqual(gpu_failures, ["xemu PGRAPH renderer up",
                                         "2 object handles not in RAMHT"])
 
+    def test_gpu_opengl_presents(self):
+        up = "[XGPU] renderer 'OpenGL' up on thread 1234\n"
+        stats = ("[XGPU] methods 900000, objects 12, draws %d, flips 300, nop notifies 0, "
+                 "semaphores 50, bad handles 0, irq updates 0, masked stages 0, presents %d "
+                 "(no surface 1, last 640x480, %d non-black px)\n")
+        base = GOOD_BOOT.replace("[GPU] draws", "[GPU] drawz")
+        n = BOOT.min_draws
+
+        def gpu_failures(text):
+            return [m for ok, m in smoke_test.check(BOOT, 3, text, gpu=True) if not ok]
+
+        # a non-black frame seen at some point counts, even if the last one is black
+        self.assertEqual(gpu_failures(base + up + stats % (10, 5, 900) + stats % (n, 300, 0)), [])
+        self.assertEqual(gpu_failures(base + up + stats % (n, 0, 0)),
+                         ["0 frames presented", "a presented frame has 0 non-black px"])
+        self.assertEqual(gpu_failures(base + up + stats % (n, 300, 0)),
+                         ["a presented frame has 0 non-black px"])
+
     def test_bmp_nonblack(self):
         # 2x2 24-bit bottom-up BMP, rows padded to 8 bytes: one non-black pixel
         rows = bytes([0, 0, 0, 0, 0, 0, 0, 0]) + bytes([0, 0, 0, 9, 9, 9, 0, 0])

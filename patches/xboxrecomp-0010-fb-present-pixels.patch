@@ -1,0 +1,84 @@
+From bb65c503bb0d83ee37b0891a27a0268da0f83c79 Mon Sep 17 00:00:00 2001
+From: Yago Lasse <yagolasse@gmail.com>
+Date: Thu, 15 Oct 2026 12:00:06 -0300
+Subject: [PATCH] video: framebuffer window takes frames from an external
+ renderer
+
+xbox_FramebufferWindowPresentPixels() hands the window a finished frame as
+0x00RRGGBB rows instead of a guest address. A renderer behind the pushbuffer
+method hook (nv2a_pb_hook.h) keeps its surfaces on the host GPU, so there is
+no guest memory for the window to read. Frames of another size are cropped
+or padded to the window's 640x480.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/video/fb_present.c   | 30 ++++++++++++++++++++++++++++++
+ src/video/video_player.h |  4 ++++
+ 2 files changed, 34 insertions(+)
+
+diff --git a/src/video/fb_present.c b/src/video/fb_present.c
+index 6299a65..4de4120 100644
+--- a/src/video/fb_present.c
++++ b/src/video/fb_present.c
+@@ -98,6 +98,35 @@ void xbox_FramebufferWindowPresent(uint32_t fb_va, uint32_t pitch)
+     InterlockedExchange(&s_present_idx, next);
+ }
+ 
++/* A finished frame from an external renderer (nv2a_pb_hook.h), which keeps
++ * its surfaces on the host GPU, so there is no guest memory to read: the
++ * caller hands over 0x00RRGGBB rows, top-down. A frame of another size is
++ * cropped or padded with black at the window's 640x480. */
++void xbox_FramebufferWindowPresentPixels(const uint32_t *xrgb, uint32_t width,
++                                         uint32_t height)
++{
++    LONG next;
++    uint32_t y, w, h;
++
++    if (!s_fb_running || !xrgb)
++        return;
++    next = (s_present_idx == 0) ? 1 : 0;
++    if (!s_present[next]) {
++        s_present[next] = (uint32_t *)calloc((size_t)s_fb_width * s_fb_height,
++                                             4);
++        if (!s_present[next])
++            return;
++    }
++    w = width < s_fb_width ? width : s_fb_width;
++    h = height < s_fb_height ? height : s_fb_height;
++    if (w < s_fb_width || h < s_fb_height)
++        memset(s_present[next], 0, (size_t)s_fb_width * s_fb_height * 4);
++    for (y = 0; y < h; y++)
++        memcpy(s_present[next] + (size_t)y * s_fb_width,
++               xrgb + (size_t)y * width, (size_t)w * 4);
++    InterlockedExchange(&s_present_idx, next);
++}
++
+ /* Which keys are down, for the pad stand-in in src/input.
+  *
+  * GetAsyncKeyState looked like the cheaper way to ask and does not work
+@@ -404,6 +433,7 @@ void xbox_FramebufferWindowStart(void)
+ #else
+ void xbox_FramebufferWindowSet(uint32_t fb_va, uint32_t pitch) { (void)fb_va; (void)pitch; }
+ void xbox_FramebufferWindowPresent(uint32_t fb_va, uint32_t pitch) { (void)fb_va; (void)pitch; }
++void xbox_FramebufferWindowPresentPixels(const uint32_t *p, uint32_t w, uint32_t h) { (void)p; (void)w; (void)h; }
+ void xbox_FramebufferWindowStart(void) {}
+ int xbox_FramebufferKeyDown(int vk) { (void)vk; return 0; }
+ void xbox_FramebufferWindowSetTitle(const uint16_t *n, int m) { (void)n; (void)m; }
+diff --git a/src/video/video_player.h b/src/video/video_player.h
+index c844aef..6114755 100644
+--- a/src/video/video_player.h
++++ b/src/video/video_player.h
+@@ -65,6 +65,10 @@ int xbox_FramebufferKeyDown(int vk);
+ 
+ void xbox_FramebufferWindowStart(void);
+ void xbox_FramebufferWindowSet(uint32_t fb_va, uint32_t pitch);
++/* Show a frame an external renderer produced (0x00RRGGBB rows, top-down)
++ * instead of reading guest memory; for titles drawing through a method hook. */
++void xbox_FramebufferWindowPresentPixels(const uint32_t *xrgb, uint32_t width,
++                                         uint32_t height);
+ int  xbox_FramebufferDumpBmp(const char *path);
+ /* Title bar: "<XBE title> | FPS: n | draws: n". The name is the certificate's
+  * UTF-16 title (40 chars max); the stats come from each flip. */
+-- 
+2.53.0.windows.2
+

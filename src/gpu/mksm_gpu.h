@@ -28,10 +28,21 @@ typedef struct MksmGpuMemory {
                                        (RAMHT location/size, CACHE1 channel id) */
 } MksmGpuMemory;
 
-/* Sets up xemu's PGRAPH on a device that uses these views. The renderer itself comes up on
- * the thread of the first mksm_gpu_method call, which must be the only thread calling it.
- * Returns 0 on success. */
-int mksm_gpu_init(const MksmGpuMemory *mem);
+/* Sets up xemu's PGRAPH on a device that uses these views, with the OpenGL (opengl = 1) or
+ * the null renderer. The renderer itself comes up on the thread of the first mksm_gpu_method
+ * call, which must be the only thread calling it. Returns 0 on success. */
+int mksm_gpu_init(const MksmGpuMemory *mem, int opengl);
+
+/* Receives each finished frame at the flip (OpenGL renderer only): the surface the title
+ * drew last, as top-down 0x00RRGGBB rows of `width` pixels. `draws` = draws since the last
+ * flip. Runs on the method thread; the pixels are only valid during the call. */
+typedef void (*MksmGpuPresentFn)(const uint32_t *xrgb, unsigned width, unsigned height,
+                                 unsigned draws);
+void mksm_gpu_set_present(MksmGpuPresentFn fn);
+
+/* VBlank pacing: with hz > 0 (the default is 59.94, NTSC) a flip waits for the next
+ * VBlank, the way the title's FLIP_STALL waits for the CRTC. 0 turns it off. */
+void mksm_gpu_set_vblank_hz(double hz);
 
 /* One decoded pushbuffer method, in stream order (the toolkit's nv2a_pb_method_hook_fn).
  * Stands in for xemu's PFIFO puller: resolves object handles through RAMHT, then calls

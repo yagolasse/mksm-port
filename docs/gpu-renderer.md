@@ -263,7 +263,7 @@ The OpenGL renderer (`pgraph/gl/*`, 11 files) and the GLSL generators (`pgraph/g
   `g_malloc_n`, `g_assert_not_reached`), `typeof` (QEMU is gnu11, the lib builds as c11),
   `QEMU_BUILD_BUG_MSG`, `qatomic_xchg/cmpxchg`, `qemu_thread_create/join` (Win32 threads),
   `qemu_fopen/mkdir/unlink`, `TARGET_PAGE_ALIGN`, `VGADisplayParams` + `VGACommonState.get_resolution/
-  get_params` (to be filled by `mksm_gpu.c` in 2.H.4b), `xemu-version.h`, config fields
+  get_params` (filled by `mksm_gpu.c`, 2.H.4b), `xemu-version.h`, config fields
   `display.quality.surface_scale` (1) and `perf.cache_shaders` (off).
 - **Dirty memory and accelerator** (`xemu_stubs.c`): `memory_region_test_and_clear_dirty` always returns
   true and `memory_region_set_client_dirty` is a no-op (the "always dirty" plan above), so vertex data
@@ -281,6 +281,43 @@ The OpenGL renderer (`pgraph/gl/*`, 11 files) and the GLSL generators (`pgraph/g
 
 Check: `gpu_link gl` (CTest `gpu_link_gl`) brings up the OpenGL renderer on a scratch device: GL 4.0
 core, NVIDIA RTX 2060 / driver 596.49 on the dev machine, no GL error after init, clean teardown.
+
+## In the game (2.H.4b)
+
+- **Renderer**: `RECOMP_PB_GPU=1` now selects OpenGL (`mksm_gpu_init(mem, opengl)` sets
+  `g_config.display.renderer` before `nv2a_context_init`); `RECOMP_PB_GPU_RENDERER=null` keeps the null
+  one. `early_context_init` runs on the main thread and leaves the display context current there, so
+  `mksm_gpu_init` releases it (`glo_set_current(NULL)`); the method (ack) thread takes the render context
+  in `pgraph_gl_init` and the display context at each flip.
+- **Context version**: the WGL layer asks for the newest 4.x core context (4.6 down to 4.0). glad only
+  loads the entry points of the version the context reports, NVIDIA reports exactly what was asked, and
+  xemu calls 4.1 functions (`glProgramUniform*` in `render_display`), so a 4.0 context crashed at the
+  first flip on a NULL call. libepoxy hides this in xemu.
+- **Scanout**: the title never writes `PCRTC_START` (D3D's VBlank handler does that on hardware), so
+  `mksm_gpu.c` remembers the colour surface of each draw/clear (colour DMA base + surface offset, as
+  xemu's surface binding computes it) and at `FLIP_STALL` treats that one as scanned out: it sets
+  `pcrtc.start`, answers xemu's `vga.get_resolution/get_params` hooks from the surface (size, pitch as
+  line offset; interlace off), and calls xemu's `pgraph_gl_sync` under `pgraph.lock`, which renders it
+  into the display buffer. That texture is read back (`glGetTexImage`, BGRA), flipped top-down and
+  handed to the present callback. In xemu the UI thread requests this and waits on `sync_complete`;
+  here it runs inline on the method thread.
+- **Window**: `main.c`'s callback passes the frame to the toolkit's `xbox_FramebufferWindowPresentPixels`
+  (patch 0010; the GDI window shows it instead of guest memory) and the frame stats for the title bar.
+  `RECOMP_PB_GPU_DUMP` writes one presented frame as BMP.
+- **Pacing**: after presenting, the flip waits for the next 59.94 Hz VBlank on a fixed grid (high-resolution
+  waitable timer); a late flip goes at once, one more than 4 periods late restarts the grid.
+  `RECOMP_PB_GPU_VBLANK=<Hz>` changes it, 0 turns it off.
+- **Texture-stage guard**: the title sometimes leaves a sampling mode (PROJECT2D) in a stage of the
+  shader stage program while that texture is disabled (`TEXCTL0` = 0, the format still valid), and
+  xemu's `get_sampler_type` asserts on it (dimensionality is only read for enabled stages). Seen within
+  the first ~10-30 s of most boots. On hardware a disabled texture unit reads as zero, so the glue masks
+  such stages to "no texture" in `NV_PGRAPH_SHADERPROG` from that draw's `BEGIN` to its `END` (xemu
+  binds shaders again when it flushes an inline buffer at `END`, so restoring right after `BEGIN` is too
+  early) and restores the register after; counted as `masked stages`, the first 8 logged with the
+  registers. Still intermittent after it: one short boot in three aborted on another xemu assert,
+  `pg->inline_array_length == 0` (`gl/draw.c`, a draw carrying both inline-array and inline-buffer
+  vertex data), a moment after a masked draw. Both look like a stream real hardware would not get,
+  so the suspect is how the pushbuffer reaches PGRAPH (plan 2.H.4c), not xemu.
 
 ## Order of work (plan 2.H.2-2.H.9)
 
@@ -306,8 +343,7 @@ core, NVIDIA RTX 2060 / driver 596.49 on the dev machine, no GL error after init
      `vram_ptr`/RAMIN views in `main.c`; the game boots to the title the same as before (sync
      still works), drawing nothing, and smoke `pad` still passes with `RECOMP_PB_GPU=0`.
 3. **2.H.4 GL backend up**, in two steps: **2.H.4a** build (done, "The GL backend build" above);
-   **2.H.4b** in the game: OpenGL selected under `RECOMP_PB_GPU=1`, contexts on the ack thread, the
-   framebuffer surface presented into the game window at the flip, VBlank pacing at `FLIP_STALL`.
+   **2.H.4b** in the game (done, "In the game" above).
 4. **2.H.5 Draws**: the menu capture renders (vertex fetch, generated shaders, textures as xemu
    has them), compared against the software reference.
 5. **2.H.6 Movies and render targets**: Sofdec frames (CPU writes into texture memory: the dirty

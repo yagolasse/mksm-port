@@ -1,7 +1,7 @@
 /*
  * gloffscreen on WGL: the context layer xemu's GL renderer uses (thirdparty/gloffscreen/
  * gloffscreen.h), in place of xemu's SDL version. Each context gets its own hidden window
- * (a pixel format can be set once per window) and an OpenGL 4.0 core context that shares
+ * (a pixel format can be set once per window) and an OpenGL 4.x core context that shares
  * objects with whatever context is current on the calling thread, as xemu's
  * SDL_GL_SHARE_WITH_CURRENT_CONTEXT does.
  *
@@ -137,21 +137,29 @@ GloContext *glo_context_create(void)
         fatal("wglChoosePixelFormatARB / SetPixelFormat");
     }
 
-    const int ctx_attribs[] = {
-        WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
-        WGL_CONTEXT_MINOR_VERSION_ARB, 0,
-        WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
-        0,
-    };
-    context->hglrc = wglCreateContextAttribsARB(context->hdc, wglGetCurrentContext(), ctx_attribs);
+    /* xemu asks SDL for 4.0 core but calls later entry points (glProgramUniform*, 4.1) that
+     * libepoxy resolves whatever the version. glad only loads up to the version the context
+     * reports, and NVIDIA reports exactly what was asked, so ask for the newest core version
+     * the driver has (core profiles are backward compatible) and go down to 4.0. */
+    static const int minors[] = { 6, 5, 4, 3, 2, 1, 0 };
+    for (size_t i = 0; i < sizeof(minors) / sizeof(minors[0]) && !context->hglrc; i++) {
+        const int ctx_attribs[] = {
+            WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
+            WGL_CONTEXT_MINOR_VERSION_ARB, minors[i],
+            WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
+            0,
+        };
+        context->hglrc =
+            wglCreateContextAttribsARB(context->hdc, wglGetCurrentContext(), ctx_attribs);
+    }
     if (!context->hglrc) {
-        fatal("wglCreateContextAttribsARB (OpenGL 4.0 core)");
+        fatal("wglCreateContextAttribsARB (OpenGL 4.0+ core)");
     }
 
     glo_set_current(context);
     if (!s_gl_loaded) {
         if (!gladLoaderLoadGL()) {
-            fprintf(stderr, "gloffscreen: loading the OpenGL 4.0 entry points failed\n");
+            fprintf(stderr, "gloffscreen: loading the OpenGL entry points failed\n");
             exit(1);
         }
         s_gl_loaded = 1;

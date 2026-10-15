@@ -25,9 +25,10 @@ statically recompiling the retail `default.xbe` to C with
   (`qemu/lru.h`, `queue.h`, `mstring.h`, `fast-hash`), also unmodified;
   `xemu/shim/` = stand-ins for the QEMU/glib/xemu headers they include (incl. `epoxy/gl.h` → glad);
   `nv2a_vsh_cpu/`, `xxhash/` = vendored libraries; `glad/` = generated GL 4.6 core/WGL loader;
-  `gloffscreen_wgl.c` = xemu's GL context layer on WGL (hidden windows, 4.0 core, shared contexts);
+  `gloffscreen_wgl.c` = xemu's GL context layer on WGL (hidden windows, newest 4.x core, shared contexts);
   `xemu_stubs.c` = externals from unported xemu files; `mksm_gpu.c` = stands in for xemu's PFIFO
-  (RAMHT lookup, acks the NOP-notify and flip-stall waits); `mksm_gpu.h` = the plain-C interface for
+  (RAMHT lookup, acks the NOP-notify and flip-stall waits, presents the last-drawn surface at the
+  flip and paces flips to 59.94 Hz); `mksm_gpu.h` = the plain-C interface for
   cl-built code. Licenses: `LICENSE` (GPL-3.0, the combined work), `LICENSES/`, `NOTICE` (file → license)
 - `external/xboxrecomp/`: toolkit git submodule (pinned). Prefer fixing things in our `src/` first;
   toolkit changes should go upstream or into a fork
@@ -143,8 +144,9 @@ from the first pushbuffer method; the run lasts at least MS/1000 + 15 s) is the 
 opens and that the `.ref.bmp` is non-black (>= 30000 px). Replay a capture with `RECOMP_PB_REPLAY=<path>`
 and byte-compare `<path>.ref.bmp` vs `<path>.replay.bmp`. Captures are ~144 MB; clean up old ones.
 
-`--gpu` runs the checkpoints with `RECOMP_PB_GPU=1` (xemu's PGRAPH, null renderer for now): draws come
-from the `[XGPU]` stats line, which must show 0 bad handles, and the renderer must come up. Every run
+`--gpu` runs the checkpoints with `RECOMP_PB_GPU=1` (xemu's PGRAPH, OpenGL renderer): draws come
+from the `[XGPU]` stats line, which must show 0 bad handles, and the renderer must come up; with
+OpenGL, frames must have been presented and one of them non-black. Every run
 also fails on `Assertion failed` (xemu keeps its asserts on; `abort()` exits 3 like the watchdog).
 
 ## Input
@@ -161,9 +163,13 @@ Headless: `RECOMP_PAD_PRESS=0x10,3000,300` (mask,period,hold ms) or `RECOMP_PAD_
 Expect crashes during bring-up. The VEH handler in `main.c` prints the faulting guest function, the
 guest stack, and recent ICALL targets. Fix by adding overrides in `recomp_manual.c` or runtime
 support. Useful env vars from the toolkit: `RECOMP_WATCHDOG_SECS`, `RECOMP_AC97_READY`.
-`RECOMP_PB_GPU=1` (opt-in, toolkit patch 0009) hands every decoded method to xemu's PGRAPH instead of
-the software executor (`[XGPU]` lines every 5 s; nothing is drawn yet, the window stays stale);
-it still needs `RECOMP_PB_EXEC=1`, which is what makes the ack thread decode the pushbuffer.
+`RECOMP_PB_GPU=1` (opt-in, toolkit patches 0009-0010) hands every decoded method to xemu's PGRAPH
+(OpenGL renderer) instead of the software executor (`[XGPU]` lines every 5 s); each flip presents the
+surface drawn last into the framebuffer window (`RECOMP_FB_WINDOW=1`) and waits for a 59.94 Hz VBlank.
+`RECOMP_PB_GPU_RENDERER=null` = xemu's null renderer (draws nothing), `RECOMP_PB_GPU_VBLANK=<Hz>` sets
+the pacing (0 = uncapped), `RECOMP_PB_GPU_DUMP=<file.bmp>` (+ `RECOMP_PB_GPU_DUMP_FLIP=<N>`, default
+600) dumps one presented frame. Movies (Sofdec) stay black on this path until 2.H.6. It still needs
+`RECOMP_PB_EXEC=1`, which is what makes the ack thread decode the pushbuffer.
 `RECOMP_PB_EXEC=1` (set by the run scripts) is required: D3D init waits on GPU semaphore releases,
 which only the pushbuffer executor performs.
 The run scripts also set `RECOMP_AC97_READY=1` (emulated APU, so `DirectSoundCreate` succeeds) and

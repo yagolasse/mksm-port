@@ -220,12 +220,17 @@ static void print_guest_context(void *rip)
 typedef struct MCPXAPUState MCPXAPUState;
 /* GPU renderer (plan 2.H): RECOMP_PB_GPU=1 hands every decoded pushbuffer method to xemu's
  * PGRAPH (src/gpu) instead of the toolkit's software executor. RECOMP_PB_EXEC=1 is still
- * needed: it is what makes the ack thread decode the pushbuffer at all. */
+ * needed: it is what makes the ack thread decode the pushbuffer at all.
+ * RECOMP_PB_GPU_RENDERER=null picks xemu's null renderer instead of OpenGL;
+ * RECOMP_PB_GPU_VBLANK=<Hz> sets the flip pacing (default 59.94, 0 = uncapped). */
 #ifdef MKSM_HAVE_GPU
 #include "gpu/mksm_gpu.h"
 
 typedef void (*nv2a_pb_method_hook_fn)(uint32_t subch, uint32_t method, uint32_t param);
 extern void nv2a_pb_set_method_hook(nv2a_pb_method_hook_fn fn);
+extern void xbox_FramebufferWindowPresentPixels(const uint32_t *xrgb, uint32_t width,
+                                                uint32_t height);
+extern void xbox_FramebufferWindowFrameStats(uint32_t draws);
 
 #define GPU_VRAM_VA      0x80000000u        /* the contiguous window = physical view */
 #define GPU_VRAM_SIZE    (64u << 20)
@@ -234,11 +239,24 @@ extern void nv2a_pb_set_method_hook(nv2a_pb_method_hook_fn fn);
 #define GPU_PRAMIN_OFF   0x00700000u
 #define GPU_PRAMIN_SIZE  (1u << 20)
 
+/* Each GPU frame goes to the framebuffer window (RECOMP_FB_WINDOW), as the software
+ * executor's flip does with guest memory. */
+static void gpu_present(const uint32_t *xrgb, unsigned width, unsigned height, unsigned draws)
+{
+    xbox_FramebufferWindowPresentPixels(xrgb, width, height);
+    xbox_FramebufferWindowFrameStats(draws);
+}
+
 static void gpu_init_from_env(void)
 {
     const char *e = getenv("RECOMP_PB_GPU");
     if (!e || strcmp(e, "1") != 0)
         return;
+    const char *renderer = getenv("RECOMP_PB_GPU_RENDERER");
+    int opengl = !(renderer && strcmp(renderer, "null") == 0);
+    const char *vblank = getenv("RECOMP_PB_GPU_VBLANK");
+    if (vblank && vblank[0])
+        mksm_gpu_set_vblank_hz(atof(vblank));
     uint8_t *base = (uint8_t *)xbox_GetMemoryOffset();
     MksmGpuMemory mem = {
         .vram = base + GPU_VRAM_VA,
@@ -247,10 +265,11 @@ static void gpu_init_from_env(void)
         .ramin_size = GPU_PRAMIN_SIZE,
         .pfifo = (const volatile uint32_t *)(base + GPU_APERTURE_VA + GPU_PFIFO_OFF),
     };
-    if (mksm_gpu_init(&mem) != 0) {
+    if (mksm_gpu_init(&mem, opengl) != 0) {
         fprintf(stderr, "[BOOT] RECOMP_PB_GPU: PGRAPH init failed, software executor\n");
         return;
     }
+    mksm_gpu_set_present(gpu_present);
     nv2a_pb_set_method_hook(mksm_gpu_method);
     fprintf(stderr, "[BOOT] RECOMP_PB_GPU: pushbuffer -> xemu PGRAPH\n");
 }

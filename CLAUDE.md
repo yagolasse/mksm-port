@@ -25,7 +25,7 @@ statically recompiling the retail `default.xbe` to C with
 - `tools/xiso.py`: list/extract files from an Xbox disc image
 - `tools/padding_seeds.py`: finds undetected functions after int3 padding (writes `seeds/padding.json`)
 - `tools/stub_audit.py`: sorts `gen/recomp_stubs_unresolved.c` into real code vs. decoded data (writes `seeds/stubs.json`)
-- `docs/`: generic notes on how the port works (`gpu-renderer.md`: design of the pushbuffer → D3D11 renderer)
+- `docs/`: generic notes on how the port works (`gpu-renderer.md`: design of the GPU renderer, a port of xemu's PGRAPH + OpenGL backend)
 - `tests/`: unit tests for `tools/*.py` on synthetic inputs (no game data), see Testing
 - `seeds/`: extra function entry points for `tools.disasm --seed-functions` (see Pipeline)
 - `patches/`: our toolkit changes not yet upstream; apply them in `external/xboxrecomp` after cloning

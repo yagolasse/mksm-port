@@ -1,6 +1,7 @@
-# GPU renderer design (pushbuffer → D3D11)
+# GPU renderer design (pushbuffer → xemu PGRAPH, OpenGL)
 
-Design notes for replacing the toolkit's software rasterizer with real GPU draws. Written before any
+Design notes for replacing the toolkit's software rasterizer with real GPU draws, by porting
+xemu's NV2A renderer. Written before any
 code (plan step 2.H.1), from reading xboxrecomp's `src/kernel/nv2a_pb_exec.c` next to xemu's
 `hw/xbox/nv2a/pgraph/` (master `36334d9`, 2026-10-12). Nothing here is specific to one game.
 
@@ -26,9 +27,8 @@ front face, stencil, polygon mode, scissor/window clip, fixed-function T&L (ligh
 matrices: only needed if a title draws with `TRANSFORM_EXECUTION_MODE` = fixed), point sprites,
 texture palettes, shadow-map compare.
 
-The software path's helpers stay useful: `nv2a_vsh_interp.c` and `nv2a_combiner.c` are portable C
-decoders of the same encodings the GPU path must translate, and they become the per-vertex /
-per-pixel oracle for checking the generated shaders.
+With xemu's PGRAPH ported (below), most of this table matters only for the software path, which
+stays as the reference to compare frames against. The gaps above are xemu's to cover.
 
 ## What xemu does (the parts worth copying in spirit)
 
@@ -58,61 +58,10 @@ per-pixel oracle for checking the generated shaders.
 
 ## Decisions
 
-### API: D3D11, with our own HLSL emitters
-
-The criterion from the plan was "how much of xemu's generator code carries over". The answer turned
-out to be decided by licensing (next section): the two generators that matter most, `vsh-prog.c`
-(vertex microcode) and `psh.c` (combiners), are **GPL-2.0-or-later**, not LGPL, so none of their
-code can go into the MIT toolkit either way. Once those two have to be written fresh, OpenGL's
-advantage (xemu's GLSL ports almost as-is) mostly disappears, and D3D11 wins on the rest:
-
-- the toolkit already links `d3d11`/`dxgi`/`d3dcompiler` (`src/d3d/`), no GL loader or WGL
-  context code needed;
-- `D3DCompile` at runtime is fine for a shader cache that warms up in the first frames;
-- native D24S8 (the 24-bit z the titles use) and BC1-3 (DXT1-5).
-
-The emitters are written from the toolkit's own MIT decoders: `nv2a_vsh_interp.c` already has the
-complete instruction field table and opcode semantics, `nv2a_combiner.c` the ICW/OCW/final
-combiner rules. Each HLSL emitter mirrors its CPU twin function by function, so the same capture
-can be run through both and diffed. xemu stays a **behavioural reference only** (edge cases like
-`RCC` clamping, `ARL` rounding bias, `LOG`/`EXP`, NaN-to-one on colours, fog infinities): read
-it, write the rule down, don't copy the text.
-
-Generated shape, per draw state:
-- **VS**: inputs v0-v15 from the vertex buffer (format conversion done by the input layout where
-  D3D11 has a matching DXGI format, else on upload), `cbuffer` of 192 float4 constants (dynamic
-  indexing covers `a0.x`), one HLSL statement block per program slot, then the epilogue above
-  (w clamp, pixel → NDC, z / depth range, xyz *= w).
-- **PS**: texture-stage fetches (2D/projective/cube first; bump/dot-product modes only when a title
-  uses them), combiner stages unrolled from ICW/OCW (constants in a cbuffer), final combiner, alpha
-  test as `clip()`, fog.
-- Fixed state (blend, depth, stencil, raster) as D3D11 state objects cached by value.
-- Quads and quad strips → triangle lists via a generated index buffer (D3D11 has no quads, and a
-  geometry shader is not worth it for that alone). Polygon fill modes only if a title uses them.
-
-Shader cache key: a hash of the program slots up to `FINAL` + the vertex input formats used, and
-of the combiner + texture-stage state, as xemu does. Disk cache: not before it is measured to matter.
-
-### Threading: the device lives on the executor thread
-
-`nv2a_ack_thread` is the only caller of `nv2a_pb_exec_method`, so it owns the D3D11 device and
-immediate context; no locking or command queue between threads. The window stays with
-`fb_present.c`'s thread (message pump, keyboard input for `RECOMP_KEYBOARD`); the swap chain is
-created for that HWND but `Present` is called from the executor thread at the flip
-(`FLIP_INCREMENT_WRITE` / `FLIP_STALL`). In GPU mode the GDI thread stops drawing
-(`StretchDIBits`) and only pumps messages.
-
-DXGI allows `Present` from a thread other than the window's as long as the window thread keeps
-pumping; the GDI thread never waits on the executor, so this holds. `Present` with a sync interval
-of 1 blocks the executor thread for up to one VBlank, which delays the semaphore and flip acks the
-title waits on. That is the back-pressure a console gives (and what 2.4 needs for frame pacing),
-but the ack thread also runs other ticks (fences, DSP doorbell, counters), so 2.H.3 has to check
-that a 16 ms stall there doesn't starve them; if it does, move the GPU work to its own thread fed
-by the ack thread, with present on that thread.
-
-Rejected for now: a separate render thread that receives copies of the methods. It would need
-snapshots of the guest memory each draw reads, which is the hard part of the capture tool (2.H.2)
-for no gain while one thread is fast enough.
+Revised the same day: the first draft wrote our own D3D11 + HLSL renderer to keep the toolkit
+MIT-only. GPL is acceptable for this port, so the renderer is **xemu's own PGRAPH code, ported**,
+not a rewrite. That brings xemu's draw path, shader generators, and surface and texture caches,
+along with years of game-compatibility fixes.
 
 ### Licensing
 
@@ -120,70 +69,91 @@ xemu's `hw/xbox/nv2a` files, by header:
 
 | License | Files |
 |---|---|
-| **GPL-2.0-or-later** | `pgraph/glsl/psh.c`, `pgraph/glsl/vsh-prog.c`, `pgraph/glsl/vsh-prog.h`, `pgraph/vsh_regs.h` |
-| MIT | `pgraph/s3tc.c/.h` (DXT decode), `pgraph/thirdparty/gloffscreen/*` |
-| LGPL-2.1-or-later | everything else (`pgraph.c`, `texture.c`, `swizzle.c`, `vertex.c`, `glsl/vsh.c`, `vsh-ff.c`, `geom.c`, `common.c`, `psh_regs.h`, `gl/*`, `vk/*`, ...) |
+| **GPL-2.0 or GPL-3.0** ("version 2 or (at your option) version 3") | `pgraph/glsl/psh.c`, `pgraph/glsl/vsh-prog.c`, `pgraph/glsl/vsh-prog.h`, `pgraph/vsh_regs.h` |
+| MIT | `pgraph/s3tc.c/.h`, `pgraph/thirdparty/gloffscreen/*` |
+| LGPL-2.1-or-later | everything else (`pgraph.c`, `texture.c`, `swizzle.c`, `vertex.c`, `glsl/*` but the two above, `gl/*`, `vk/*`, ...) |
 
-Rules for the toolkit (MIT, with LGPL files listed in `LICENSES/` + `NOTICE`):
-- GPL files: **never ported**, not even partially. Behaviour learned from them is re-derived and
-  written in our own words; the encodings themselves (bit fields, register numbers) are hardware
-  facts.
-- LGPL files: may be ported as separate files under their original license and copyright, listed in
-  `NOTICE`, as the APU code already is. Candidates: fixed-function T&L (`vsh-ff.c`) if a title
-  needs it, texture format tables from `texture.c`, swizzle code if the toolkit's own
-  `d3d8_swizzle.h` is short of something.
-- MIT files: `s3tc.c` can be taken with its notice, but D3D11 decodes BC formats in hardware, so
-  it is only useful for the software path.
-- Upstream note: `nv2a_combiner.c` says its encoding "follows xemu's psh.c". If that means facts
-  only it is fine; worth a line in its header saying so, since `psh.c` is GPL.
+Consequences:
+- The ported renderer lives in **this repo** (`src/gpu/xemu/`, files under their original
+  licenses and copyright, with a `NOTICE`), not in the MIT toolkit. The toolkit only gets a small
+  MIT hook patch (below), which stays upstreamable.
+- The linked exe is a combined work under **GPL-3.0** (the one version all three licenses allow).
+  This repo is licensed GPL-3.0 to match (plan H.1).
 
-### Resource tracking without a dirty bitmap
+### API: OpenGL 4.x (xemu's `gl/` backend)
 
-xemu relies on QEMU's per-page dirty bitmap. Here guest RAM is a file mapping viewed at the base and
-at every mirror, and `GetWriteWatch` only works on private `VirtualAlloc` memory, so there is no
-free equivalent. Plan:
+xemu has GL and Vulkan backends sharing the same GLSL generators. GL is ported first:
+- no runtime GLSL → SPIR-V compiler (the Vulkan backend links glslang);
+- a WGL context and a loader are small (xemu uses SDL + libepoxy through `gloffscreen`; we
+  replace that with a WGL version of `gloffscreen` and keep epoxy or use glad);
+- `pgraph/null/renderer.c` gives a first step that runs xemu's method handling with no drawing.
 
-- **Vertex data**: copy the referenced range from guest RAM into a dynamic vertex buffer per draw
-  (`MAP_WRITE_DISCARD` / `NO_OVERWRITE` ring). Range = min..max index × stride per attribute,
-  known from the draw. No caching at first.
-- **Textures**: cache by (address, format, size, pitch); revalidate with a fast content hash the
-  first time a texture is bound in a frame (once per frame, not per draw). Sofdec-style CPU
-  uploads into the same address then show up the next frame. If hashing shows in the profile
-  (2.4), add page protection: mark cached texture pages read-only in **every** view (base and
-  mirrors) and catch writes in the VEH that already traps MMIO.
-- **Surfaces**: GPU textures, keyed by (address, format, size, pitch). A surface bound as a
-  texture is used in place. Download to guest RAM only when needed: when the software path or
-  framebuffer dumps (`RECOMP_FB_DUMP`) ask, and when the CPU reads it (detected the same way as
-  texture writes, deferred until a title is seen doing it). The first versions download at flip
-  behind a debug flag so the existing BMP dumps keep working.
-- **Reports**: `GET_REPORT` zpass counts become D3D11 occlusion queries, read back when the
-  semaphore/report is written (stalls; fine until profiled).
+Vulkan can follow later on the same port if GL drivers turn out to be a problem.
+
+### Integration: methods go to xemu's `pgraph_method`
+
+The toolkit keeps fetching the pushbuffer (`nv2a_pb_scan`, playing the role of xemu's `pfifo.c`).
+In GPU mode, `nv2a_pb_exec_method` hands every method to a registered hook (toolkit patch: a
+function pointer, nothing else), and the hook calls xemu's `pgraph_method`. xemu then owns all
+PGRAPH state, including semaphores, flips and reports, so the toolkit executor's own handling of
+those is skipped in that mode. Which of the toolkit-side sync behaviour (`FLIP_STALL`, the
+semaphore acks the title waits on) has to stay is the first thing to check on the null renderer.
+
+Shims needed (a `qemu_shim.h`-style header, as the toolkit already has for the APU):
+`g_malloc`/`g_free`/`g_strdup_printf` (nearly all glib use), `qemu/thread.h` mutexes and events,
+`MString`, `Lru`, `fast_hash`, `NV2AState` with `vram_ptr` = the contiguous window at
+`0x80000000` (the physical view, which is what xemu's VRAM offsets mean), and the dirty-page calls
+(below). `pgraph.c` also uses the external `nv2a_vsh_cpu` library for context-write tracking;
+the toolkit's `nv2a_vsh_interp.c` can stand in if that library's license or build is a problem.
+
+### Threading
+
+xemu runs PGRAPH on its own thread with the GL context current there. Here
+`nv2a_ack_thread` is the only caller of `nv2a_pb_exec_method`, so the GL context is made current
+on it and xemu's locks become cheap no-ops or plain mutexes. The window stays with
+`fb_present.c`'s thread (message pump, keyboard); `SwapBuffers` on that window's DC is called
+from the executor thread at the flip, and the GDI thread stops drawing in GPU mode.
+
+Open risk: a VBlank-long swap blocks the ack thread, which also runs the fence, DSP doorbell and
+counter ticks. If that starves them, move PGRAPH to its own thread, fed by the ack thread, as in
+xemu.
+
+### Dirty tracking without QEMU
+
+xemu asks QEMU which VRAM pages changed (`memory_region_test_and_clear_dirty`) to invalidate
+textures and vertex buffers, and installs access callbacks to download surfaces when the CPU
+touches them. Here guest RAM is a file mapping viewed at the base and at every mirror, so
+`GetWriteWatch` (private `VirtualAlloc` memory only) is not available. Plan:
+- first: the dirty query always answers "dirty". xemu already confirms texture changes with a
+  content hash, so this is correct, just slower;
+- then, if it shows in the profile: protect the pages of cached resources read-only in **every**
+  view and catch writes in the existing VEH (which already traps MMIO), feeding a dirty bitmap;
+- surface downloads: at flip behind a debug flag (keeps `RECOMP_FB_DUMP` working), and on CPU
+  access once a title is seen needing it.
 
 ### Switch and fallback
 
-`RECOMP_PB_GPU=1` selects the GPU path; unset keeps the software executor exactly as it is. Both
-consume the same `nv2a_pb_exec_method` state, so the split is at the draw/clear/flip call sites:
-`raster_batch*` / `clear_surface` / the flip go either to the rasterizer or to a new
-`nv2a_gpu_*` module (`src/kernel/nv2a_gpu_d3d11.c` + `nv2a_gpu_hlsl_vsh.c` +
-`nv2a_gpu_hlsl_psh.c`). The old `src/nv2a/nv2a_pgraph_d3d11.c` prototype is not reused.
+`RECOMP_PB_GPU=1` selects the xemu path; unset keeps the software executor exactly as it is. The
+software path stays as the reference for captures (2.H.2). The toolkit's
+`src/nv2a/nv2a_pgraph_d3d11.c` prototype is not reused.
+
+### `oPos.w` = 0/inf
+
+Handled by xemu's own epilogue (see above). The toolkit's software fix stays in the software path.
 
 ## Order of work (plan 2.H.2-2.H.9)
 
-The read changed one thing: the menu's 2D quads already go through a vertex program (D3D's
-XYZRHW pass-through), so flat-colour draws need the VS emitter from the start. So the VS emitter
-moves into 2.H.4 and 2.H.5 becomes "the rest of the vertex stage".
-
-1. **2.H.2 Capture + replay** (unchanged): one frame's methods + the guest memory its draws read.
-   Both renderers replay it, which gives the diff loop for everything below.
-2. **2.H.3 Device + swap chain**: device on the executor thread, swap chain on the GDI window,
-   clears + flips; check the ack-thread stall question above.
-3. **2.H.4 First draws**: vertex fetch into a dynamic VB, input layout from the array formats,
-   VS emitter (from `nv2a_vsh_interp.c`) + epilogue with the w clamp, flat colour (`oD0`).
-   The menu capture shows its quads in the right place. Per-vertex diff against the interpreter.
-4. **2.H.5 Rest of the vertex stage**: all outputs (D1, fog, T0-T3, point size), `a0.x` relative
-   constants, primitive types (quads/strips/fans → index lists), immediate and inline vertices;
-   fixed-function T&L only if a capture shows a fixed-mode draw.
-5. **2.H.6 Textures** (unchanged).
-6. **2.H.7 Combiners** (unchanged, from `nv2a_combiner.c`, not xemu `psh.c`).
-7. **2.H.8 Render targets** (unchanged).
-8. **2.H.9 Parity** (unchanged).
+1. **2.H.2 Capture + replay** (unchanged): one frame's methods + the guest memory its draws read,
+   replayable through either renderer. The fast loop for everything below.
+2. **2.H.3 Port + null renderer**: xemu's `pgraph.c` and its common files + `null/renderer.c` +
+   shims build in `src/gpu/xemu/`; toolkit hook patch; with `RECOMP_PB_GPU=1` the game boots to
+   the title the same as before (sync still works), drawing nothing.
+3. **2.H.4 GL backend up**: WGL context on the executor thread, epoxy/glad, `gl/` + `glsl/` built;
+   clears and flips shown in the window.
+4. **2.H.5 Draws**: the menu capture renders (vertex fetch, generated shaders, textures as xemu
+   has them), compared against the software reference.
+5. **2.H.6 Movies and render targets**: Sofdec frames (CPU writes into texture memory: the dirty
+   query), surface downloads where the CPU reads them.
+6. **2.H.7 Level frame**: the level capture renders; fix gaps in the shims.
+7. **2.H.8 Performance**: dirty tracking by page protection if hashing costs; frame pacing (2.4).
+8. **2.H.9 Parity + default** (unchanged).

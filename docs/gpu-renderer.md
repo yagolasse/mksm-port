@@ -148,7 +148,10 @@ can be built and checked without a 60 s boot. Design, revised from 2.H.1:
 
 - **Capture** (`RECOMP_PB_CAPTURE=<path>`, `RECOMP_PB_CAPTURE_FLIP=<N>` default 1): every decoded
   method is mirrored into a last-value shadow table (per subchannel + method, action methods
-  excluded) and the frame is recorded as `(subch, method, param)` triples.
+  excluded) and the frame is recorded as `(subch, method, param)` triples. `RECOMP_PB_CAPTURE_MS=<T>`
+  (patch 0007) arms instead at the first flip >= T ms since boot; it overrides the flip count and
+  is the reproducible choice when the frame follows a wall-clock trigger (a scripted pad event),
+  because the flip count depends on how fast the uncapped title/movie frames were drawn.
 - **File layout** (`MKPB` v2, little-endian): sizes + counts + the flip number + the contiguous
   high-water mark, then three guest-memory blobs (main RAM 64 MiB, the contiguous window 64 MiB,
   the NV2A aperture 16 MiB), a prelude, and the frame. The prelude replays the shadow as ordinary
@@ -170,8 +173,10 @@ is rebuilt on replay.
 
 ## Order of work (plan 2.H.2-2.H.9)
 
-1. **2.H.2 Capture + replay**: done for the title screen (2.H.2a); the level frame (2.H.2b) is
-   left — reach the level headless and capture it the same way.
+1. **2.H.2 Capture + replay**: done — the title screen (2.H.2a) and the first level frame (2.H.2b,
+   `RECOMP_PB_CAPTURE_MS=85000`, capture `../logs/pbcap_level_85000.pbcap`, replays byte-identically).
+   The level's software reference is dark but populated (195k non-black px, 24k colours); the
+   software rasterizer still draws the level mostly off-surface/untextured, which the GPU path fixes.
 2. **2.H.3 Port + null renderer**: xemu's `pgraph.c` and its common files + `null/renderer.c` +
    shims build in `src/gpu/xemu/`; toolkit hook patch; with `RECOMP_PB_GPU=1` the game boots to
    the title the same as before (sync still works), drawing nothing.

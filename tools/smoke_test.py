@@ -18,17 +18,29 @@ work. When the game gets further, add a checkpoint here.
 Usage:
     python tools/smoke_test.py [--game-dir DIR] [--exe EXE] [--log-dir DIR]
                                [--only boot|pad]
+                               [--capture-ms MS | --capture-flip N] [--capture-path PATH]
 
 The game dir (holding default.xbe) defaults to MKSM_GAME_DIR, else
 ../game_files. No game data lives in this repo; without it the test exits 77
 (CTest's skip code). Exit 0 = all checks passed, 1 = a check failed.
 
 The env defaults match tools/run.sh and tools/run.bat: keep the three in sync.
+
+--capture-ms / --capture-flip record one pad frame into a pushbuffer capture
+(the MKPB file + a software-reference .bmp) by setting RECOMP_PB_CAPTURE plus
+RECOMP_PB_CAPTURE_MS (arm at the first flip after that many ms; reproducible,
+since the pad script is wall-clock based) or RECOMP_PB_CAPTURE_FLIP (the Nth
+FLIP_STALL; only reproducible if the boot path is bit-identical). Capture runs
+only the pad checkpoint and require it: combining with --only boot is an error.
+The capture file must exist, and [PBCAP] wrote must come after WADCRC.BIN opens
+(the level load), so a title-screen or movie frame is not accepted as a level
+frame.
 """
 
 import argparse
 import os
 import re
+import struct
 import subprocess
 import sys
 import time
@@ -66,6 +78,10 @@ PAD_SKIP_MOVIE = "57000:start"
 # 0x00000140: seen once in a 90 s run after 1.12c, not reproducible (PLAN 1.12c).
 KNOWN_WILD = {0x00000140}
 
+# A level frame has ~195k non-black pixels; a black/loading frame ~11k of
+# near-zero noise. This floor rejects the latter without needing an eyeball.
+CAPTURE_MIN_NONBLACK = 30000
+
 
 class Checkpoint:
     def __init__(self, name, secs, env, min_draws, files, last_pad_step=None,
@@ -101,12 +117,47 @@ RE_PATH = re.compile(r"^\s*\[PATH\] (.+)$", re.M)
 RE_WILD = re.compile(r"\[ICALL\] target 0x([0-9A-Fa-f]+) is not code")
 RE_PAD = re.compile(r"PAD: t=\d+ ms step (\d+)")
 RE_PAD_STEP = r"PAD: t=\d+ ms step %d "
+RE_PBCAP_ARMED = re.compile(r"\[PBCAP\] armed at flip (\d+)")
+RE_PBCAP_WROTE = re.compile(r"\[PBCAP\] wrote ")
+RE_FLIPS = re.compile(r"\((\d+) flips\)")
 
 
-def run(cp, exe, game_dir, log):
+def _path_pos(text, name):
+    """End offset of the first [PATH] line whose path ends with name."""
+    for m in RE_PATH.finditer(text):
+        if m.group(1).lower().endswith(name.lower()):
+            return m.end()
+    return None
+
+
+def _bmp_nonblack(path):
+    """Count non-black pixels in a 24-bit bottom-up BMP, 0 on any error."""
+    try:
+        d = Path(path).read_bytes()
+        if d[:2] != b"BM" or struct.unpack("<H", d[28:30])[0] != 24:
+            return 0
+        off = struct.unpack("<I", d[10:14])[0]
+        w = struct.unpack("<i", d[18:22])[0]
+        h = struct.unpack("<i", d[22:26])[0]
+        stride = ((w * 3 + 3) // 4) * 4
+        n = 0
+        for y in range(abs(h)):
+            row = off + (abs(h) - 1 - y) * stride
+            for x in range(w):
+                i = row + x * 3
+                if d[i] or d[i + 1] or d[i + 2]:
+                    n += 1
+        return n
+    except (OSError, struct.error):
+        return 0
+
+
+def run(cp, exe, game_dir, log, extra_env=None):
     env = dict(os.environ)
     env.update(RUN_ENV)
     env.update(cp.env)
+    if extra_env:
+        env.update(extra_env)
     env["RECOMP_WATCHDOG_SECS"] = str(cp.secs)
     print(f"[{cp.name}] running {cp.secs} s, log {log}", flush=True)
     start = time.monotonic()
@@ -122,7 +173,7 @@ def run(cp, exe, game_dir, log):
     return code
 
 
-def check(cp, code, text):
+def check(cp, code, text, capture_after=None):
     """Return a list of (ok, message)."""
     results = []
     results.append((code in (0, 3), f"exit code {code} (0 or 3 = watchdog expected)"))
@@ -163,6 +214,10 @@ def check(cp, code, text):
         for name in names:
             hit = any(p.lower().endswith(name.lower()) for p in later)
             results.append((hit, f"opened {name} after pad step {step}"))
+    if capture_after is not None:
+        pos = _path_pos(text, capture_after)
+        wrote = bool(RE_PBCAP_WROTE.search(text, pos)) if pos is not None else False
+        results.append((wrote, f"[PBCAP] wrote after {capture_after}"))
     return results
 
 
@@ -173,6 +228,12 @@ def main():
     ap.add_argument("--exe", default=str(PORT / "build" / "Release" / "mksm_recomp.exe"))
     ap.add_argument("--log-dir", default=str(PORT.parent / "logs"))
     ap.add_argument("--only", choices=[c.name for c in CHECKPOINTS], action="append")
+    ap.add_argument("--capture-ms", type=int,
+                    help="capture the pad frame at the first flip after this many ms")
+    ap.add_argument("--capture-flip", type=int,
+                    help="capture the pad frame at this FLIP_STALL number")
+    ap.add_argument("--capture-path",
+                    help="capture file path (default <log_dir>/pbcap_level_<N>.pbcap)")
     args = ap.parse_args()
 
     game_dir = Path(args.game_dir).resolve()
@@ -183,21 +244,62 @@ def main():
     if not exe.is_file():
         print(f"FAIL: exe not found: {exe}")
         return 1
-    log_dir = Path(args.log_dir)
+    log_dir = Path(args.log_dir).resolve()
     log_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
+
+    capture = args.capture_ms is not None or args.capture_flip is not None
+    capture_env = {}
+    capture_path = None
+    if capture:
+        if args.only and "pad" not in args.only:
+            print("FAIL: --capture-ms/--capture-flip record a pad frame, so they "
+                  "need the pad checkpoint (conflicts with --only)")
+            return 1
+        # The capture is a pad-run concern; don't also spend ~90 s on boot.
+        args.only = ["pad"]
+        tag = args.capture_ms if args.capture_ms is not None else args.capture_flip
+        capture_path = Path(args.capture_path).resolve() if args.capture_path \
+            else (log_dir / f"pbcap_level_{tag}.pbcap").resolve()
+        capture_env["RECOMP_PB_CAPTURE"] = str(capture_path)
+        if args.capture_ms is not None:
+            capture_env["RECOMP_PB_CAPTURE_MS"] = str(args.capture_ms)
+        if args.capture_flip is not None:
+            capture_env["RECOMP_PB_CAPTURE_FLIP"] = str(args.capture_flip)
 
     failed = []
     for cp in CHECKPOINTS:
         if args.only and cp.name not in args.only:
             continue
         log = (log_dir / f"smoke_{stamp}_{cp.name}.log").resolve()
-        code = run(cp, exe, game_dir, log)
+        code = run(cp, exe, game_dir, log, extra_env=capture_env if capture else None)
         text = log.read_text(encoding="utf-8", errors="replace")
-        for ok, msg in check(cp, code, text):
+        cap_after = "WADCRC.BIN" if (capture and cp.name == "pad") else None
+        for ok, msg in check(cp, code, text, capture_after=cap_after):
             print(f"  {'ok  ' if ok else 'FAIL'} {msg}")
             if not ok:
                 failed.append(f"{cp.name}: {msg}")
+        if capture and cp.name == "pad":
+            ref = Path(str(capture_path) + ".ref.bmp")
+            for f in (capture_path, ref):
+                ok = f.is_file()
+                print(f"  {'ok  ' if ok else 'FAIL'} capture file {f.name}")
+                if not ok:
+                    failed.append(f"{cp.name}: capture file {f.name} missing")
+            nb = _bmp_nonblack(ref) if ref.is_file() else 0
+            ok = nb >= CAPTURE_MIN_NONBLACK
+            print(f"  {'ok  ' if ok else 'FAIL'} capture frame non-black pixels "
+                  f"{nb} (need >= {CAPTURE_MIN_NONBLACK})")
+            if not ok:
+                failed.append(f"{cp.name}: capture frame too dark ({nb} non-black pixels)")
+            # If the capture never fired, this is the data to pick the next
+            # target with: was it armed, and how far did the run actually get.
+            armed = bool(RE_PBCAP_ARMED.search(text))
+            wrote = bool(RE_PBCAP_WROTE.search(text))
+            hi = max((int(x) for x in RE_FLIPS.findall(text)), default=0)
+            if not wrote:
+                print(f"  [capture] armed={armed} wrote={wrote} highest flip={hi} "
+                      f"(target {tag})")
     if failed:
         print(f"FAILED ({len(failed)}):")
         for f in failed:

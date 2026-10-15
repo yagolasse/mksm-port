@@ -23,6 +23,11 @@ def failures(cp, code, text):
     return [m for ok, m in smoke_test.check(cp, code, text) if not ok]
 
 
+def failures_cap(cp, code, text):
+    return [m for ok, m in
+            smoke_test.check(cp, code, text, capture_after="WADCRC.BIN") if not ok]
+
+
 class SmokeChecksTest(unittest.TestCase):
     def test_good_boot_passes(self):
         self.assertEqual(failures(BOOT, 3, GOOD_BOOT), [])
@@ -81,6 +86,19 @@ class SmokeChecksTest(unittest.TestCase):
         entries = smoke_test.PAD_SCRIPT.split(",")
         self.assertEqual(len(entries), 12)
         self.assertEqual([e.split(":")[1] for e in entries], ["start"] * 5 + ["a"] * 7)
+
+    def test_capture_wrote_after_wadcrc(self):
+        wadcrc = "  [PATH] \\Device\\CdRom0\\WADCRC.BIN\n"
+        wrote = "[PBCAP] wrote C:\\logs\\pbcap_level_65000.pbcap (flip 2100, 123 frame methods)\n"
+        # wrote after the level-load file opens -> the level-frame capture check passes
+        self.assertEqual(failures_cap(BOOT, 3, GOOD_BOOT + wadcrc + wrote), [])
+        # wrote before it (still in the title/movie) -> fails
+        self.assertEqual(failures_cap(BOOT, 3, GOOD_BOOT + wrote + wadcrc),
+                         ["[PBCAP] wrote after WADCRC.BIN"])
+        # no WADCRC at all (capture never fired or never reached the level) -> fails
+        self.assertEqual(failures_cap(BOOT, 3, GOOD_BOOT + wrote),
+                         ["[PBCAP] wrote after WADCRC.BIN"])
+
 
 
 if __name__ == "__main__":

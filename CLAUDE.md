@@ -109,6 +109,14 @@ Difficulty and the movie skip into the level load (`WADCRC.BIN`). Draw counts de
 Add a checkpoint each time the game gets further. Game dir: `--game-dir`, else `MKSM_GAME_DIR`,
 else `../game_files`; without game data it exits 77 (CTest skip). `--only boot|pad` runs one.
 
+Frame capture (for the GPU renderer work): `--capture-ms MS | --capture-flip N` records one pad
+frame as a self-contained `MKPB` file plus a software-reference `.bmp` (toolkit patches 0006/0007),
+running only the `pad` checkpoint. `--capture-ms` (arm at the first flip after that many ms) is the
+reproducible choice; `--capture-flip` is the Nth `FLIP_STALL`. `--capture-path` sets the file path
+(default `../logs/pbcap_level_<N>.pbcap`). The test then requires `[PBCAP] wrote` after `WADCRC.BIN`
+opens and that the `.ref.bmp` is non-black (>= 30000 px). Replay a capture with `RECOMP_PB_REPLAY=<path>`
+and byte-compare `<path>.ref.bmp` vs `<path>.replay.bmp`. Captures are ~144 MB; clean up old ones.
+
 ## Input
 The game's statically linked XAPI drives the USB host controllers directly, so pads come from the
 toolkit's emulated OHCI (`RECOMP_USB`, wired up in `main.c`: `xbox_OhciInit` + the VEH MMIO trap).

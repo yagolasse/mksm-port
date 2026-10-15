@@ -316,8 +316,22 @@ core, NVIDIA RTX 2060 / driver 596.49 on the dev machine, no GL error after init
   early) and restores the register after; counted as `masked stages`, the first 8 logged with the
   registers. Still intermittent after it: one short boot in three aborted on another xemu assert,
   `pg->inline_array_length == 0` (`gl/draw.c`, a draw carrying both inline-array and inline-buffer
-  vertex data), a moment after a masked draw. Both look like a stream real hardware would not get,
-  so the suspect is how the pushbuffer reaches PGRAPH (plan 2.H.4c), not xemu.
+  vertex data), a moment after a masked draw. Both turned out to be lost commands, see below.
+
+## The pushbuffer wrap (2.H.4c)
+
+The toolkit decodes the pushbuffer each time the title moves `DMA_PUT`. When the ring wraps, D3D
+writes a `JUMP` to the ring's start after its last commands and goes on from there. The toolkit
+didn't follow it: it learned the ring's bounds from the lowest and highest PUT seen and scanned
+`[old PUT, highest PUT)` + `[lowest PUT, new PUT)`. The commands between the last PUT before the wrap
+and the `JUMP` (a few hundred bytes to ~1.5 KB, the tail of a frame, every wrap) plus the first words
+at the ring start were never executed. The software rasterizer shrugged that off; xemu sees a draw
+whose `END` never came, or a stage program change without its texture setup, and asserts. Patch
+0011 walks the ring the way the GPU does: from GET (the old PUT) through any `JUMP` up to the new
+PUT (`nv2a_pb_scan_ring`). A walk that never meets PUT is logged (`[PB] ring walk ... never reached
+PUT`); `RECOMP_PB_WRAP_TRACE=1` logs the first wraps with the JUMP address and how many bytes the
+old bounds would have skipped. After it: 10 of 10 short GPU boots with 0 asserts and 0 masked
+stages. The texture-stage guard stays as a safety net.
 
 ## Order of work (plan 2.H.2-2.H.9)
 

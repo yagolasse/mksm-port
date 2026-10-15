@@ -345,7 +345,9 @@ void mksm_gpu_method(uint32_t subch, uint32_t method, uint32_t param)
      * leaves PROJECT2D in the stage program with the texture disabled (TEXCTL0 = 0). On
      * hardware a disabled texture unit reads as zero, so the stage is drawn as "no texture":
      * SHADERPROG is masked from BEGIN to END (xemu binds shaders again when it flushes an
-     * inline buffer at END) and restored after (counted, the first few logged). */
+     * inline buffer at END) and restored after (counted, the first few logged).
+     * Every case seen so far came from commands the toolkit dropped at the pushbuffer
+     * wrap (fixed in patch 0011), so this should stay at 0; it is kept as a guard. */
     static uint32_t restore_prog;
     static bool restore_pending;
     uint32_t prog = 0, masked = 0;

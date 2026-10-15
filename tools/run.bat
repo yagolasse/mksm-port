@@ -40,7 +40,7 @@ rem      failing at once (the XDK timer thread needs it). RECOMP_TITLE_KEVENTS_S
 rem      defaults to D3D's event 0x003F29CC, which a GPU interrupt sets that the
 rem      runtime doesn't model: waiting on it for real hangs the boot.
 rem      RECOMP_PB_GPU defaults to 1 (0 = the software executor): xemu's PGRAPH on
-rem      OpenGL draws the frames. Movies (Sofdec) are still black on it (plan 2.H.6).
+rem      OpenGL draws the frames (movies included).
 rem      RECOMP_FB_WINDOW defaults to 1 (0 turns it off): the game window.
 setlocal
 

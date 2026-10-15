@@ -175,7 +175,7 @@ the pacing (0 = uncapped), `RECOMP_PB_GPU_DUMP=<file.bmp>` (+ `RECOMP_PB_GPU_DUM
 changed on every use (default: once per pushbuffer kick, see `docs/gpu-renderer.md`; for A/B runs).
 `RECOMP_PB_GPU_GLCHECK=1` makes `glGetError` real again (xemu asserts it per draw; by default the shim
 answers `GL_NO_ERROR`, a guess that each call can stall NVIDIA's threaded driver; not measured alone).
-Movies (Sofdec) stay black on this path until 2.H.6. It still needs
+Movies (Sofdec) play on this path too (user, 2026-10-15, after 2.H.8c1). It still needs
 `RECOMP_PB_EXEC=1`, which is what makes the ack thread decode the pushbuffer.
 `RECOMP_PROF=<start_ms>,<dur_ms>[,<period_us>]`: sampling profiler (`src/prof.c`). After start_ms it
 samples every thread's stack each period (default 1000 us) for dur_ms, then prints `[PROF]` per thread

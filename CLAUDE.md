@@ -203,7 +203,10 @@ The run scripts also set `RECOMP_AC97_READY=1` (emulated APU, so `DirectSoundCre
 `RECOMP_APU_DSP_ACK=auto` (patch 0004: acks the GP DSP command doorbell that DirectSound init waits
 on, found as GP scratch page 0 + 0x810 via `GPSADDR` and logged as `DSP doorbell auto`). If audio
 init hangs, compare `ebx` in a watchdog dump with the logged address; a fixed address can be given
-instead. `RECOMP_HEAP_RECLAIM=1` (also a default) reuses freed contiguous/heap blocks: without it
+instead. `RECOMP_APU_STATS=1` (patch 0017) prints one `[APU-STATS]` line per second: APU frames,
+voices per voice list, peak level at each stage (VP sum, mixbins, `frame_buf` before the monitor wipes
+it, the buffer sent to XAudio2), XAudio2 submits accepted/refused and samples played: where the
+audio stops. `RECOMP_HEAP_RECLAIM=1` (also a default) reuses freed contiguous/heap blocks: without it
 the contiguous arena runs out (`[CONTIG] arena exhausted`) and the movie after New Game stays black.
 They also set `RECOMP_TITLE_KEVENTS=1` (events the game builds by hand get a host event, so waits
 on them block instead of failing at once; the XDK timer thread behind the audio tick needs it) with

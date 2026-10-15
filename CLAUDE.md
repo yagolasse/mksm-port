@@ -128,7 +128,8 @@ Run the smoke test after every re-lift or rebuild (a re-lift can break a path th
 ```bash
 python tools/smoke_test.py            # or: ctest --test-dir build -C Release --output-on-failure
 ```
-It runs the exe headless with a watchdog per checkpoint (~3.5 min total), logs to
+It runs the exe headless and muted (`RECOMP_APU_VOLUME=0`; `--audio` to hear it, a volume set in
+the environment wins) with a watchdog per checkpoint (~3.5 min total), logs to
 `../logs/smoke_<timestamp>_<checkpoint>.log`, and checks: exit 0/3 (3 = watchdog, normal), no
 `[CRASH]`, no `Failed to resolve VA`, no `is not code` (except `KNOWN_WILD`), no `arena exhausted`,
 a DSP doorbell ack, a minimum draw count,
@@ -204,9 +205,21 @@ The run scripts also set `RECOMP_AC97_READY=1` (emulated APU, so `DirectSoundCre
 on, found as GP scratch page 0 + 0x810 via `GPSADDR` and logged as `DSP doorbell auto`). If audio
 init hangs, compare `ebx` in a watchdog dump with the logged address; a fixed address can be given
 instead. `RECOMP_APU_STATS=1` (patch 0017) prints one `[APU-STATS]` line per second: APU frames,
-voices per voice list, peak level at each stage (VP sum, mixbins, `frame_buf` before the monitor wipes
-it, the buffer sent to XAudio2), XAudio2 submits accepted/refused and samples played: where the
-audio stops. `RECOMP_HEAP_RECLAIM=1` (also a default) reuses freed contiguous/heap blocks: without it
+voices per voice list, peak level at each stage (VP sum, mixbins, `frame_buf` as the monitor finds
+it, the block sent to XAudio2), XAudio2 submits accepted/refused (`drop` = queue full), samples
+played and `starved` (cumulative times the queue ran dry; the first submit counts once): where the
+audio stops; also `stall` (1 ms waits while DirectSound has the sample counter stopped) and sample
+data reads by store (`amb heap/win`: heap-range addresses below the contiguous high-water mark).
+Output (patches 0018-0019): every ~5.33 ms the monitor sends the 256-sample block the
+VP/DSP wrote (plus the DirectSound software mixer) as one XAudio2 buffer, up to 16 queued, 4
+silent blocks prefilled after a starve; voices are resampled by their pitch (linear). Sample data
+is read from heap RAM for pages the heap handed out, else from the contiguous window
+(`MmGetPhysicalAddress` passes heap addresses through, so the two overlap);
+`RECOMP_APU_DATA_HEAP=0/1` forces window/RAM for A/B. `RECOMP_APU_MONITOR=vp` taps the VP's own
+L/R voice sum (xemu's default without DSPs) instead of our even/odd mixbin mixdown, for A/B by ear.
+`RECOMP_APU_VOLUME=<0..1>` sets the output volume (patch 0020; 0 = silent, the APU and its stats
+still run). `RECOMP_APU_TRACE_SECTL=1` logs SECTL writes with the host RIP (symbolize with
+`llvm-symbolizer --obj=build/Release/mksm_recomp.exe 0x140000000+rip-base`). `RECOMP_HEAP_RECLAIM=1` (also a default) reuses freed contiguous/heap blocks: without it
 the contiguous arena runs out (`[CONTIG] arena exhausted`) and the movie after New Game stays black.
 They also set `RECOMP_TITLE_KEVENTS=1` (events the game builds by hand get a host event, so waits
 on them block instead of failing at once; the XDK timer thread behind the audio tick needs it) with

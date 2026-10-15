@@ -1,0 +1,485 @@
+From 28dbae6cd81282ae2e3192ab5048a04523529a6c Mon Sep 17 00:00:00 2001
+From: Yago Lasse <yagolasse@gmail.com>
+Date: Thu, 15 Oct 2026 18:08:11 -0300
+Subject: [PATCH] apu: resample voices, read heap sample data, keep the stream
+ continuous
+
+Four fixes found by ear once the monitor stopped wiping the output
+(MKSM: noisy, double speed, choppy):
+
+- Sample data from the right store. MmGetPhysicalAddress passes heap
+  addresses through unchanged; past XBOX_HEAP_BASE bytes of contiguous
+  memory the same number is also a contiguous physical address, and
+  mcpx_apu_phys picked the window: sound banks in heap memory played
+  texture bytes. mcpx_apu_data_phys (sample reads only) picks heap RAM
+  for pages the heap has handed out, cached per 4 KB page per frame.
+  RECOMP_APU_DATA_HEAP=0/1 forces window/RAM for A/B.
+- Resampling. voice_resample ignored the pitch (libsamplerate stub), so
+  content below 48 kHz played too fast: linear interpolation with
+  per-voice state carried across frames, reset on VOICE_ON.
+- A trapped front end no longer stops the VP (only the method FIFO
+  stalls on hardware); the old test, fectl & TRAPPED, also matched
+  HALTED. While a started APU has XCNTMODE off or the FE halted, the
+  frame thread waits instead of sending silent frames: DirectSound
+  toggles XCNTMODE around its voice updates (~30/s during movies).
+- throttle() catches up after late wakeups (up to ~53 ms) instead of
+  dropping the lost time from the output.
+
+RECOMP_APU_STATS adds stall waits, sample-data reads by store and the
+contiguous high-water mark; RECOMP_APU_TRACE_SECTL=1 logs SECTL writes
+with the host RIP.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016ahYm8JBvCH5KhgtSu9Yoy
+---
+ src/apu/apu_core.c      | 135 ++++++++++++++++++++++++++++++++++++----
+ src/apu/apu_debug.h     |   8 ++-
+ src/apu/apu_mmio_hook.c |  21 +++++++
+ src/apu/apu_shim.h      |   4 ++
+ src/apu/apu_vp.c        | 103 +++++++++++++++++++++++-------
+ 5 files changed, 237 insertions(+), 34 deletions(-)
+
+diff --git a/src/apu/apu_core.c b/src/apu/apu_core.c
+index d41bbae..74c30ad 100644
+--- a/src/apu/apu_core.c
++++ b/src/apu/apu_core.c
+@@ -92,6 +92,78 @@ uint8_t *mcpx_apu_phys(uint64_t addr)
+     return g_apu_ram_ptr + (a & 0x03FFFFFFu);
+ }
+ 
++/* Sample data (voice SGE pages, stream segments). Same as mcpx_apu_phys,
++ * plus the case it can't tell apart: MmGetPhysicalAddress hands a heap
++ * address back unchanged, and once more than XBOX_HEAP_BASE bytes of
++ * contiguous memory are allocated, the same number is also a contiguous
++ * physical address. On hardware there is one RAM; here the window is
++ * separate storage, so one of the two readings is someone else's bytes.
++ * mcpx_apu_phys picks the window, which played textures as noise for a
++ * title that keeps its sound banks in heap memory.
++ *
++ * Decided per page: an address the heap has handed out (and not freed) is
++ * heap RAM, anything else the window. The heap lookup walks its block
++ * table, so the answer is cached per 4 KB page and the cache is dropped
++ * every frame (mcpx_apu_data_cache_reset). RECOMP_APU_DATA_HEAP=0 forces the
++ * window (the old behaviour), =1 forces RAM, for A/B. RECOMP_APU_STATS counts
++ * each class. */
++static int s_data_heap = -2;   /* -2 = env not read, -1 = by heap ownership */
++
++#define DATA_CACHE_SIZE 256
++static struct { uint32_t page; uint8_t valid, heap; } s_data_cache[DATA_CACHE_SIZE];
++
++void mcpx_apu_data_cache_reset(void)
++{
++    memset(s_data_cache, 0, sizeof(s_data_cache));
++}
++
++static int data_page_is_heap(uint32_t a)
++{
++    uint32_t page = a >> 12;
++    unsigned slot = page % DATA_CACHE_SIZE;
++
++    if (!s_data_cache[slot].valid || s_data_cache[slot].page != page) {
++        s_data_cache[slot].page = page;
++        s_data_cache[slot].valid = 1;
++        s_data_cache[slot].heap = xbox_HeapBlockSize(a) != 0;
++    }
++    return s_data_cache[slot].heap;
++}
++
++uint8_t *mcpx_apu_data_phys(uint64_t addr)
++{
++    uint32_t a = (uint32_t)addr & 0x0FFFFFFFu;
++    int stats = mcpx_apu_stats_on();
++
++    if (a >= g_xbox_image_lo && a < g_xbox_image_hi) {
++        if (stats) g_apu_stats.data_img++;
++        return g_apu_ram_ptr + a;
++    }
++    if (a < xbox_ContiguousAllocatedBytes()) {
++        int heap;
++        if (a < XBOX_HEAP_BASE) {
++            if (stats) g_apu_stats.data_win++;
++            return g_apu_ram_ptr + 0x80000000u + a;
++        }
++        if (s_data_heap == -2) {
++            const char *e = getenv("RECOMP_APU_DATA_HEAP");
++            s_data_heap = (e && *e) ? (atoi(e) != 0) : -1;
++        }
++        heap = s_data_heap >= 0 ? s_data_heap : data_page_is_heap(a);
++        if (stats) {
++            if (heap) g_apu_stats.amb_heap++;
++            else      g_apu_stats.amb_win++;
++            if (a < g_apu_stats.amb_lo || !g_apu_stats.amb_lo)
++                g_apu_stats.amb_lo = a;
++            if (a > g_apu_stats.amb_hi) g_apu_stats.amb_hi = a;
++        }
++        return heap ? g_apu_ram_ptr + (a & 0x03FFFFFFu)
++                    : g_apu_ram_ptr + 0x80000000u + a;
++    }
++    if (stats) g_apu_stats.data_ram++;
++    return g_apu_ram_ptr + (a & 0x03FFFFFFu);
++}
++
+ /* The interrupt line, as the frame thread sees it. update_irq used to call
+  * pci_irq_assert, which is an empty stub here, so DirectSound's service
+  * routine never ran and no voice completion ever reached it. */
+@@ -509,6 +581,8 @@ void mcpx_apu_monitor_frame(MCPXAPUState *d)
+  * Throttle (timing control for frame pacing)
+  * ============================================================ */
+ 
++#define THROTTLE_CATCHUP_US (10 * EP_FRAME_US)   /* ~53 ms */
++
+ static void throttle(MCPXAPUState *d)
+ {
+     if (d->ep_frame_div % 8) {
+@@ -517,8 +591,13 @@ static void throttle(MCPXAPUState *d)
+ 
+     int64_t now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+ 
++    /* Catch up after a late wakeup instead of starting over: resetting as
++     * soon as the thread was one EP frame (5.3 ms) behind dropped that time
++     * from the output for good, and the queue ran dry several times a second
++     * whenever the host was busy. Only a long stall (debugger, load hitch)
++     * restarts the clock. */
+     if (d->next_frame_time_us == 0 ||
+-        now_us - d->next_frame_time_us > EP_FRAME_US) {
++        now_us - d->next_frame_time_us > THROTTLE_CATCHUP_US) {
+         d->next_frame_time_us = now_us;
+     }
+ 
+@@ -562,6 +641,7 @@ static void se_frame(MCPXAPUState *d)
+     float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME];
+     memset(mixbins, 0, sizeof(mixbins));
+ 
++    mcpx_apu_data_cache_reset();
+     mcpx_apu_vp_frame(d, mixbins);
+     mcpx_apu_dsp_frame(d, mixbins);
+     mcpx_apu_monitor_frame(d);
+@@ -587,17 +667,21 @@ static void mcpx_apu_stats_tick(MCPXAPUState *d)
+     if (now - s->last_ms < 1000)
+         return;
+     xa2_get_state(&queued, &played, &starved);
+-    fprintf(stderr, "[APU-STATS] se=%u mon=%u SECTL=%08X FECTL=%08X mon_point=%d"
++    fprintf(stderr, "[APU-STATS] se=%u mon=%u stall=%u SECTL=%08X FECTL=%08X mon_point=%d"
+             " voices=%u/%u/%u paused=%u idle=%u peak vp=%d bin=%d block=%d"
+             " out=%d submit ok=%u drop=%u xa2 queued=%d played=%llu starved=%u"
+-            " sw_voices=%d\n",
+-            s->se_frames, s->mon_frames,
++            " sw_voices=%d data img=%u win=%u ram=%u amb heap=%u win=%u"
++            " (%08X-%08X) contig=%08X\n",
++            s->se_frames, s->mon_frames, s->stall_waits,
+             (unsigned)qatomic_read(&d->regs[NV_PAPU_SECTL]),
+             (unsigned)qatomic_read(&d->regs[NV_PAPU_FECTL]), (int)d->monitor.point,
+             s->voices[0], s->voices[1], s->voices[2], s->paused, s->idle,
+             s->vp_peak, s->bin_peak, s->block_peak, s->out_peak,
+             s->out_ok, s->out_drop, queued, (unsigned long long)played,
+-            starved, (int)g_mixer_active_count);
++            starved, (int)g_mixer_active_count,
++            s->data_img, s->data_win, s->data_ram, s->amb_heap, s->amb_win,
++            s->amb_lo, s->amb_hi,
++            (unsigned)xbox_ContiguousAllocatedBytes());
+     fflush(stderr);
+     memset(s, 0, sizeof(*s));
+     s->enabled = 1;
+@@ -622,11 +706,6 @@ static void *mcpx_apu_frame_thread(void *arg)
+             continue;
+         }
+ 
+-        /* Always run the audio output loop — the software mixer and test tone
+-         * need continuous frame delivery regardless of APU register state.
+-         * The VP/DSP pipeline (se_frame) only runs when registers allow it. */
+-        throttle(d);
+-
+         /* The doorbell ack stands in for the GP DSP, which on hardware runs
+          * whatever the front end is doing. Tying it to se_frame stopped it
+          * whenever FECTL was trapped or halted, and DirectSound then waits
+@@ -637,9 +716,41 @@ static void *mcpx_apu_frame_thread(void *arg)
+         int xcntmode = GET_MASK(qatomic_read(&d->regs[NV_PAPU_SECTL]),
+                                 NV_PAPU_SECTL_XCNTMODE);
+         uint32_t fectl = qatomic_read(&d->regs[NV_PAPU_FECTL]);
++        /* A trapped front end only stalls the method FIFO until the title's
++         * ISR handles the trap; the voice processor keeps playing. Stopping
++         * here (as xemu does) cost a title whose traps take a while to
++         * service ~20% of its frames, sent as silence: choppy audio. Only a
++         * halted front end or XCNTMODE off stops the pipeline. (The old
++         * test, fectl & TRAPPED, matched HALTED too: TRAPPED is 0xE0.) */
+         bool apu_active = (xcntmode != NV_PAPU_SECTL_XCNTMODE_OFF) &&
+-                          !(fectl & NV_PAPU_FECTL_FEMETHMODE_TRAPPED) &&
+-                          !(fectl & NV_PAPU_FECTL_FEMETHMODE_HALTED);
++                          ((fectl & NV_PAPU_FECTL_FEMETHMODE) !=
++                           NV_PAPU_FECTL_FEMETHMODE_HALTED);
++
++        /* A started APU whose sample counter is stopped (XCNTMODE off, or
++         * the front end halted) produces no frames and no time passes: wait
++         * for the restart, then throttle() catches up. DirectSound switches
++         * XCNTMODE off around its own voice updates, like a lock; on hardware
++         * that lasts microseconds, here the guest code inside it is slower,
++         * and sending a silent frame each time the thread saw the counter
++         * off chopped ~20% out of the movie soundtracks. */
++        if (!apu_active && !d->pause_requested && !g_test_tone.active &&
++            !g_mixer_active_count) {
++            g_apu_stats.stall_waits++;
++            if (mcpx_apu_stats_on())
++                mcpx_apu_stats_tick(d);
++            if (d->set_irq) {
++                update_irq(d);
++                d->set_irq = false;
++            }
++            apu_deliver_irq(d);
++            qemu_cond_timedwait(&d->cond, &d->lock, 1);
++            continue;
++        }
++
++        /* The software mixer and test tone need continuous frame delivery
++         * regardless of APU register state; the VP/DSP pipeline (se_frame)
++         * only runs when registers allow it. */
++        throttle(d);
+ 
+         if (apu_active && !g_test_tone.active) {
+             /* Full pipeline: VP voices → DSP → monitor → waveOut */
+diff --git a/src/apu/apu_debug.h b/src/apu/apu_debug.h
+index 4984bfe..80b16f5 100644
+--- a/src/apu/apu_debug.h
++++ b/src/apu/apu_debug.h
+@@ -100,7 +100,8 @@ struct McpxApuStats
+     int enabled;                /* -1 = env not read yet */
+     int64_t last_ms;
+     unsigned se_frames;         /* full VP -> DSP -> monitor frames */
+-    unsigned mon_frames;        /* monitor-only frames (APU off/trapped) */
++    unsigned mon_frames;        /* monitor-only frames (tone/mixer, APU off) */
++    unsigned stall_waits;       /* 1 ms waits while a started APU is stopped */
+     unsigned voices[3];         /* voice-frames processed, per voice list */
+     unsigned paused;            /* of those, paused */
+     unsigned idle;              /* inactive list entries (SE2FE_IDLE_VOICE) */
+@@ -109,6 +110,11 @@ struct McpxApuStats
+     int block_peak;             /* frame_buf as the monitor found it */
+     int out_peak;               /* what was handed to the output */
+     unsigned out_ok, out_drop;  /* xa2_submit_samples accepted / refused */
++    /* sample data reads by where mcpx_apu_data_phys resolved them */
++    unsigned data_img, data_win, data_ram;
++    unsigned amb_heap, amb_win;  /* heap-range addresses below the contiguous
++                                    high-water mark, by the store chosen */
++    uint32_t amb_lo, amb_hi;     /* their address range */
+ };
+ extern struct McpxApuStats g_apu_stats;
+ int mcpx_apu_stats_init(void);
+diff --git a/src/apu/apu_mmio_hook.c b/src/apu/apu_mmio_hook.c
+index a06c0a3..043b0ee 100644
+--- a/src/apu/apu_mmio_hook.c
++++ b/src/apu/apu_mmio_hook.c
+@@ -258,8 +258,29 @@ bool apu_hook_handle_mmio(PCONTEXT ctx, uintptr_t fault_addr,
+                           uint32_t fault_xbox_va, int is_write)
+ {
+     uint32_t mmio_offset = fault_xbox_va - APU_MMIO_BASE;
++    DWORD64 rip = ctx->Rip;
+     bool ok = apu_decode_and_handle(ctx, mmio_offset, is_write);
+ 
++    /* RECOMP_APU_TRACE_SECTL=1: who switches the sample counter on and off
++     * (SECTL.XCNTMODE). Host RIP of the writing instruction plus the module
++     * base, so the guest function can be found with a symbolizer and the PDB;
++     * first 200 writes, with a millisecond timestamp. */
++    if (is_write && mmio_offset == 0x2000) {
++        static int trace_sectl = -1;
++        if (trace_sectl < 0)
++            trace_sectl = getenv("RECOMP_APU_TRACE_SECTL") != NULL;
++        if (trace_sectl) {
++            static unsigned n;
++            if (n++ < 200) {
++                uint64_t v = g_apu_state
++                           ? mcpx_apu_mmio_read(g_apu_state, mmio_offset, 4) : 0;
++                fprintf(stderr, "  [APU-SECTL] t=%llu write %08X rip=%p base=%p\n",
++                        (unsigned long long)GetTickCount64(), (uint32_t)v,
++                        (void *)(uintptr_t)rip, (void *)GetModuleHandleW(NULL));
++            }
++        }
++    }
++
+     /* What the title actually asks the APU for. The DSPs are stubbed here, so
+      * a title that waits on one waits forever, and the only way to work out
+      * what it is waiting for is to see the register traffic that precedes the
+diff --git a/src/apu/apu_shim.h b/src/apu/apu_shim.h
+index 89e4e10..2ef20dc 100644
+--- a/src/apu/apu_shim.h
++++ b/src/apu/apu_shim.h
+@@ -96,6 +96,10 @@ static inline void qemu_thread_join(QemuThread *t) {
+ extern uint8_t *g_apu_ram_ptr; /* Set at init to point at Xbox 64MB RAM */
+ /* Where a physical address the title handed the APU lives. See apu_core.c. */
+ uint8_t *mcpx_apu_phys(uint64_t addr);
++/* The same for sample data reads: heap or window by heap ownership
++ * (RECOMP_APU_DATA_HEAP, stats). The per-page cache is reset every frame. */
++uint8_t *mcpx_apu_data_phys(uint64_t addr);
++void mcpx_apu_data_cache_reset(void);
+ 
+ /* Little-endian physical memory reads */
+ static inline uint32_t ldl_le_phys(void *as, hwaddr addr) {
+diff --git a/src/apu/apu_vp.c b/src/apu/apu_vp.c
+index 588d94e..e6b1100 100644
+--- a/src/apu/apu_vp.c
++++ b/src/apu/apu_vp.c
+@@ -124,6 +124,23 @@ static void voice_set_mask(MCPXAPUState *d, uint16_t voice_handle,
+  * Voice off / lock
+  * ============================================================ */
+ 
++/* Per-voice resampler state (voice_resample). Source samples fetched but
++ * not yet passed (buf[0] is the one at the integer position) and the
++ * fractional position into them. Reset when a voice is turned on. */
++#define RS_MAX_STEP 8      /* source samples per output sample, at most */
++#define RS_BUF (NUM_SAMPLES_PER_FRAME * RS_MAX_STEP + 2)
++static struct {
++    float buf[RS_BUF][2];
++    int len;
++    double frac;
++} s_rs[MCPX_HW_MAX_VOICES];
++
++static void voice_resample_reset(uint16_t v)
++{
++    s_rs[v].len = 0;
++    s_rs[v].frac = 0.0;
++}
++
+ static void voice_off(MCPXAPUState *d, uint16_t v)
+ {
+     voice_set_mask(d, v, NV_PAVS_VOICE_PAR_STATE,
+@@ -231,6 +248,7 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
+                        NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
+         d->vp.ssl[selected_handle].ssl_seg = 0;
+         d->vp.ssl[selected_handle].ssl_index = 0;
++        voice_resample_reset((uint16_t)selected_handle);
+ 
+         unsigned int ea_start = GET_MASK(argument, NV1BA0_PIO_VOICE_ON_ENVA);
+         voice_set_mask(d, (uint16_t)selected_handle, NV_PAVS_VOICE_PAR_STATE,
+@@ -843,7 +861,7 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+                 uint32_t linear_addr = block_index * (uint32_t)block_size;
+                 if (stream) {
+                     hwaddr addr = segment_offset + linear_addr;
+-                    memcpy(adpcm_block, mcpx_apu_phys(addr),
++                    memcpy(adpcm_block, mcpx_apu_data_phys(addr),
+                            block_size);
+                 } else {
+                     linear_addr += ba;
+@@ -852,7 +870,7 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+                         hwaddr addr = get_data_ptr(d->regs[NV_PAPU_VPSGEADDR],
+                                                    0xFFFFFFFF, linear_addr);
+                         adpcm_block[word_index] =
+-                            ldl_le_phys(address_space_memory, addr);
++                            *(uint32_t *)mcpx_apu_data_phys(addr);
+                         linear_addr += 4;
+                     }
+                 }
+@@ -882,19 +900,19 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+                 float fval;
+                 switch (sample_size) {
+                 case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_U8:
+-                    ival = ldub_phys(address_space_memory, addr);
++                    ival = *mcpx_apu_data_phys(addr);
+                     fval = uint8_to_float((uint8_t)(ival & 0xff));
+                     break;
+                 case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S16:
+-                    ival = lduw_le_phys(address_space_memory, addr);
++                    ival = *(uint16_t *)mcpx_apu_data_phys(addr);
+                     fval = int16_to_float((int16_t)(ival & 0xffff));
+                     break;
+                 case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S24:
+-                    ival = ldl_le_phys(address_space_memory, addr);
++                    ival = *(uint32_t *)mcpx_apu_data_phys(addr);
+                     fval = int24_to_float(ival);
+                     break;
+                 case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S32:
+-                    ival = ldl_le_phys(address_space_memory, addr);
++                    ival = *(uint32_t *)mcpx_apu_data_phys(addr);
+                     fval = int32_to_float(ival);
+                     break;
+                 default:
+@@ -940,32 +958,75 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+ }
+ 
+ /* ============================================================
+- * Voice resampling (simplified - no libsamplerate)
++ * Voice resampling (linear interpolation; xemu uses libsamplerate)
++ *
++ * rate is output/input, as xemu hands it to src_process: a voice's pitch
++ * is 4096 * log2(f / 48000), so 24 kHz content has rate 2 and needs one
++ * source sample per two output samples. This used to be ignored (one
++ * source sample per output sample), which played everything recorded
++ * below 48 kHz too fast and too high: MKSM's audio at double speed.
+  *
+- * Since libsamplerate is stubbed, we do a simple nearest-neighbor
+- * resample. This gives us functional audio at the cost of quality.
++ * Source samples are fetched in batches (voice_get_samples decodes a whole
++ * ADPCM block per call) into s_rs[v].buf and carried across frames.
+  * ============================================================ */
+ 
+ static int voice_resample(MCPXAPUState *d, uint16_t v, float samples[][2],
+                           int requested_num, float rate)
+ {
+-    /* Without libsamplerate, just fetch raw samples at native rate.
+-     * Rate < 1.0 means we need more source samples than output samples.
+-     * For initial functionality, just get the samples directly. */
+-    int sample_count = 0;
+-    while (sample_count < requested_num) {
++    double step = (rate > 0.0f) ? 1.0 / rate : 1.0;
++    if (step > RS_MAX_STEP) step = RS_MAX_STEP;
++    if (step < 1.0 / 64) step = 1.0 / 64;
++
++    float (*buf)[2] = s_rs[v].buf;
++    int need = (int)(s_rs[v].frac + step * (requested_num - 1)) + 2;
++    if (need > RS_BUF) need = RS_BUF;
++
++    /* Top up the source buffer */
++    while (s_rs[v].len < need) {
+         int active = voice_get_mask(d, v, NV_PAVS_VOICE_PAR_STATE,
+                                     NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE);
+         if (!active) break;
++        int count = voice_get_samples(d, v, &buf[s_rs[v].len],
++                                      need - s_rs[v].len);
++        if (count <= 0) break;   /* ended or starved: use what we have */
++        s_rs[v].len += count;
++    }
+ 
+-        int count = voice_get_samples(d, v, &samples[sample_count],
+-                                      requested_num - sample_count);
+-        if (count < 0) break;
+-        if (count == 0) return -1;
+-        sample_count += count;
++    /* A voice that ended keeps its last sample for the final interpolation */
++    int len = s_rs[v].len;
++    int out = 0;
++    double frac = s_rs[v].frac;
++    while (out < requested_num) {
++        int i = (int)frac;
++        if (i + 1 >= len) {
++            /* Last sample of an ended voice: hold it rather than drop it */
++            if (i < len && !voice_get_mask(d, v, NV_PAVS_VOICE_PAR_STATE,
++                                           NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE)) {
++                samples[out][0] = buf[i][0];
++                samples[out][1] = buf[i][1];
++                out++;
++                frac += step;
++            }
++            break;
++        }
++        float t = (float)(frac - i);
++        samples[out][0] = buf[i][0] + (buf[i + 1][0] - buf[i][0]) * t;
++        samples[out][1] = buf[i][1] + (buf[i + 1][1] - buf[i][1]) * t;
++        out++;
++        frac += step;
+     }
+-    (void)rate; /* Ignored until we add proper resampling */
+-    return sample_count;
++
++    /* Drop the source samples we've moved past */
++    int drop = (int)frac;
++    if (drop > len) drop = len;
++    if (drop > 0) {
++        memmove(buf, buf + drop, (size_t)(len - drop) * sizeof(buf[0]));
++        s_rs[v].len = len - drop;
++        frac -= drop;
++    }
++    s_rs[v].frac = frac;
++
++    return out > 0 ? out : -1;
+ }
+ 
+ /* ============================================================
+-- 
+2.53.0.windows.2
+

@@ -1,0 +1,87 @@
+From 65ea80ce883754977268563fc2332263a5096d14 Mon Sep 17 00:00:00 2001
+From: Yago Lasse <yagolasse@gmail.com>
+Date: Thu, 15 Oct 2026 18:14:20 -0300
+Subject: [PATCH] apu: RECOMP_APU_VOLUME sets the output volume (0 = silent)
+
+Master volume for the XAudio2 output (waveOut: waveOutSetVolume), 0..1,
+default unchanged. For unattended test runs that shouldn't play sound:
+the APU, the output queue and RECOMP_APU_STATS keep running.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016ahYm8JBvCH5KhgtSu9Yoy
+---
+ src/apu/apu_core.c          | 10 ++++++++++
+ src/apu/apu_xaudio2.c       | 15 +++++++++++++++
+ src/platform/win32_compat.h |  2 ++
+ 3 files changed, 27 insertions(+)
+
+diff --git a/src/apu/apu_core.c b/src/apu/apu_core.c
+index 74c30ad..ee1802e 100644
+--- a/src/apu/apu_core.c
++++ b/src/apu/apu_core.c
+@@ -445,6 +445,16 @@ void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
+         waveOutPrepareHeader(g_waveout.hwo, &g_waveout.hdrs[i], sizeof(WAVEHDR));
+     }
+ 
++    {
++        /* RECOMP_APU_VOLUME, as for XAudio2 (both channels, 16 bits each) */
++        const char *e = getenv("RECOMP_APU_VOLUME");
++        if (e && *e) {
++            double vol = atof(e);
++            DWORD v = (DWORD)((vol < 0 ? 0 : vol > 1 ? 1 : vol) * 0xFFFF);
++            waveOutSetVolume(g_waveout.hwo, v | (v << 16));
++        }
++    }
++
+     g_waveout.next_buf = 0;
+     g_waveout.fill = 0;
+     g_waveout.initialized = true;
+diff --git a/src/apu/apu_xaudio2.c b/src/apu/apu_xaudio2.c
+index 3bc474e..6b1d240 100644
+--- a/src/apu/apu_xaudio2.c
++++ b/src/apu/apu_xaudio2.c
+@@ -8,6 +8,7 @@
+ 
+ #include <stdint.h>
+ #include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
+ #include "apu_xaudio2.h"
+ 
+@@ -87,6 +88,20 @@ int xa2_init(void)
+         goto fail;
+     }
+ 
++    /* RECOMP_APU_VOLUME=<0..1>: master volume (0 = silent, e.g. for
++     * unattended test runs; the pipeline and its stats still run). */
++    {
++        const char *e = getenv("RECOMP_APU_VOLUME");
++        if (e && *e) {
++            float vol = (float)atof(e);
++            if (vol < 0.0f) vol = 0.0f;
++            if (vol > 1.0f) vol = 1.0f;
++            IXAudio2Voice_SetVolume((IXAudio2Voice *)g_xa2_master, vol,
++                                    XAUDIO2_COMMIT_NOW);
++            fprintf(stderr, "[XA2] master volume %.2f (RECOMP_APU_VOLUME)\n", vol);
++        }
++    }
++
+     hr = IXAudio2SourceVoice_Start(g_xa2_source, 0, XAUDIO2_COMMIT_NOW);
+     if (FAILED(hr)) {
+         fprintf(stderr, "[XA2] Start failed: 0x%08lX\n", hr);
+diff --git a/src/platform/win32_compat.h b/src/platform/win32_compat.h
+index 22762ee..8018748 100644
+--- a/src/platform/win32_compat.h
++++ b/src/platform/win32_compat.h
+@@ -578,6 +578,8 @@ static inline MMRESULT waveOutUnprepareHeader(HWAVEOUT h, WAVEHDR *hdr, UINT sz)
+ static inline MMRESULT waveOutWrite(HWAVEOUT h, WAVEHDR *hdr, UINT sz)
+ { (void)h;(void)hdr;(void)sz; return MMSYSERR_NOERROR; }
+ static inline MMRESULT waveOutReset(HWAVEOUT h) { (void)h; return MMSYSERR_NOERROR; }
++static inline MMRESULT waveOutSetVolume(HWAVEOUT h, DWORD v)
++{ (void)h;(void)v; return MMSYSERR_NOERROR; }
+ static inline MMRESULT waveOutClose(HWAVEOUT h) { (void)h; return MMSYSERR_NOERROR; }
+ 
+ #ifdef __cplusplus
+-- 
+2.53.0.windows.2
+

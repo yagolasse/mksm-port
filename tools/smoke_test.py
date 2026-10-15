@@ -173,9 +173,13 @@ def _bmp_nonblack(path):
         return 0
 
 
-def run(cp, exe, game_dir, log, extra_env=None, secs=None):
+def run(cp, exe, game_dir, log, extra_env=None, secs=None, audio=False):
     secs = secs or cp.secs
     env = dict(os.environ)
+    if not audio:
+        # Silent by default (unattended runs); the APU and its stats still run.
+        # A volume set in the caller's environment wins.
+        env.setdefault("RECOMP_APU_VOLUME", "0")
     env.update(RUN_ENV)
     env.update(cp.env)
     if extra_env:
@@ -277,6 +281,8 @@ def main():
                     help="capture file path (default <log_dir>/pbcap_level_<N>.pbcap)")
     ap.add_argument("--gpu", action="store_true",
                     help="RECOMP_PB_GPU=1: run on xemu's PGRAPH, not the software executor")
+    ap.add_argument("--audio", action="store_true",
+                    help="play the game's audio (default: RECOMP_APU_VOLUME=0, muted)")
     args = ap.parse_args()
 
     game_dir = Path(args.game_dir).resolve()
@@ -328,7 +334,8 @@ def main():
         extra = dict(capture_env)
         if args.gpu:
             extra["RECOMP_PB_GPU"] = "1"
-        code = run(cp, exe, game_dir, log, extra_env=extra or None, secs=secs)
+        code = run(cp, exe, game_dir, log, extra_env=extra or None, secs=secs,
+                   audio=args.audio)
         text = log.read_text(encoding="utf-8", errors="replace")
         cap_after = "WADCRC.BIN" if (capture and cp.name == "pad") else None
         for ok, msg in check(cp, code, text, capture_after=cap_after, gpu=args.gpu):

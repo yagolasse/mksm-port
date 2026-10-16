@@ -1,0 +1,136 @@
+From 3158de107ee0f940eb264ad9a729472921ad803f Mon Sep 17 00:00:00 2001
+From: Yago Lasse <yagolasse@gmail.com>
+Date: Fri, 16 Oct 2026 00:56:04 -0300
+Subject: [PATCH] kernel, apu: tag physical pages by MmGetPhysicalAddress
+ origin
+
+MmGetPhysicalAddress passes heap addresses through unchanged, so once the
+contiguous arena grows past XBOX_HEAP_BASE the same number can mean heap
+RAM or the contiguous window. The APU decided per page by heap ownership,
+which reads the wrong store when a contiguous sound bank sits at numbers a
+live heap block also covers (MKSM: the level music decoded another
+block's bytes as ADPCM, a rhythmic buzz).
+
+The kernel now records, per 4 KB physical page, whether the title last
+got that number from a contiguous or a heap address
+(xbox_PhysPageOrigin). mcpx_apu_data_phys follows that tag and only falls
+back to heap ownership for pages the title never translated.
+RECOMP_APU_DATA_HEAP=0/1 still forces one store.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016ahYm8JBvCH5KhgtSu9Yoy
+---
+ src/apu/apu_core.c         | 22 +++++++++++++++++++---
+ src/kernel/kernel.h        |  5 +++++
+ src/kernel/kernel_memory.c | 25 ++++++++++++++++++++++---
+ 3 files changed, 46 insertions(+), 6 deletions(-)
+
+diff --git a/src/apu/apu_core.c b/src/apu/apu_core.c
+index 4e637a4..f9ee8b7 100644
+--- a/src/apu/apu_core.c
++++ b/src/apu/apu_core.c
+@@ -81,6 +81,9 @@ void mcpx_debug_end_frame(void) {}
+  * on exactly that (IDirectSoundBuffer::GetStatus, polled forever). */
+ extern uint32_t g_xbox_image_lo, g_xbox_image_hi;
+ extern uint32_t xbox_ContiguousAllocatedBytes(void);
++extern int xbox_PhysPageOrigin(uint32_t pa);
++#define XBOX_PHYS_FROM_CONTIG 1   /* kernel.h */
++#define XBOX_PHYS_FROM_HEAP   2
+ 
+ uint8_t *mcpx_apu_phys(uint64_t addr)
+ {
+@@ -101,8 +104,14 @@ uint8_t *mcpx_apu_phys(uint64_t addr)
+  * mcpx_apu_phys picks the window, which played textures as noise for a
+  * title that keeps its sound banks in heap memory.
+  *
+- * Decided per page: an address the heap has handed out (and not freed) is
+- * heap RAM, anything else the window. The heap lookup walks its block
++ * Decided per page: by how the title got the number, if it asked
++ * MmGetPhysicalAddress for that page (xbox_PhysPageOrigin: from a contiguous
++ * address = the window, from a heap address = heap RAM). MKSM needs both: its
++ * menu music bank is in the heap, and its level music bank is contiguous at
++ * numbers a live 1 MB heap block also covers (plan 3.3d: the heap guess
++ * played that block's bytes as ADPCM, a rhythmic buzz in the level).
++ * Otherwise: an address the heap has handed out (and not freed) is heap RAM,
++ * anything else the window. The heap lookup walks its block
+  * table, so the answer is cached per 4 KB page and the cache is dropped
+  * every frame (mcpx_apu_data_cache_reset). RECOMP_APU_DATA_HEAP=0 forces the
+  * window (the old behaviour), =1 forces RAM, for A/B. RECOMP_APU_STATS counts
+@@ -149,7 +158,14 @@ uint8_t *mcpx_apu_data_phys(uint64_t addr)
+             const char *e = getenv("RECOMP_APU_DATA_HEAP");
+             s_data_heap = (e && *e) ? (atoi(e) != 0) : -1;
+         }
+-        heap = s_data_heap >= 0 ? s_data_heap : data_page_is_heap(a);
++        if (s_data_heap >= 0) {
++            heap = s_data_heap;
++        } else {
++            int origin = xbox_PhysPageOrigin(a);
++            heap = origin == XBOX_PHYS_FROM_CONTIG ? 0
++                 : origin == XBOX_PHYS_FROM_HEAP   ? 1
++                 : data_page_is_heap(a);
++        }
+         if (stats) {
+             if (heap) g_apu_stats.amb_heap++;
+             else      g_apu_stats.amb_win++;
+diff --git a/src/kernel/kernel.h b/src/kernel/kernel.h
+index b9a02bc..e250b05 100644
+--- a/src/kernel/kernel.h
++++ b/src/kernel/kernel.h
+@@ -631,6 +631,11 @@ NTSTATUS __stdcall xbox_MmQueryStatistics(PXBOX_MM_STATISTICS MemoryStatistics);
+ PVOID   __stdcall xbox_MmMapIoSpace(ULONG_PTR PhysicalAddress, ULONG NumberOfBytes, ULONG Protect);
+ VOID    __stdcall xbox_MmUnmapIoSpace(PVOID BaseAddress, ULONG NumberOfBytes);
+ ULONG_PTR __stdcall xbox_MmGetPhysicalAddress(PVOID BaseAddress);
++/* How MmGetPhysicalAddress last produced this page number: 0 = never,
++ * else XBOX_PHYS_FROM_CONTIG / XBOX_PHYS_FROM_HEAP (kernel_memory.c) */
++#define XBOX_PHYS_FROM_CONTIG 1
++#define XBOX_PHYS_FROM_HEAP   2
++int xbox_PhysPageOrigin(uint32_t pa);
+ 
+ VOID    __stdcall xbox_MmPersistContiguousMemory(PVOID BaseAddress, ULONG NumberOfBytes, BOOLEAN Persist);
+ ULONG   __stdcall xbox_MmQueryAddressProtect(PVOID VirtualAddress);
+diff --git a/src/kernel/kernel_memory.c b/src/kernel/kernel_memory.c
+index e49a219..ed0fb89 100644
+--- a/src/kernel/kernel_memory.c
++++ b/src/kernel/kernel_memory.c
+@@ -163,6 +163,22 @@ VOID __stdcall xbox_MmUnmapIoSpace(PVOID BaseAddress, ULONG NumberOfBytes)
+         VirtualFree(BaseAddress, 0, MEM_RELEASE);
+ }
+ 
++/* Where the title last got each physical page number from (plan 3.3d).
++ * A heap address passes through MmGetPhysicalAddress unchanged and, once the
++ * contiguous arena has grown past XBOX_HEAP_BASE, the same number is also a
++ * contiguous physical address: the two are different storage here, while on
++ * hardware they would be different pages. A device handed such a number
++ * (the APU's SGE tables, built page by page from MmGetPhysicalAddress) can
++ * ask which one the title meant. Last translation wins; 0 = never asked. */
++#define PHYS_ORIGIN_PAGES (0x04000000u >> 12)
++static volatile uint8_t s_phys_origin[PHYS_ORIGIN_PAGES];
++
++int xbox_PhysPageOrigin(uint32_t pa)
++{
++    uint32_t page = (pa & 0x03FFFFFFu) >> 12;
++    return s_phys_origin[page];
++}
++
+ ULONG_PTR __stdcall xbox_MmGetPhysicalAddress(PVOID BaseAddress)
+ {
+     /*
+@@ -179,9 +195,12 @@ ULONG_PTR __stdcall xbox_MmGetPhysicalAddress(PVOID BaseAddress)
+      * nothing naming this function.
+      */
+     uint32_t va = (uint32_t)(uintptr_t)BaseAddress;
+-    return (ULONG_PTR)((va >= XBOX_CONTIG_BASE &&
+-                        (uint64_t)va < (uint64_t)XBOX_CONTIG_BASE + XBOX_CONTIG_SIZE)
+-                     ? va - XBOX_CONTIG_BASE : va);
++    int contig = va >= XBOX_CONTIG_BASE &&
++                 (uint64_t)va < (uint64_t)XBOX_CONTIG_BASE + XBOX_CONTIG_SIZE;
++    uint32_t pa = contig ? va - XBOX_CONTIG_BASE : va;
++    if (pa < 0x04000000u)
++        s_phys_origin[pa >> 12] = contig ? XBOX_PHYS_FROM_CONTIG : XBOX_PHYS_FROM_HEAP;
++    return (ULONG_PTR)pa;
+ }
+ 
+ VOID __stdcall xbox_MmPersistContiguousMemory(PVOID BaseAddress, ULONG NumberOfBytes, BOOLEAN Persist)
+-- 
+2.53.0.windows.2
+

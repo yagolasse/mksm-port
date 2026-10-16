@@ -39,6 +39,7 @@ statically recompiling the retail `default.xbe` to C with
 - `tools/xiso.py`: list/extract files from an Xbox disc image
 - `tools/padding_seeds.py`: finds undetected functions after int3 padding (writes `seeds/padding.json`)
 - `tools/wavscan.py`: scans a `RECOMP_APU_WAV` recording for noise bursts, clicks, repeated/dropped blocks, clipping; `--excerpt START,DUR out.wav` cuts a clip
+- `tools/voicedump.py`: reads a `RECOMP_APU_VOICE_DUMP` (per-voice source samples): summary, stale-ring repeats, one voice as WAV
 - `tools/stub_audit.py`: sorts `gen/recomp_stubs_unresolved.c` into real code vs. decoded data (writes `seeds/stubs.json`)
 - `docs/`: generic notes on how the port works (`gpu-renderer.md`: design of the GPU renderer, a port of xemu's PGRAPH + OpenGL backend)
 - `tests/`: unit tests for `tools/*.py` on synthetic inputs (no game data), see Testing
@@ -236,10 +237,18 @@ game's 5 ms sound driver tick (`timeSetEvent` callback; should be ~200, needs pa
 precise kernel timers: the old 10 ms poll gave ~65).
 Output (patches 0018-0019): every ~5.33 ms the monitor sends the 256-sample block the
 VP/DSP wrote (plus the DirectSound software mixer) as one XAudio2 buffer, up to 16 queued, 4
-silent blocks prefilled after a starve; voices are resampled by their pitch (linear). Sample data
-is read from heap RAM for pages the heap handed out, else from the contiguous window
-(`MmGetPhysicalAddress` passes heap addresses through, so the two overlap);
-`RECOMP_APU_DATA_HEAP=0/1` forces window/RAM for A/B. `RECOMP_APU_MONITOR=vp` taps the VP's own
+silent blocks prefilled after a starve; voices are resampled by their pitch (patch 0026: a
+16-tap windowed sinc for voices below 48 kHz, linear otherwise; `RECOMP_APU_RESAMPLE=linear`
+for A/B). Sample data: `MmGetPhysicalAddress` passes heap addresses through, so a number can
+mean heap RAM or the contiguous window. Patch 0025 tags each physical page with how the title
+last got it (`xbox_PhysPageOrigin`) and the APU follows that; pages never translated fall back
+to "heap RAM if the heap handed it out, else the window".
+`RECOMP_APU_DATA_HEAP=0/1` forces window/RAM for A/B. `RECOMP_APU_VOICE_DUMP=<path>` (patch
+0026) writes every voice's fetched source samples (with the buffer offset) to a binary dump:
+`tools/voicedump.py` lists voices, finds stretches a refilled ring replays unchanged
+(`--voice N`) and exports one voice as a WAV (`--wav N out.wav --rate R --from S --to S`).
+`RECOMP_APU_TRACE_SGE=<voice>` logs each SGE page that voice reads (page, origin tag, heap
+block, ADPCM headers valid in RAM vs window). `RECOMP_APU_MONITOR=vp` taps the VP's own
 L/R voice sum (xemu's default without DSPs) instead of our even/odd mixbin mixdown, for A/B by ear.
 `RECOMP_APU_VOLUME=<0..1>` sets the output volume (patch 0020; 0 = silent, the APU and its stats
 still run). `RECOMP_APU_WAV=<path>` (patch 0023) records every output block as sent to XAudio2

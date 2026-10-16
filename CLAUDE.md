@@ -249,6 +249,10 @@ audio device is given, `RECOMP_AUDIO_WAV_SECS` limits it; scan with `tools/wavsc
 game's 5 ms sound driver tick (`timeSetEvent` callback; should be ~200, needs patch 0013's
 precise kernel timers: the old 10 ms poll gave ~65).
 `RECOMP_APU_VOLUME=<0..1>` sets the output volume (patch 0012; 0 = silent, the APU still runs).
+The run scripts and smoke set `RECOMP_AUDIO_BUF_COUNT=8` (upstream's 8 x 512-sample XAudio2 buffers,
+85 ms; its default 4 = 43 ms underran several times a second, choppy movies and level, user 2026-10-16;
+`RECOMP_AUDIO_BUF_SAMPLES` sets the size). `RECOMP_AUDIO_HOST=1` prints `[AUDIO-HOST]` once a second
+(starves, underruns, the longest gap between submits, the lowest queue seen).
 `RECOMP_HEAP_RECLAIM=1` (also a default) reuses freed contiguous/heap blocks: without it
 the contiguous arena runs out (`[CONTIG] arena exhausted`) and the movie after New Game stays black.
 They also set `RECOMP_TITLE_KEVENTS=1` (events the game builds by hand get a host event, so waits

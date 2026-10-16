@@ -84,6 +84,8 @@ if not defined RECOMP_APU_DSP_ACK set "RECOMP_APU_DSP_ACK=auto"
 if not defined RECOMP_APU_EP_ALIVE set "RECOMP_APU_EP_ALIVE=0xFE85A018"
 rem The DMA-engine ring walk (toolkit v0.14+); the default segment scan loses the tail of each lap.
 if not defined RECOMP_PB_WALK set "RECOMP_PB_WALK=dma"
+rem 8 x 512-sample device buffers (85 ms); the toolkit's 4 (43 ms) ran dry several times a second.
+if not defined RECOMP_AUDIO_BUF_COUNT set "RECOMP_AUDIO_BUF_COUNT=8"
 if not defined RECOMP_HEAP_RECLAIM set "RECOMP_HEAP_RECLAIM=1"
 if "%RECOMP_HEAP_RECLAIM%"=="0" set "RECOMP_HEAP_RECLAIM="
 if not defined RECOMP_TITLE_KEVENTS set "RECOMP_TITLE_KEVENTS=1"

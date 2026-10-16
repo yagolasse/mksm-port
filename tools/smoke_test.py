@@ -189,6 +189,8 @@ def run(cp, exe, game_dir, log, extra_env=None, secs=None, audio=False):
     env.setdefault("RECOMP_APU_EP_ALIVE", "0xFE85A018")
     # The DMA-engine ring walk (toolkit v0.14+, plan H.5a); RECOMP_PB_WALK= = the segment scan.
     env.setdefault("RECOMP_PB_WALK", "dma")
+    # 85 ms of device buffers, as the run scripts (plan H.5a: 43 ms underran).
+    env.setdefault("RECOMP_AUDIO_BUF_COUNT", "8")
     env.update(RUN_ENV)
     env.update(cp.env)
     if extra_env:

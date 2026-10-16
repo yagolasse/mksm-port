@@ -81,6 +81,9 @@ export RECOMP_APU_EP_ALIVE="${RECOMP_APU_EP_ALIVE-0xFE85A018}"
 # The DMA-engine ring walk (toolkit v0.14+); the default segment scan loses
 # the tail of each ring lap (plan H.5a).
 export RECOMP_PB_WALK="${RECOMP_PB_WALK-dma}"
+# 8 x 512-sample device buffers (85 ms); the toolkit's 4 (43 ms) ran dry
+# several times a second in movies and the level (plan H.5a).
+export RECOMP_AUDIO_BUF_COUNT="${RECOMP_AUDIO_BUF_COUNT-8}"
 RECOMP_HEAP_RECLAIM="${RECOMP_HEAP_RECLAIM-1}"
 if [ -z "$RECOMP_HEAP_RECLAIM" ] || [ "$RECOMP_HEAP_RECLAIM" = 0 ]; then
     unset RECOMP_HEAP_RECLAIM

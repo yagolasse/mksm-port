@@ -204,9 +204,14 @@ Movies (Sofdec) play on this path too (user, 2026-10-15, after 2.H.8c1). It stil
 `RECOMP_PB_EXEC=1`, which is what makes the ack thread decode the pushbuffer.
 `RECOMP_PROF=<start_ms>,<dur_ms>[,<period_us>]`: sampling profiler (`src/prof.c`). After start_ms it
 samples every thread's stack each period (default 1000 us) for dur_ms, then prints `[PROF]` per thread
-with >= 2% CPU: CPU time, start routine, top exclusive/inclusive functions (`module!symbol`; guest
+with >= 2% CPU: CPU time, the thread's name (else its start routine), top exclusive/inclusive functions (`module!symbol`; guest
 code shows as `sub_XXXXXXXX`, the renderer lib has /Z7 debug info). For the level with the `pad`
-script: `RECOMP_PROF=62000,15000 python tools/smoke_test.py --only pad`.
+script: `RECOMP_PROF=62000,15000 python tools/smoke_test.py --only pad`. Threads are named at creation
+(`SetThreadDescription` via the toolkit's header-only `xbox_name_thread`, `<xbox/thread_name.h>`, patch
+0027): guest threads `guest #<n> <routine>(<ctx1>)` (ctx1 = the title's routine behind XAPI's common
+startup), runtime threads by role (`nv2a ack/pushbuffer` = the method thread, `wbc ack`, `gpu present`,
+`kernel timers`, `ohci usb`, `fb window`, `watchdog`, ...); unnamed ones (driver threads) keep the
+symbol. Name any new thread the same way. Debuggers and WPA show the names too.
 `RECOMP_PROF_FOCUS=<text>` also prints each thread's most common call chains through the first frame whose
 symbol contains the text (who calls it). The report takes a few seconds; end the window well before the
 watchdog (`62000,15000` for the pad level). The 0xC0000374 exits seen while it printed were a prof.c

@@ -40,6 +40,7 @@
 
 /* xboxrecomp runtime headers */
 #include <xbox/xboxrecomp.h>
+#include <xbox/thread_name.h>
 
 #include "prof.h"
 
@@ -359,6 +360,7 @@ static void wbc_ack_start(bool gpu)
     void *wbc = (uint8_t *)xbox_GetMemoryOffset() + WBC_FLUSH_VA;
     HANDLE th = CreateThread(NULL, 0, wbc_ack_thread, wbc, 0, NULL);
     if (th) {
+        xbox_name_thread(th, "wbc ack");
         SetThreadPriority(th, THREAD_PRIORITY_ABOVE_NORMAL);
         CloseHandle(th);
     }

@@ -617,6 +617,7 @@ static bool present_window(NV2AState *d, SurfaceBinding *surface)
             s_win.failed = 1;
             return false;
         }
+        SetThreadDescription(th, L"gpu present");
         CloseHandle(th);
     }
     if (!s_win.up) {

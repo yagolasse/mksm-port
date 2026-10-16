@@ -1,0 +1,319 @@
+From ec1d46fa1fc81b774fffa26a33d139c51b93046f Mon Sep 17 00:00:00 2001
+From: Yago Lasse <yagolasse@gmail.com>
+Date: Fri, 16 Oct 2026 01:19:43 -0300
+Subject: [PATCH] runtime: name host threads (SetThreadDescription)
+
+Profilers and debuggers only saw start addresses: every guest thread starts
+in the same bridge trampoline, and the nearest PDB symbol of a host thread's
+start is often unrelated. Add a header-only xbox_name_thread() (include/xbox/
+thread_name.h; SetThreadDescription looked up at run time, a no-op without
+it) and name the threads at creation: guest threads as
+"guest #<n> <routine>(<ctx1>)" (XAPI passes the title's routine as ctx1),
+the main guest thread in INLINE mode too, and the runtime's own threads
+(nv2a ack/pushbuffer, watchdog, watch resolver, kernel timers, sw raster N,
+ohci usb, fb window, video pump, and the APU shim's qemu threads by name).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016ahYm8JBvCH5KhgtSu9Yoy
+---
+ include/xbox/thread_name.h      | 47 +++++++++++++++++++++++++++++++++
+ src/apu/apu_shim.h              |  4 ++-
+ src/kernel/kernel_bridge.c      | 27 +++++++++++++++----
+ src/kernel/nv2a_pb_exec.c       |  2 ++
+ src/kernel/xbox_memory_layout.c |  7 ++++-
+ src/usb/ohci.c                  |  2 ++
+ src/video/fb_present.c          |  5 +++-
+ src/video/video_pump.c          |  2 ++
+ 8 files changed, 88 insertions(+), 8 deletions(-)
+ create mode 100644 include/xbox/thread_name.h
+
+diff --git a/include/xbox/thread_name.h b/include/xbox/thread_name.h
+new file mode 100644
+index 0000000..081244d
+--- /dev/null
++++ b/include/xbox/thread_name.h
+@@ -0,0 +1,47 @@
++/*
++ * xbox_name_thread - give a host thread a readable name (SetThreadDescription).
++ *
++ * Profilers and debuggers otherwise only see a thread's start address, and
++ * every guest thread starts in the same bridge trampoline. The name shows in
++ * Visual Studio, WinDbg, ETW/WPA, Process Explorer, and GetThreadDescription.
++ *
++ * Header-only so any runtime library (and the title's host code) can use it
++ * without a link dependency. SetThreadDescription is looked up at run time:
++ * it needs Windows 10 1607 (Wine has it too); without it this does nothing.
++ */
++#ifndef XBOX_THREAD_NAME_H
++#define XBOX_THREAD_NAME_H
++
++#ifdef _WIN32
++#include <windows.h>
++#include <stdarg.h>
++#include <stdio.h>
++
++typedef HRESULT(WINAPI *xbox_set_thread_desc_fn)(HANDLE, PCWSTR);
++
++/* Names `thread` (NULL = the calling thread) with a printf-style format. */
++static inline void xbox_name_thread(HANDLE thread, const char *fmt, ...)
++{
++    static xbox_set_thread_desc_fn set_desc;
++    static volatile LONG looked_up;
++    char name[64];
++    WCHAR wname[64];
++    va_list ap;
++
++    if (!looked_up) {
++        set_desc = (xbox_set_thread_desc_fn)(void (*)(void))GetProcAddress(
++            GetModuleHandleA("kernel32.dll"), "SetThreadDescription");
++        InterlockedExchange(&looked_up, 1);
++    }
++    if (!set_desc)
++        return;
++    va_start(ap, fmt);
++    vsnprintf(name, sizeof(name), fmt, ap);
++    va_end(ap);
++    if (!MultiByteToWideChar(CP_UTF8, 0, name, -1, wname, 64))
++        return;
++    set_desc(thread ? thread : GetCurrentThread(), wname);
++}
++#endif /* _WIN32 */
++
++#endif /* XBOX_THREAD_NAME_H */
+diff --git a/src/apu/apu_shim.h b/src/apu/apu_shim.h
+index 2ef20dc..7a52ead 100644
+--- a/src/apu/apu_shim.h
++++ b/src/apu/apu_shim.h
+@@ -19,6 +19,7 @@
+  * Pull in base QEMU type shims from NV2A extraction
+  * ============================================================ */
+ #include "../nv2a/qemu_shim.h"
++#include "../../include/xbox/thread_name.h"
+ 
+ #include <math.h>
+ 
+@@ -76,8 +77,9 @@ typedef void *(*QemuThreadFunc)(void *arg);
+ static inline void qemu_thread_create(QemuThread *t, const char *name,
+                                        void *(*func)(void *), void *arg,
+                                        int mode) {
+-    (void)name; (void)mode;
++    (void)mode;
+     t->thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)func, arg, 0, NULL);
++    if (t->thread) xbox_name_thread(t->thread, "%s", name);
+ }
+ #endif
+ 
+diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
+index 623b32f..f776d95 100644
+--- a/src/kernel/kernel_bridge.c
++++ b/src/kernel/kernel_bridge.c
+@@ -29,6 +29,7 @@
+ #include "guest_vmem.h"
+ #include "xbox_memory_layout.h"
+ #include "recomp_icall_feedback.h"
++#include "../../include/xbox/thread_name.h"
+ #include <stdio.h>
+ /* stdlib.h is load-bearing, not tidiness. Without it C89 implicit declaration
+  * makes malloc return `int`, so bridge_spawn_thread truncated its heap pointer
+@@ -513,8 +514,18 @@ static DWORD WINAPI bridge_thread_main(LPVOID param)
+     return 0;
+ }
+ 
+-static HANDLE bridge_spawn_thread(recomp_func_t fn, uint32_t ctx1,
+-                                  uint32_t ctx2, uint32_t stack_top)
++/* Names a guest thread after its creation call: "guest #<n> <routine>(<ctx1>)".
++ * XAPI's CreateThread passes the title's own routine as ctx1 to a common
++ * startup routine, so both are in the name. NULL = the calling thread. */
++static void bridge_name_guest_thread(HANDLE th, uint32_t routine, uint32_t ctx1)
++{
++    xbox_name_thread(th, "guest #%d 0x%08X(0x%08X)", g_thread_call_count,
++                     routine, ctx1);
++}
++
++static HANDLE bridge_spawn_thread(recomp_func_t fn, uint32_t routine,
++                                  uint32_t ctx1, uint32_t ctx2,
++                                  uint32_t stack_top)
+ {
+     struct bridge_thread_start *s = malloc(sizeof(*s));
+     HANDLE th;
+@@ -527,7 +538,10 @@ static HANDLE bridge_spawn_thread(recomp_func_t fn, uint32_t ctx1,
+     /* Record the game thread so a host-tick-driven title's watchdog can sample
+      * it via xbox_thread_debug_handle. Harmless for default-model titles: they
+      * spawn workers too, but never read it back. See kernel_thread.c. */
+-    else xbox_set_game_thread(th);
++    else {
++        bridge_name_guest_thread(th, routine, ctx1);
++        xbox_set_game_thread(th);
++    }
+     return th;
+ }
+ 
+@@ -584,6 +598,7 @@ static void bridge_PsCreateSystemThreadEx(void)
+         if (fn) {
+             if (is_first_call) {
+                 /* Main game thread: run directly, inheriting register state */
++                bridge_name_guest_thread(NULL, start_routine, start_context1);
+                 g_esp -= 4; BRIDGE_MEM32(g_esp) = start_context2;
+                 g_esp -= 4; BRIDGE_MEM32(g_esp) = start_context1;
+                 g_esp -= 4; BRIDGE_MEM32(g_esp) = 0;
+@@ -632,7 +647,7 @@ static void bridge_PsCreateSystemThreadEx(void)
+                     fflush(stderr);
+                     bridge_run_thread_inline(fn, start_context1, start_context2);
+                 } else {
+-                    HANDLE th = bridge_spawn_thread(fn, start_context1,
++                    HANDLE th = bridge_spawn_thread(fn, start_routine, start_context1,
+                                                     start_context2, stack_top);
+                     fprintf(stderr, "  [KERNEL] PsCreateSystemThreadEx: spawned "
+                             "worker 0x%08X (ctx=0x%08X, stack top 0x%08X)\n",
+@@ -2603,6 +2618,7 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
+     int slot = xbox_worker_stack_alloc();
+ 
+     (void)unused;
++    xbox_name_thread(NULL, "kernel timers");
+     if (slot < 0) {
+         fprintf(stderr, "  [KERNEL] timer thread has no worker stack; "
+                         "timer DPCs will not run\n");
+@@ -7951,6 +7967,7 @@ static void bridge_PsCreateSystemThread(void)
+             fn = recomp_lookup_manual(start_routine);
+         if (fn) {
+             if (is_first_call) {
++                bridge_name_guest_thread(NULL, start_routine, start_context1);
+                 g_esp -= 4; BRIDGE_MEM32(g_esp) = start_context2;
+                 g_esp -= 4; BRIDGE_MEM32(g_esp) = start_context1;
+                 g_esp -= 4; BRIDGE_MEM32(g_esp) = 0;
+@@ -7969,7 +7986,7 @@ static void bridge_PsCreateSystemThread(void)
+                 if (!stack_top) {
+                     bridge_run_thread_inline(fn, start_context1, start_context2);
+                 } else {
+-                    HANDLE th = bridge_spawn_thread(fn, start_context1,
++                    HANDLE th = bridge_spawn_thread(fn, start_routine, start_context1,
+                                                     start_context2, stack_top);
+                     if (xbox_handle_ptr && th)
+                         bridge_write_handle(xbox_handle_ptr, th);
+diff --git a/src/kernel/nv2a_pb_exec.c b/src/kernel/nv2a_pb_exec.c
+index a5233a2..ba22173 100644
+--- a/src/kernel/nv2a_pb_exec.c
++++ b/src/kernel/nv2a_pb_exec.c
+@@ -39,6 +39,7 @@
+ #include "nv2a_combiner.h"
+ #include "nv2a_pb_capture.h"
+ #include "nv2a_pb_hook.h"
++#include "../../include/xbox/thread_name.h"
+ #if defined(_WIN32)
+ #include <windows.h>
+ #define NV_TLS __declspec(thread)
+@@ -1974,6 +1975,7 @@ static struct {
+ static DWORD WINAPI raster_worker(LPVOID arg)
+ {
+     int k = (int)(intptr_t)arg;
++    xbox_name_thread(NULL, "sw raster %d", k);
+     for (;;) {
+         WaitForSingleObject(s_pool.start[k], INFINITE);
+         memset(&s_pool.cnt[k], 0, sizeof s_pool.cnt[k]);
+diff --git a/src/kernel/xbox_memory_layout.c b/src/kernel/xbox_memory_layout.c
+index 63f8771..03113a5 100644
+--- a/src/kernel/xbox_memory_layout.c
++++ b/src/kernel/xbox_memory_layout.c
+@@ -15,6 +15,7 @@
+ #include "xbox_memory_layout.h"
+ #include "kernel.h"
+ #include "guest_vmem.h"
++#include "../../include/xbox/thread_name.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -1076,6 +1077,7 @@ static void xbox_Nv2aAckStart(void)
+     g_nv2a_ack_thread = CreateThread(NULL, 0, nv2a_ack_thread,
+                                      g_nv2a_memory, 0, NULL);
+     if (g_nv2a_ack_thread) {
++        xbox_name_thread(g_nv2a_ack_thread, "nv2a ack/pushbuffer");
+         fprintf(stderr, "  NV2A busy-bit ack: %zu register(s) acknowledged\n",
+                 sizeof(NV2A_ACK) / sizeof(NV2A_ACK[0]));
+     }
+@@ -1477,6 +1479,7 @@ static DWORD WINAPI watch_resolver(LPVOID unused)
+     unsigned tries;
+ 
+     (void)unused;
++    xbox_name_thread(NULL, "watch resolver");
+     for (tries = 0; tries < 15000u && !g_watch_page; tries++) {
+         uint32_t va;
+         if (watch_resolve(&va) && watch_arm(va))
+@@ -1696,8 +1699,10 @@ void xbox_WatchdogStart(void)
+     s_watchdog_regs[2] = &g_edx; s_watchdog_regs[3] = &g_ebx;
+     s_watchdog_regs[4] = &g_esi; s_watchdog_regs[5] = &g_edi;
+     h = CreateThread(NULL, 0, xbox_watchdog_thread, NULL, 0, NULL);
+-    if (h)
++    if (h) {
++        xbox_name_thread(h, "watchdog");
+         CloseHandle(h);
++    }
+ }
+ 
+ /* SSE. 128 bits of architectural state, per-thread like the rest. */
+diff --git a/src/usb/ohci.c b/src/usb/ohci.c
+index 641a94d..1d9116f 100644
+--- a/src/usb/ohci.c
++++ b/src/usb/ohci.c
+@@ -11,6 +11,7 @@
+ #include "../kernel/xbox_memory_layout.h"
+ #include "../kernel/kernel.h"
+ #include "usb_gamepad.h"
++#include "../../include/xbox/thread_name.h"
+ 
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -1016,6 +1017,7 @@ static DWORD WINAPI ohci_thread(LPVOID unused)
+     unsigned first_port = 0, settle = 0;
+ 
+     (void)unused;
++    xbox_name_thread(NULL, "ohci usb");
+     {
+         uint32_t tib = xbox_AllocThreadTib();
+         if (!tib) {
+diff --git a/src/video/fb_present.c b/src/video/fb_present.c
+index 5847e5e..b8440dc 100644
+--- a/src/video/fb_present.c
++++ b/src/video/fb_present.c
+@@ -29,6 +29,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include "../../include/xbox/thread_name.h"
+ 
+ extern ptrdiff_t xbox_GetMemoryOffset(void);
+ 
+@@ -665,8 +666,10 @@ void xbox_FramebufferWindowStart(void)
+     if (InterlockedCompareExchange(&s_fb_running, 1, 0) != 0)
+         return;
+     th = CreateThread(NULL, 0, fb_thread, NULL, 0, NULL);
+-    if (th)
++    if (th) {
++        xbox_name_thread(th, "fb window");
+         CloseHandle(th);
++    }
+     else
+         InterlockedExchange(&s_fb_running, 0);
+ }
+diff --git a/src/video/video_pump.c b/src/video/video_pump.c
+index 6fdf222..b77250c 100644
+--- a/src/video/video_pump.c
++++ b/src/video/video_pump.c
+@@ -16,6 +16,7 @@
+ #include <string.h>
+ 
+ #include "video_player.h"
++#include "../../include/xbox/thread_name.h"
+ #include "d3d/d3d8_xbox.h"
+ #include "d3d/d3d8_internal.h"
+ 
+@@ -172,6 +173,7 @@ int xbox_VideoPlayFile(const char *host_path)
+     s_path[sizeof(s_path) - 1] = '\0';
+ 
+     th = CreateThread(NULL, 0, vp_thread, NULL, 0, NULL);
++    if (th) xbox_name_thread(th, "video pump");
+     if (!th) {
+         InterlockedExchange(&s_playing, 0);
+         return -1;
+-- 
+2.53.0.windows.2
+

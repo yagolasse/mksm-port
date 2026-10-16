@@ -57,12 +57,15 @@ static DWORD WINAPI qemu_thread_trampoline(LPVOID p)
 static inline void qemu_thread_create(QemuThread *t, const char *name, void *(*fn)(void *),
                                       void *arg, int mode)
 {
-    (void)name;
     QemuThreadStart *start = (QemuThreadStart *)malloc(sizeof(*start));
     start->fn = fn;
     start->arg = arg;
     t->h = CreateThread(NULL, 0, qemu_thread_trampoline, start, 0, NULL);
     assert(t->h);
+    wchar_t wname[64];
+    if (name && MultiByteToWideChar(CP_UTF8, 0, name, -1, wname, 64)) {
+        SetThreadDescription(t->h, wname);   /* for profilers and debuggers */
+    }
     if (mode == QEMU_THREAD_DETACHED) {
         CloseHandle(t->h);
         t->h = NULL;

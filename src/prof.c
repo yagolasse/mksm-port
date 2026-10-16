@@ -7,7 +7,7 @@
  * unwinds its stack (x64 unwind data, RtlVirtualUnwind) and resumes it. (Skipping threads
  * whose cycle count didn't move doesn't work: the suspend itself runs on the target and
  * charges it cycles.) At the end it prints, per thread with >= 2% CPU in the window: the CPU
- * time, its start routine, and the functions with the most exclusive (innermost frame) and inclusive
+ * time, its name (or else its start routine), and the functions with the most exclusive (innermost frame) and inclusive
  * (anywhere on the stack) samples, as module!symbol from the PDBs dbghelp can find.
  *
  *   RECOMP_PROF_FOCUS=<text>
@@ -30,6 +30,8 @@
 #include <string.h>
 
 #include "prof.h"
+
+#include <xbox/thread_name.h>
 
 #define PROF_MAX_THREADS 128
 #define PROF_MAX_FRAMES 24
@@ -85,6 +87,27 @@ static ULONG64 thread_start_routine(HANDLE h)
         query_thread()(h, 9 /* ThreadQuerySetWin32StartAddress */, &start, sizeof(start), NULL);
     }
     return start;
+}
+
+/* The name given at creation (xbox_name_thread / SetThreadDescription). Guest threads all
+ * start in the same bridge trampoline, and for others the start symbol is just the nearest
+ * PDB symbol, so the name is what says which thread it is. */
+static void thread_name(HANDLE h, char *out, int size)
+{
+    typedef HRESULT(WINAPI *GetDescFn)(HANDLE, PWSTR *);
+    static GetDescFn get_desc;
+    if (!get_desc) {
+        get_desc = (GetDescFn)(void (*)(void))GetProcAddress(GetModuleHandleA("kernel32.dll"),
+                                                             "GetThreadDescription");
+    }
+    PWSTR w = NULL;
+    out[0] = 0;
+    if (get_desc && SUCCEEDED(get_desc(h, &w)) && w) {
+        if (!WideCharToMultiByte(CP_UTF8, 0, w, -1, out, size, NULL, NULL)) {
+            out[0] = 0;
+        }
+        LocalFree(w);
+    }
 }
 
 /* The thread's TEB starts with its NT_TIB (stack base and limit). */
@@ -392,10 +415,15 @@ static void report(DWORD wall_ms)
                 }
             }
         }
-        unsigned start = starts[t];
+        /* Named threads show their name, the rest their start routine's symbol. */
+        char name[64];
+        thread_name(th->h, name, sizeof(name));
+        const char *label = name[0]             ? name
+                            : th->start_routine ? s_syms[starts[t]].name
+                                                : "?";
         fprintf(stderr, "[PROF] thread %lu (%s): %lu samples, CPU %.0f ms = %.0f%% of the window\n",
-                th->tid, th->start_routine ? s_syms[start].name : "?", th->samples,
-                cpu / 1e4, wall_ms ? cpu / 1e4 * 100.0 / wall_ms : 0.0);
+                th->tid, label, th->samples, cpu / 1e4,
+                wall_ms ? cpu / 1e4 * 100.0 / wall_ms : 0.0);
         print_top("exclusive", excl, th->samples);
         print_top("inclusive", incl, th->samples);
         if (focus && *focus) {
@@ -411,6 +439,7 @@ static void report(DWORD wall_ms)
 static DWORD WINAPI prof_thread(LPVOID arg)
 {
     (void)arg;
+    xbox_name_thread(NULL, "profiler");
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     Sleep(s_start_ms);
     s_nthreads = 0;

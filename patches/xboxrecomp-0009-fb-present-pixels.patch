@@ -1,0 +1,124 @@
+From e9d5ede3ad118cda3d45b5dab8f16491b9125aad Mon Sep 17 00:00:00 2001
+From: Yago Lasse <yagolasse@gmail.com>
+Date: Thu, 15 Oct 2026 12:00:06 -0300
+Subject: [PATCH] video: framebuffer window takes frames from an external
+ renderer
+
+xbox_FramebufferWindowPresentPixels() hands the window a finished frame as
+0x00RRGGBB rows instead of a guest address. A renderer behind the pushbuffer
+method hook (nv2a_pb_hook.h) keeps its surfaces on the host GPU, so there is
+no guest memory for the window to read. Frames of another size are cropped
+or padded to the window's 640x480.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/video/fb_present.c     | 29 +++++++++++++++++++++++++++++
+ src/video/fb_present_sdl.c | 36 ++++++++++++++++++++++++++++++++++++
+ src/video/video_player.h   |  4 ++++
+ 3 files changed, 69 insertions(+)
+
+diff --git a/src/video/fb_present.c b/src/video/fb_present.c
+index 5e9d68a..ced6ee2 100644
+--- a/src/video/fb_present.c
++++ b/src/video/fb_present.c
+@@ -123,6 +123,35 @@ void xbox_FramebufferWindowPresent(uint32_t fb_va, uint32_t pitch)
+     InterlockedExchange(&s_present_idx, next);
+ }
+ 
++/* A finished frame from an external renderer (nv2a_pb_hook.h), which keeps
++ * its surfaces on the host GPU, so there is no guest memory to read: the
++ * caller hands over 0x00RRGGBB rows, top-down. A frame of another size is
++ * cropped or padded with black at the window's 640x480. */
++void xbox_FramebufferWindowPresentPixels(const uint32_t *xrgb, uint32_t width,
++                                         uint32_t height)
++{
++    LONG next;
++    uint32_t y, w, h;
++
++    if (!s_fb_running || !xrgb)
++        return;
++    next = (s_present_idx == 0) ? 1 : 0;
++    if (!s_present[next]) {
++        s_present[next] = (uint32_t *)calloc((size_t)s_fb_width * s_fb_height,
++                                             4);
++        if (!s_present[next])
++            return;
++    }
++    w = width < s_fb_width ? width : s_fb_width;
++    h = height < s_fb_height ? height : s_fb_height;
++    if (w < s_fb_width || h < s_fb_height)
++        memset(s_present[next], 0, (size_t)s_fb_width * s_fb_height * 4);
++    for (y = 0; y < h; y++)
++        memcpy(s_present[next] + (size_t)y * s_fb_width,
++               xrgb + (size_t)y * width, (size_t)w * 4);
++    InterlockedExchange(&s_present_idx, next);
++}
++
+ /* Title bar, the way ps3recomp's window shows it. Written by the flip,
+  * read once a second by the window thread; a torn read shows one stale
+  * number for a second, which nobody can tell apart from a real one. */
+diff --git a/src/video/fb_present_sdl.c b/src/video/fb_present_sdl.c
+index 87b7ef7..b325031 100644
+--- a/src/video/fb_present_sdl.c
++++ b/src/video/fb_present_sdl.c
+@@ -165,6 +165,42 @@ void xbox_FramebufferWindowPresent(uint32_t fb_va, uint32_t pitch)
+     __atomic_sub_fetch(&s_in_present, 1, __ATOMIC_SEQ_CST);
+ }
+ 
++/* A finished frame from an external renderer (nv2a_pb_hook.h): 0x00RRGGBB
++ * rows, top-down, cropped or padded with black to the window's size. */
++static void present_pixels_copy(const uint32_t *xrgb, uint32_t width,
++                                uint32_t height)
++{
++    struct fb_slot *s = &s_slot[s_back];
++    size_t need = (size_t)FB_W * FB_H * 4;
++    uint32_t w = width < FB_W ? width : FB_W;
++    uint32_t h = height < FB_H ? height : FB_H, y;
++
++    if (s->cap < need) {
++        uint8_t *n = (uint8_t *)realloc(s->px, need);
++        if (!n)
++            return;
++        s->px = n;
++        s->cap = need;
++    }
++    if (w < FB_W || h < FB_H)
++        memset(s->px, 0, need);
++    for (y = 0; y < h; y++)
++        memcpy(s->px + (size_t)y * FB_W * 4, xrgb + (size_t)y * width,
++               (size_t)w * 4);
++    publish(4);
++}
++
++void xbox_FramebufferWindowPresentPixels(const uint32_t *xrgb, uint32_t width,
++                                         uint32_t height)
++{
++    if (!__atomic_load_n(&s_running, __ATOMIC_SEQ_CST) || !xrgb)
++        return;
++    __atomic_add_fetch(&s_in_present, 1, __ATOMIC_SEQ_CST);
++    if (__atomic_load_n(&s_running, __ATOMIC_SEQ_CST))
++        present_pixels_copy(xrgb, width, height);
++    __atomic_sub_fetch(&s_in_present, 1, __ATOMIC_SEQ_CST);
++}
++
+ /* Title bar: "<XBE title> | FPS: n | draws: n", as the GDI window shows it.
+  * Written by the loader and the flip, read once a second by the main
+  * thread; a torn read shows one stale value for a second. */
+diff --git a/src/video/video_player.h b/src/video/video_player.h
+index a5b912c..5c25ccc 100644
+--- a/src/video/video_player.h
++++ b/src/video/video_player.h
+@@ -62,6 +62,10 @@ void xbox_FramebufferWindowStart(void);
+ void xbox_FramebufferWindowSet(uint32_t fb_va, uint32_t pitch);
+ /* Rows per displayed row: 2 for a 2x2 anti-aliased surface, else 1. */
+ void xbox_FramebufferWindowSetAA(uint32_t sy);
++/* Show a frame an external renderer produced (0x00RRGGBB rows, top-down)
++ * instead of reading guest memory; for titles drawing through a method hook. */
++void xbox_FramebufferWindowPresentPixels(const uint32_t *xrgb, uint32_t width,
++                                         uint32_t height);
+ int  xbox_FramebufferDumpBmp(const char *path);
+ /* Title bar: "<XBE title> | FPS: n | draws: n". The name is the certificate's
+  * UTF-16 title (40 chars max); the stats come from each flip. */
+-- 
+2.53.0.windows.2
+

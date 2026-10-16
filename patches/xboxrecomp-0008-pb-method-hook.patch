@@ -1,4 +1,4 @@
-From ab63675d99a59b9b55f8956a81798bc0ecf55acc Mon Sep 17 00:00:00 2001
+From 35e13b80139cdf9c1f0c9ebff6e170f9b01f36ee Mon Sep 17 00:00:00 2001
 From: Yago Lasse <yagolasse@gmail.com>
 Date: Thu, 15 Oct 2026 11:08:05 -0300
 Subject: [PATCH] nv2a: method hook hands the decoded pushbuffer to an external
@@ -19,18 +19,18 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 src/kernel/nv2a_pb_hook.h
 
 diff --git a/src/kernel/nv2a_pb_exec.c b/src/kernel/nv2a_pb_exec.c
-index 2b8d5cb..a5233a2 100644
+index a7f75f5..1fa826e 100644
 --- a/src/kernel/nv2a_pb_exec.c
 +++ b/src/kernel/nv2a_pb_exec.c
-@@ -38,6 +38,7 @@
- #include "nv2a_vsh_interp.h"
+@@ -39,6 +39,7 @@
  #include "nv2a_combiner.h"
+ #include "nv2a_backend.h"
  #include "nv2a_pb_capture.h"
 +#include "nv2a_pb_hook.h"
  #if defined(_WIN32)
  #include <windows.h>
  #define NV_TLS __declspec(thread)
-@@ -2941,10 +2942,29 @@ static void tex_stage_method(uint32_t method, uint32_t param)
+@@ -3528,10 +3529,29 @@ static void tex_stage_method(uint32_t method, uint32_t param)
          record_tex_reg(method, param);
  }
  
@@ -58,8 +58,8 @@ index 2b8d5cb..a5233a2 100644
 +    }
 +
      static int inited;
-     if (!inited) {
-         inited = 1;
+ 
+     /* BACK_END_WRITE_SEMAPHORE_RELEASE. The title's pointer already names the
 diff --git a/src/kernel/nv2a_pb_hook.h b/src/kernel/nv2a_pb_hook.h
 new file mode 100644
 index 0000000..d8ba062

@@ -1,4 +1,4 @@
-From c583a579ba87b1380d2eb892b725d9f7f0138aba Mon Sep 17 00:00:00 2001
+From 0d90f6a8786e59d4f2e1c4906562388a463f81d9 Mon Sep 17 00:00:00 2001
 From: Yago Lasse <yagolasse@gmail.com>
 Date: Wed, 14 Oct 2026 13:51:33 -0300
 Subject: [PATCH] fb_present: closing the framebuffer window ends the process
@@ -13,10 +13,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 11 insertions(+)
 
 diff --git a/src/video/fb_present.c b/src/video/fb_present.c
-index 08bae4b..6299a65 100644
+index b26edfe..5e9d68a 100644
 --- a/src/video/fb_present.c
 +++ b/src/video/fb_present.c
-@@ -144,6 +144,17 @@ static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
+@@ -149,6 +149,17 @@ static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
  {
      switch (m) {
      case WM_CLOSE:

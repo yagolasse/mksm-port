@@ -38,7 +38,7 @@ statically recompiling the retail `default.xbe` to C with
 - `tools/smoke_test.py`: boot smoke test (also CTest `smoke`), see Testing
 - `tools/xiso.py`: list/extract files from an Xbox disc image
 - `tools/padding_seeds.py`: finds undetected functions after int3 padding (writes `seeds/padding.json`)
-- `tools/wavscan.py`: scans a `RECOMP_APU_WAV` recording for noise bursts, clicks, repeated/dropped blocks, clipping; `--excerpt START,DUR out.wav` cuts a clip
+- `tools/wavscan.py`: scans a `RECOMP_AUDIO_WAV` recording (older logs: `RECOMP_APU_WAV`) for noise bursts, clicks, repeated/dropped blocks, clipping; `--excerpt START,DUR out.wav` cuts a clip
 - `tools/voicedump.py`: reads a `RECOMP_APU_VOICE_DUMP` (per-voice source samples): summary, stale-ring repeats, one voice as WAV
 - `tools/profsum.py`: summarizes `RECOMP_PROF` run logs: per-thread CPU % + top functions, level fps per `[XGPU]` interval, medians over several logs (A/B runs)
 - `tools/stub_audit.py`: sorts `gen/recomp_stubs_unresolved.c` into real code vs. decoded data (writes `seeds/stubs.json`)
@@ -111,7 +111,7 @@ game window (`RECOMP_PB_GPU=1`, `RECOMP_FB_WINDOW=1`; `=0` turns either off):
 tools/run.sh                                  # MKSM_GAME_DIR / MKSM_EXE / MKSM_LOG override
 RECOMP_WATCHDOG_SECS=10 timeout 60 tools/run.sh
 ```
-The window (toolkit `fb_present.c`, patch 0024) scales the frame to fit with black bars and can be
+The window (toolkit `fb_present.c`, patch 0014) scales the frame to fit with black bars and can be
 resized; Alt+Enter toggles borderless fullscreen (not seen by the game as Start),
 `RECOMP_FB_FULLSCREEN=1` starts fullscreen. `RECOMP_FB_DUMP` needs an absolute path (the run
 scripts start the exe in `build/Release`). For a renderer drawing into the window itself it
@@ -150,7 +150,7 @@ Add a checkpoint each time the game gets further. Game dir: `--game-dir`, else `
 else `../game_files`; without game data it exits 77 (CTest skip). `--only boot|pad` runs one.
 
 Frame capture (for the GPU renderer work): `--capture-ms MS | --capture-flip N` records one pad
-frame as a self-contained `MKPB` file plus a software-reference `.bmp` (toolkit patches 0006-0008),
+frame as a self-contained `MKPB` file plus a software-reference `.bmp` (toolkit patches 0005-0007),
 running only the `pad` checkpoint. `--capture-ms` (arm at the first flip after that many ms, counted
 from the first pushbuffer method; the run lasts at least MS/1000 + 15 s) is the reproducible choice;
 `--capture-flip` is the Nth `FLIP_STALL`. The two are mutually exclusive. `--capture-path` sets the file path
@@ -183,7 +183,7 @@ Expect crashes during bring-up. The VEH handler in `main.c` prints the faulting 
 guest stack, and recent ICALL targets. Fix by adding overrides in `recomp_manual.c` or runtime
 support. Useful env vars from the toolkit: `RECOMP_WATCHDOG_SECS`, `RECOMP_AC97_READY`.
 `RECOMP_PB_GPU=1` (default in the run scripts since 2.H.8c1, `=0` = software executor; toolkit patches
-0009-0010) hands every decoded method to xemu's PGRAPH
+0008-0009) hands every decoded method to xemu's PGRAPH
 (OpenGL renderer) instead of the software executor (`[XGPU]` lines every >= 5 s, checked every 16k methods,
 so during movies later; each line ends with its real interval in seconds, which `tools/profsum.py` divides by); each flip presents the
 surface drawn last into the framebuffer window (`RECOMP_FB_WINDOW=1`) and waits for a 59.94 Hz VBlank.
@@ -210,7 +210,7 @@ with >= 2% CPU: CPU time, the thread's name (else its start routine), top exclus
 code shows as `sub_XXXXXXXX`, the renderer lib has /Z7 debug info). For the level with the `pad`
 script: `RECOMP_PROF=62000,15000 python tools/smoke_test.py --only pad`. Threads are named at creation
 (`SetThreadDescription` via the toolkit's header-only `xbox_name_thread`, `<xbox/thread_name.h>`, patch
-0027): guest threads `guest #<n> <routine>(<ctx1>)` (ctx1 = the title's routine behind XAPI's common
+0015): guest threads `guest #<n> <routine>(<ctx1>)` (ctx1 = the title's routine behind XAPI's common
 startup), runtime threads by role (`nv2a ack/pushbuffer` = the method thread, `wbc ack`, `gpu present`,
 `kernel timers`, `ohci usb`, `fb window`, `watchdog`, ...); unnamed ones (driver threads) keep the
 symbol. Name any new thread the same way. Debuggers and WPA show the names too.
@@ -225,62 +225,43 @@ run too fast for its time-based steps and it misses the movie skip.
 `RECOMP_WBC_ACK` (plan 2.H.8b): a thread acks D3D's kickoff flush wait at once instead of the ack
 thread doing it after each executed segment, so the title runs ahead of the executor. **On by default
 on the GPU path** (`=0` turns it off for A/B runs, `=1` forces it); it relies on the fence mirror,
-software method 5 and a DMA_GET that moves during the ring walk (patches 0012-0014). On the software
+software method 5 (patch 0010) and a DMA_GET that moves during the ring walk: upstream's DMA-engine
+walk, `RECOMP_PB_WALK=dma` (a run script / smoke default since toolkit v0.14, plan H.5a; the toolkit's
+default segment scan loses the tail of each ring lap). On the software
 executor it hangs (no fence mirror / software methods there), so it stays off there.
 `RECOMP_PB_EXEC=1` (set by the run scripts) is required: D3D init waits on GPU semaphore releases,
 which only the pushbuffer executor performs.
 The run scripts also set `RECOMP_AC97_READY=1` (emulated APU, so `DirectSoundCreate` succeeds) and
-`RECOMP_APU_DSP_ACK=auto` (patch 0004: acks the GP DSP command doorbell that DirectSound init waits
-on, found as GP scratch page 0 + 0x810 via `GPSADDR` and logged as `DSP doorbell auto`). If audio
-init hangs, compare `ebx` in a watchdog dump with the logged address; a fixed address can be given
-instead. `RECOMP_APU_STATS=1` (patch 0017) prints one `[APU-STATS]` line per second: APU frames,
-voices per voice list, peak level at each stage (VP sum, mixbins, `frame_buf` as the monitor finds
-it, the block sent to XAudio2), XAudio2 submits accepted/refused (`drop` = queue full), samples
-played and `starved` (cumulative times the queue ran dry; the first submit counts once): where the
-audio stops; also `stall` (1 ms waits while DirectSound has the sample counter stopped) and sample
-data reads by store (`amb heap/win`: heap-range addresses below the contiguous high-water mark),
-FE `VOICE_ON`s, voice offs (`off=<methods>/<all>`) and SSL stream counters (`strm`, `ssl_done`,
-`strm_empty`). `RECOMP_APU_STATS=2` adds one `[APU-VOICE]` line per voice that played in that second
-(list, peak before volume, volume/bins, rate, format, buffer offsets: which voice is the music).
-Any stats level also prints `[APU-DROP]` (first 20) when a voice still marked active falls off every
-voice list, with the list before/after and the last 32 FE methods (plan 3.3c's music bug).
-`[APU-TOP]` logs the title's writes of the 2D list top with the host call stack (patch 0022, which
-also makes the ISR's FEDECMETH/FEDECPARAM read atomic: a torn read freed the music voice).
+`RECOMP_APU_DSP_ACK=auto` (upstream's default since v0.14: acks the GP DSP command doorbell that
+DirectSound init waits on, found as GP scratch page 0 + 0x810 via `GPSADDR`, logged as `DSP doorbell
+(auto)`; the smoke test checks it). If audio init hangs, compare `ebx` in a watchdog dump with the
+logged address; a fixed address can be given instead.
+Since toolkit v0.14 (plan H.5a) the APU is upstream's: its output pacing, pitch resampling (linear),
+front-end traps and heap-page addressing replaced our patches, and so did their diagnostics. Ours
+that are gone: `RECOMP_APU_STATS`, `[APU-VOICE]`/`[APU-DROP]`/`[APU-TOP]`, `RECOMP_APU_RESAMPLE` and
+the sinc resampler (deferred: rewrite it onto upstream's resampler if 3.3d's footstep buzz is back),
+`RECOMP_APU_DATA_HEAP`, `RECOMP_APU_TRACE_SGE`, `RECOMP_APU_MONITOR`, `RECOMP_APU_TRACE_SECTL`. Old
+logs and `docs/audio.md` still mention them. Upstream's own: `RECOMP_AUDIO_WAV=<path>` (what the
+audio device is given, `RECOMP_AUDIO_WAV_SECS` limits it; scan with `tools/wavscan.py`),
+`RECOMP_APU_RING` (stale-lap replays in streamed rings), `RECOMP_APU_SOLO`, `RECOMP_APU_VOICE_DUMP`
+(check its format against `tools/voicedump.py` before relying on that tool), host starvation lines.
 `RECOMP_AUDIO_TICK_STATS=1` (`recomp_manual.c`) prints `[AUDIO-TICK]` calls per second of the
-game's 5 ms sound driver tick (`timeSetEvent` callback; should be ~200, needs patch 0021's
+game's 5 ms sound driver tick (`timeSetEvent` callback; should be ~200, needs patch 0013's
 precise kernel timers: the old 10 ms poll gave ~65).
-Output (patches 0018-0019): every ~5.33 ms the monitor sends the 256-sample block the
-VP/DSP wrote (plus the DirectSound software mixer) as one XAudio2 buffer, up to 16 queued, 4
-silent blocks prefilled after a starve; voices are resampled by their pitch (patch 0026: a
-16-tap windowed sinc for voices below 48 kHz, linear otherwise; `RECOMP_APU_RESAMPLE=linear`
-for A/B). Sample data: `MmGetPhysicalAddress` passes heap addresses through, so a number can
-mean heap RAM or the contiguous window. Patch 0025 tags each physical page with how the title
-last got it (`xbox_PhysPageOrigin`) and the APU follows that; pages never translated fall back
-to "heap RAM if the heap handed it out, else the window".
-`RECOMP_APU_DATA_HEAP=0/1` forces window/RAM for A/B. `RECOMP_APU_VOICE_DUMP=<path>` (patch
-0026) writes every voice's fetched source samples (with the buffer offset) to a binary dump:
-`tools/voicedump.py` lists voices, finds stretches a refilled ring replays unchanged
-(`--voice N`) and exports one voice as a WAV (`--wav N out.wav --rate R --from S --to S`).
-`RECOMP_APU_TRACE_SGE=<voice>` logs each SGE page that voice reads (page, origin tag, heap
-block, ADPCM headers valid in RAM vs window). `RECOMP_APU_MONITOR=vp` taps the VP's own
-L/R voice sum (xemu's default without DSPs) instead of our even/odd mixbin mixdown, for A/B by ear.
-`RECOMP_APU_VOLUME=<0..1>` sets the output volume (patch 0020; 0 = silent, the APU and its stats
-still run). `RECOMP_APU_WAV=<path>` (patch 0023) records every output block as sent to XAudio2
-(before the volume, so muted smoke runs record too) to a 48 kHz stereo WAV; scan it with
-`tools/wavscan.py`. `RECOMP_APU_TRACE_SECTL=1` logs SECTL writes with the host RIP (symbolize with
-`llvm-symbolizer --obj=build/Release/mksm_recomp.exe 0x140000000+rip-base`). `RECOMP_HEAP_RECLAIM=1` (also a default) reuses freed contiguous/heap blocks: without it
+`RECOMP_APU_VOLUME=<0..1>` sets the output volume (patch 0012; 0 = silent, the APU still runs).
+`RECOMP_HEAP_RECLAIM=1` (also a default) reuses freed contiguous/heap blocks: without it
 the contiguous arena runs out (`[CONTIG] arena exhausted`) and the movie after New Game stays black.
 They also set `RECOMP_TITLE_KEVENTS=1` (events the game builds by hand get a host event, so waits
 on them block instead of failing at once; the XDK timer thread behind the audio tick needs it) with
 `RECOMP_TITLE_KEVENTS_SKIP` (patch 0003; empty by default): events listed there keep the fail-at-once
 path. D3D's VBlank event `0x003F29CC` was on it until plan 2.7a6: `main.c`'s `vblank` thread now ticks
-at 59.94 Hz (`RECOMP_PB_GPU_VBLANK` if > 0) and has the toolkit set it (`xbox_Nv2aVBlank`, patch 0028:
+at 59.94 Hz (`RECOMP_PB_GPU_VBLANK` if > 0) and has the toolkit set it (`xbox_Nv2aVBlank`, patch 0016:
 the event D3D's VBlank DPC sets, miniport + 0x194), so `BlockUntilVerticalBlank` blocks as on hardware
 and the title's VBlank-paced workers stop spinning (~2 cores). The GPU path's flips pace on the same
 ticks (`mksm_gpu_vblank_tick`). `RECOMP_TITLE_KEVENTS_SKIP=0x003F29CC` = the old spin, for A/B runs.
-Patch 0029 keeps one pending wake-up per thread for self-suspend / resume pairs (a resume that
+Patch 0017 keeps one pending wake-up per thread for self-suspend / resume pairs (a resume that
 arrives while the target is still running is not lost; no switch: the plain path crashed at boot in
-`NtResumeThread` once the VBlank wait blocked, not traced), and patch 0030's `RECOMP_APU_EP_ALIVE=0xFE85A018` (run
+`NtResumeThread` once the VBlank wait blocked, not traced), and patch 0018's `RECOMP_APU_EP_ALIVE=0xFE85A018` (run
 script / smoke default) keeps DirectSound's EP-alive word at `0xCCCCCC`: without it DirectSound reset
 the DSPs and busy-waited 10 ms ~20 times a second. A new hang on a hand-built event → log its VA
 (`event 0x... built by the title`) and try adding it to the skip list.

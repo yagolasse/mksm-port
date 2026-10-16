@@ -1,4 +1,4 @@
-From 7ca9ecb197a07b3c87c1244a48c7056825df391f Mon Sep 17 00:00:00 2001
+From bfd21491964187d570da4aab679ac9851204eac8 Mon Sep 17 00:00:00 2001
 From: Yago Lasse <yagolasse@gmail.com>
 Date: Thu, 15 Oct 2026 14:50:53 -0300
 Subject: [PATCH] kernel: xbox_Nv2aSoftwareMethod services D3D's software
@@ -18,11 +18,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 53 insertions(+), 14 deletions(-)
 
 diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
-index c84afa3..f5a4d91 100644
+index 4a00feb..9bcde0c 100644
 --- a/src/kernel/kernel_bridge.c
 +++ b/src/kernel/kernel_bridge.c
-@@ -1527,25 +1527,20 @@ static void ke_guest_event_sync(uint32_t guest_va, HANDLE ge)
-     }
+@@ -1963,25 +1963,20 @@ static HANDLE ke_guest_event_prepare(uint32_t guest_va, int *type)
+     return h;
  }
  
 -/* ── KeSetEvent (ordinal 145) ────────────────────────────── */
@@ -52,7 +52,7 @@ index c84afa3..f5a4d91 100644
          }
      }
      h = ke_shadow_lookup(guest_va);
-@@ -1553,10 +1548,19 @@ static void bridge_KeSetEvent(void)
+@@ -1989,10 +1984,19 @@ static void bridge_KeSetEvent(void)
          h = bridge_resolve_handle(guest_va);
      if (!h)
          h = XBOX_TO_NATIVE(guest_va);
@@ -76,7 +76,7 @@ index c84afa3..f5a4d91 100644
  }
  
  /* ── KeWaitForSingleObject (ordinal 159) ─────────────────── */
-@@ -2436,6 +2440,35 @@ uint32_t xbox_GetConnectedInterrupt(uint32_t vector)
+@@ -2883,6 +2887,35 @@ uint32_t xbox_GetConnectedInterrupt(uint32_t vector)
      return (vector < XBOX_MAX_VECTORS) ? g_connected_isr[vector] : 0;
  }
  

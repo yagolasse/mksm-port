@@ -169,13 +169,13 @@ Handled by xemu's own epilogue (see above). The toolkit's software fix stays in 
 
 ## Frame capture + replay (2.H.2)
 
-`nv2a_pb_capture.c` (toolkit, patch 0006) records one frame as a self-contained file so a renderer
+`nv2a_pb_capture.c` (toolkit, patch 0005) records one frame as a self-contained file so a renderer
 can be built and checked without a 60 s boot. Design, revised from 2.H.1:
 
 - **Capture** (`RECOMP_PB_CAPTURE=<path>`, `RECOMP_PB_CAPTURE_FLIP=<N>` default 1): every decoded
   method is mirrored into a last-value shadow table (per subchannel + method, action methods
   excluded) and the frame is recorded as `(subch, method, param)` triples. `RECOMP_PB_CAPTURE_MS=<T>`
-  (patch 0007) arms instead at the first flip >= T ms after the capture code first runs (the first
+  (patch 0006) arms instead at the first flip >= T ms after the capture code first runs (the first
   pushbuffer method, a little after process start); it overrides the flip count and is the
   reproducible choice when the frame follows a wall-clock trigger (a scripted pad event), because
   the flip count depends on how fast the uncapped title/movie frames were drawn.
@@ -229,7 +229,7 @@ imported by the top-level build (see `CLAUDE.md`, Build):
 
 ## The hook (2.H.3b)
 
-- **Toolkit** (patch 0009, MIT): `nv2a_pb_set_method_hook(fn)` (`src/kernel/nv2a_pb_hook.h`). With a
+- **Toolkit** (patch 0008, MIT): `nv2a_pb_set_method_hook(fn)` (`src/kernel/nv2a_pb_hook.h`). With a
   hook set, `nv2a_pb_exec_method` records the method for the capture, calls the hook and returns;
   at `FLIP_STALL` it still bumps the title's swap counter (`xbox_Nv2aFrameCounterFlip`) and runs the
   capture's frame boundary. The software executor's semaphore, report and flip handling is skipped.
@@ -326,8 +326,8 @@ core, NVIDIA RTX 2060 / driver 596.49 on the dev machine, no GL error after init
   display buffer in the display context, two `glClientWaitSync` fences, two `wglMakeCurrent`), then a
   synchronous `glGetTexImage`. In xemu the UI thread requests that and waits on `sync_complete`.
 - **Window**: `main.c`'s callback passes the frame to the toolkit's `xbox_FramebufferWindowPresentPixels`
-  (patch 0010; the GDI window shows it instead of guest memory) and the frame stats for the title bar.
-  `RECOMP_PB_GPU_DUMP` writes one presented frame as BMP. Since patch 0024 (plan 2.6a) the window
+  (patch 0009; the GDI window shows it instead of guest memory) and the frame stats for the title bar.
+  `RECOMP_PB_GPU_DUMP` writes one presented frame as BMP. Since patch 0014 (plan 2.6a) the window
   scales any frame size to fit (aspect kept, black bars, GDI `StretchDIBits`), resizes, toggles
   borderless fullscreen on Alt+Enter, and is per-monitor DPI aware on its own thread. For 2.6b's
   direct present it exports `xbox_FramebufferWindowHwnd` (class `CS_OWNDC`, styles clip
@@ -383,12 +383,17 @@ didn't follow it: it learned the ring's bounds from the lowest and highest PUT s
 and the `JUMP` (a few hundred bytes to ~1.5 KB, the tail of a frame, every wrap) plus the first words
 at the ring start were never executed. The software rasterizer shrugged that off; xemu sees a draw
 whose `END` never came, or a stage program change without its texture setup, and asserts. Patch
-0011 walks the ring the way the GPU does: from GET (the old PUT) through any `JUMP` up to the new
+0011 (before toolkit v0.14) walked the ring the way the GPU does: from GET (the old PUT) through any `JUMP` up to the new
 PUT (`nv2a_pb_scan_ring`). A walk that never meets PUT is logged (`[PB] ring walk ... never reached
 PUT`); `RECOMP_PB_WRAP_TRACE=1` logs the first wraps with the JUMP address and how many bytes the
 old bounds would have skipped. After it: 10 of 10 short GPU boots with 0 asserts and 0 masked
 stages. The texture-stage guard stays as a safety net. The walk also stops (and logs `[PB] walk left
 the contiguous window`) if a JUMP or CALL leads outside the contiguous window, instead of faulting.
+Since toolkit v0.14 (plan H.5a) this is upstream's DMA-engine walk instead (`RECOMP_PB_WALK=dma`, a run
+script / smoke default): it keeps its own GET, follows JUMP and CALL/RETURN, publishes DMA_GET before
+every command and finishes a method that PUT cut off on the next kick. Our patches for the old walk
+(the JUMP follow, the window check, DMA_GET during the walk) were dropped; the toolkit's default is
+still the old segment scan with learned bounds.
 
 ## Running ahead of the executor (2.H.8b)
 
@@ -419,7 +424,7 @@ method thread is the limit (2.H.8c).
 
 With the title running ahead, the method thread (ring walk + `pgraph_method` + GL) was 96% busy
 and the only limit. 2.H.8c1 removed fixed costs that had nothing to do with rendering:
-- **The survey's method counter** (patch 0015): `note()` in the ring walk searches the method
+- **The survey's method counter** (dropped in v0.14, where `note()` is slot-indexed): `note()` in the ring walk searched the method
   inventory linearly for every method word, and ran whenever the executor did, though only
   `RECOMP_PB_SCAN` reads it. 35% of the thread → 1%.
 - **`glGetError`**: xemu asserts `glGetError() == GL_NO_ERROR` per draw, and asserts stay on in
@@ -429,7 +434,7 @@ and the only limit. 2.H.8c1 removed fixed costs that had nothing to do with rend
   on its own (it went in with the rest); the driver stall it was aimed at turned out to be the
   readbacks below.
 - **A clock read per method**: the `[XGPU]` stats check read QPC on every method; now every 16k.
-- **`getenv` per trapped APU access** (patch 0016), on a game thread.
+- **`getenv` per trapped APU access** (patch 0011), on a game thread.
 
 Level fps went from ~23 to 49-60 (60 = the VBlank pacing cap). What is left on the method thread:
 - **Synchronous readbacks** (~11-15%; ~8.6% since 2.H.8c2b moved the present off them): the driver spins (`GetExitCodeThread` →

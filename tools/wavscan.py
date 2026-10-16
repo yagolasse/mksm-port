@@ -1,4 +1,4 @@
-"""Scan a recorded audio output (RECOMP_APU_WAV) for glitches.
+"""Scan a recorded audio output (RECOMP_AUDIO_WAV; RECOMP_APU_WAV before toolkit v0.14) for glitches.
 
 The APU sends one 256-sample block every ~5.33 ms; this looks at the same
 blocks and flags the kinds of damage an emulated sound chip produces:

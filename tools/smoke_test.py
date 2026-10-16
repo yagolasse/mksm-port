@@ -131,7 +131,8 @@ CHECKPOINTS = [
 ]
 
 RE_DRAWS = re.compile(r"^\[GPU\] draws (\d+) ", re.M)
-RE_DSP_ACK = re.compile(r"\[APU\] DSP doorbell 0x[0-9A-Fa-f]+: command 0x[0-9A-Fa-f]+ acknowledged")
+# Toolkit v0.14 prints "(auto)" where the address used to be.
+RE_DSP_ACK = re.compile(r"\[APU\] DSP doorbell (?:0x[0-9A-Fa-f]+|\(auto\)): command 0x[0-9A-Fa-f]+ acknowledged")
 RE_PATH = re.compile(r"^\s*\[PATH\] (.+)$", re.M)
 RE_WILD = re.compile(r"\[ICALL\] target 0x([0-9A-Fa-f]+) is not code")
 RE_PAD = re.compile(r"PAD: t=\d+ ms step (\d+)")
@@ -186,6 +187,8 @@ def run(cp, exe, game_dir, log, extra_env=None, secs=None, audio=False):
     env.setdefault("RECOMP_TITLE_KEVENTS_SKIP", "")
     # DirectSound's EP-alive word (plan 2.7a6); RECOMP_APU_EP_ALIVE= (empty) = the old resets, for A/B.
     env.setdefault("RECOMP_APU_EP_ALIVE", "0xFE85A018")
+    # The DMA-engine ring walk (toolkit v0.14+, plan H.5a); RECOMP_PB_WALK= = the segment scan.
+    env.setdefault("RECOMP_PB_WALK", "dma")
     env.update(RUN_ENV)
     env.update(cp.env)
     if extra_env:

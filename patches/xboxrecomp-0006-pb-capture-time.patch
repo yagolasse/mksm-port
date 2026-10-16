@@ -1,4 +1,4 @@
-From 865bdcb587208b6972d97ebbea2082c019c8c7b0 Mon Sep 17 00:00:00 2001
+From c6e715a65dde03614b610fb6b67911cb780d55bf Mon Sep 17 00:00:00 2001
 From: Yago Lasse <yagolasse@gmail.com>
 Date: Thu, 15 Oct 2026 09:33:13 -0300
 Subject: [PATCH] nv2a: RECOMP_PB_CAPTURE_MS arms the capture on elapsed time

@@ -1,4 +1,4 @@
-From 48a0e4c1aaac06577cbe598942216fa09e0afa0a Mon Sep 17 00:00:00 2001
+From dba79a1253921edf13e9be17ad1bd13886e91511 Mon Sep 17 00:00:00 2001
 From: Yago Lasse <yagolasse@gmail.com>
 Date: Thu, 15 Oct 2026 08:44:55 -0300
 Subject: [PATCH] nv2a: pushbuffer frame capture + replay (RECOMP_PB_CAPTURE /
@@ -21,10 +21,10 @@ RECOMP_PB_REPLAY=<path> restores the memory and the contiguous high-water mark (
  create mode 100644 src/kernel/nv2a_pb_capture.h
 
 diff --git a/src/kernel/CMakeLists.txt b/src/kernel/CMakeLists.txt
-index a045752..8e672c7 100644
+index c643f72..68c43fb 100644
 --- a/src/kernel/CMakeLists.txt
 +++ b/src/kernel/CMakeLists.txt
-@@ -25,6 +25,7 @@ set(KERNEL_SOURCES
+@@ -26,6 +26,7 @@ set(KERNEL_SOURCES
      recomp_trace.c
      nv2a_pb_scan.c
      nv2a_pb_exec.c
@@ -448,18 +448,18 @@ index 0000000..596d412
 +
 +#endif
 diff --git a/src/kernel/nv2a_pb_exec.c b/src/kernel/nv2a_pb_exec.c
-index ce50284..2b8d5cb 100644
+index c3a9389..a7f75f5 100644
 --- a/src/kernel/nv2a_pb_exec.c
 +++ b/src/kernel/nv2a_pb_exec.c
-@@ -37,6 +37,7 @@
- #include "../d3d/d3d8_swizzle.h"
+@@ -38,6 +38,7 @@
  #include "nv2a_vsh_interp.h"
  #include "nv2a_combiner.h"
+ #include "nv2a_backend.h"
 +#include "nv2a_pb_capture.h"
  #if defined(_WIN32)
  #include <windows.h>
  #define NV_TLS __declspec(thread)
-@@ -622,17 +623,14 @@ static uint32_t surface_bpp(void)
+@@ -697,17 +698,14 @@ static uint32_t surface_bpp(void)
   * the sequence. */
  static int s_flip_dumping;
  
@@ -478,7 +478,7 @@ index ce50284..2b8d5cb 100644
      uint32_t w = drawn ? s_gpu.drawn_w : s_gpu.clip_w;
      uint32_t h = drawn ? s_gpu.drawn_h : s_gpu.clip_h, y, x;
      uint32_t bpp = drawn ? s_gpu.drawn_bpp : surface_bpp();
-@@ -640,14 +638,13 @@ static void dump_surface_bmp(void)
+@@ -715,14 +713,13 @@ static void dump_surface_bmp(void)
      uint8_t hdr[54];
      FILE *f;
  
@@ -494,7 +494,7 @@ index ce50284..2b8d5cb 100644
      f = fopen(path, "wb");
      if (!f)
          return;
-@@ -688,9 +685,30 @@ static void dump_surface_bmp(void)
+@@ -763,9 +760,30 @@ static void dump_surface_bmp(void)
          }
      }
      fclose(f);
@@ -527,28 +527,28 @@ index ce50284..2b8d5cb 100644
  }
  
  /* Defined below, next to the rest of the rasteriser; the clear path uses it
-@@ -2925,6 +2943,8 @@ static void tex_stage_method(uint32_t method, uint32_t param)
+@@ -3512,6 +3530,8 @@ static void tex_stage_method(uint32_t method, uint32_t param)
  
  void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
  {
 +    nv2a_pb_capture_method(subch, method, param);
 +
      static int inited;
-     if (!inited) {
-         inited = 1;
-@@ -3245,6 +3265,7 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
-             }
-         }
+ 
+     /* BACK_END_WRITE_SEMAPHORE_RELEASE. The title's pointer already names the
+@@ -3898,6 +3918,7 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
          s_gpu.drawn_stale = 1;
+         if (s_backend && s_backend->flip)
+             s_backend->flip();
 +        nv2a_pb_capture_flip();
  
-         if (getenv("RECOMP_PB_EXEC_VERBOSE")) {
+         if (verbose) {
              static unsigned n;
 diff --git a/src/kernel/nv2a_vsh_interp.c b/src/kernel/nv2a_vsh_interp.c
-index 7fae74c..1a8afd3 100644
+index c3fba75..592e713 100644
 --- a/src/kernel/nv2a_vsh_interp.c
 +++ b/src/kernel/nv2a_vsh_interp.c
-@@ -164,6 +164,23 @@ const float *nv2a_vsh_constant(uint32_t index)
+@@ -188,6 +188,23 @@ const float *nv2a_vsh_constant(uint32_t index)
      return s_const[index < NV2A_VSH_CONSTANTS ? index : 0];
  }
  
@@ -591,10 +591,10 @@ index 8acb0af..e1398c2 100644
   * (scale) and c[59] (offset) a word at a time rather than via _CONSTANT. */
  void nv2a_vsh_constant_component(uint32_t index, uint32_t comp, uint32_t word);
 diff --git a/src/kernel/xbox_memory_layout.c b/src/kernel/xbox_memory_layout.c
-index 72d5131..093093e 100644
+index 362cefe..60442f7 100644
 --- a/src/kernel/xbox_memory_layout.c
 +++ b/src/kernel/xbox_memory_layout.c
-@@ -1075,6 +1075,19 @@ static void xbox_Nv2aAckStart(void)
+@@ -1580,6 +1580,19 @@ static void xbox_Nv2aAckStart(void)
      }
  }
  
@@ -614,26 +614,26 @@ index 72d5131..093093e 100644
  /* Separate allocation for Xbox kernel address space (0x80010000+).
   * Some RenderWare code reads the kernel PE header to detect features. */
  static void *g_kernel_memory = NULL;
-@@ -3219,6 +3232,11 @@ uint32_t xbox_ContiguousAllocatedBytes(void)
-     return g_contig_next - XBOX_CONTIG_BASE;
+@@ -4307,6 +4320,11 @@ const volatile uint8_t *xbox_PhysRamNameMap(void)
+     return g_phys_ram_named;
  }
  
 +void xbox_ContiguousSetAllocatedBytes(uint32_t bytes)
 +{
-+    g_contig_next = XBOX_CONTIG_BASE + bytes;
++    g_contig_high = bytes;
 +}
 +
  
  static uint32_t heap_alloc_locked(uint32_t size, uint32_t alignment);
  
 diff --git a/src/kernel/xbox_memory_layout.h b/src/kernel/xbox_memory_layout.h
-index 53f9d3d..21a438e 100644
+index 14eee45..26d75f8 100644
 --- a/src/kernel/xbox_memory_layout.h
 +++ b/src/kernel/xbox_memory_layout.h
-@@ -188,12 +188,20 @@ uint32_t xbox_GetDisplayFramebuffer(uint32_t *pitch);
-  * below 256 MB, or 0 when the arena is exhausted. */
- uint32_t xbox_ContiguousAlloc(uint32_t size, uint32_t alignment);
- uint32_t xbox_ContiguousAllocatedBytes(void);
+@@ -215,6 +215,10 @@ void xbox_PhysNoteRamName(uint32_t va);
+  * model's view. */
+ const volatile uint8_t *xbox_PhysRamNameMap(void);
+ uint32_t xbox_ContiguousInUseBytes(void);
 +/* Restore the high-water mark that xbox_ContiguousAllocatedBytes reports, so
 + * the pushbuffer executor's dma_resolve maps a physical offset the same way it
 + * did during a captured frame (frame-capture replay). */
@@ -641,6 +641,7 @@ index 53f9d3d..21a438e 100644
  
  int xbox_Nv2aMirrorFence(uint32_t device_ptr_va,
                           uint32_t put_off, uint32_t get_ptr_off);
+@@ -225,6 +229,10 @@ uint32_t xbox_Nv2aFenceWordVa(void);
  
  void xbox_MemoryLayoutShutdown(void);
  

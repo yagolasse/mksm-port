@@ -1,4 +1,4 @@
-From 402c295bad09c68d69fb50849523b5e39befb7cb Mon Sep 17 00:00:00 2001
+From 8577cacbcd365f3b309368fd11f22573bff0158e Mon Sep 17 00:00:00 2001
 From: Yago Lasse <yagolasse@gmail.com>
 Date: Wed, 14 Oct 2026 12:12:18 -0300
 Subject: [PATCH] pb_exec: write NV097 semaphore releases through the semaphore
@@ -12,14 +12,14 @@ MK: Shaolin Monks hangs in D3D device init.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/kernel/nv2a_pb_exec.c | 70 +++++++++++++++++++++++++++++++++++++++
- 1 file changed, 70 insertions(+)
+ src/kernel/nv2a_pb_exec.c | 69 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 69 insertions(+)
 
 diff --git a/src/kernel/nv2a_pb_exec.c b/src/kernel/nv2a_pb_exec.c
-index c65632c..25fa835 100644
+index 1280565..79de8c3 100644
 --- a/src/kernel/nv2a_pb_exec.c
 +++ b/src/kernel/nv2a_pb_exec.c
-@@ -121,6 +121,41 @@ static uint32_t dma_resolve(uint32_t offset)
+@@ -138,6 +138,41 @@ static uint32_t dma_resolve(uint32_t offset)
      return offset;                         /* nothing better to offer */
  }
  
@@ -61,7 +61,7 @@ index c65632c..25fa835 100644
  static int surface_write_refused(uint32_t base, uint32_t bytes, const char *what)
  {
      static int said;
-@@ -187,6 +222,9 @@ static int surface_write_refused(uint32_t base, uint32_t bytes, const char *what
+@@ -205,6 +240,9 @@ static int surface_write_refused(uint32_t base, uint32_t bytes, const char *what
  #define NV097_SET_FLIP_MODULO             0x0128
  #define NV097_FLIP_INCREMENT_WRITE        0x012C
  #define NV097_FLIP_STALL                  0x0130
@@ -71,7 +71,7 @@ index c65632c..25fa835 100644
  #define NV097_ARRAY_ELEMENT16             0x1800
  /* Draw a run of vertices straight out of the arrays, with no index list:
   * bits 0..23 are the first vertex, bits 24..31 the count minus one. It may
-@@ -287,6 +325,7 @@ static struct {
+@@ -307,6 +345,7 @@ static struct {
      uint32_t clear_color;
      uint32_t clears, unhandled_total;
      uint32_t flip_read, flip_write, flip_modulo, flips;
@@ -79,10 +79,10 @@ index c65632c..25fa835 100644
      uint32_t tris_drawn, tris_skipped_offscreen, batches_untransformed;
      /* Why a batch came out flat. "Untextured" has two causes that look
       * identical on screen and want opposite fixes: the batch carried no
-@@ -3065,6 +3104,37 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
-         }
+@@ -3715,6 +3754,36 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
+         if (s_gpu.prim && s_gpu.idx_count < NV_MAX_INDICES)
+             s_gpu.idx[s_gpu.idx_count++] = param;
          break;
- 
 +    /* The GPU's progress report. D3D's fence is a
 +     * BACK_END_WRITE_SEMAPHORE_RELEASE of its "time" after each batch of
 +     * work; the GPU writes that value into the semaphore DMA object and
@@ -113,10 +113,9 @@ index c65632c..25fa835 100644
 +            *(volatile uint32_t *)((uint8_t *)xbox_GetMemoryOffset() + va) = param;
 +        return;
 +    }
-+
+ 
      case NV097_SET_FLIP_READ:
          if (s_ftrace == 2)
-             fprintf(stderr, "[FTRACE] P_READ %u%c", param, 10);
 -- 
 2.53.0.windows.2
 

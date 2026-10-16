@@ -1,4 +1,4 @@
-From df3878d07a080722574fb0b28df1efb4c651ed20 Mon Sep 17 00:00:00 2001
+From 16056d3258ef3a3f2a63e15d0ea50ed80d473555 Mon Sep 17 00:00:00 2001
 From: Yago Lasse <yagolasse@gmail.com>
 Date: Fri, 16 Oct 2026 04:12:24 -0300
 Subject: [PATCH] kernel: keep an early resume for a thread that suspends
@@ -21,7 +21,7 @@ Claude-Session: https://claude.ai/code/session_016ahYm8JBvCH5KhgtSu9Yoy
  1 file changed, 62 insertions(+)
 
 diff --git a/src/kernel/kernel_thread.c b/src/kernel/kernel_thread.c
-index 17cb31f..1888a0a 100644
+index 9b90670..39fa33a 100644
 --- a/src/kernel/kernel_thread.c
 +++ b/src/kernel/kernel_thread.c
 @@ -344,12 +344,65 @@ NTSTATUS __stdcall xbox_NtDuplicateObject(

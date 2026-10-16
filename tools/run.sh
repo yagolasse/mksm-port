@@ -78,6 +78,9 @@ fi
 export RECOMP_KEYBOARD="${RECOMP_KEYBOARD-1}"
 export RECOMP_APU_DSP_ACK="${RECOMP_APU_DSP_ACK-auto}"
 export RECOMP_APU_EP_ALIVE="${RECOMP_APU_EP_ALIVE-0xFE85A018}"
+# The DMA-engine ring walk (toolkit v0.14+); the default segment scan loses
+# the tail of each ring lap (plan H.5a).
+export RECOMP_PB_WALK="${RECOMP_PB_WALK-dma}"
 RECOMP_HEAP_RECLAIM="${RECOMP_HEAP_RECLAIM-1}"
 if [ -z "$RECOMP_HEAP_RECLAIM" ] || [ "$RECOMP_HEAP_RECLAIM" = 0 ]; then
     unset RECOMP_HEAP_RECLAIM

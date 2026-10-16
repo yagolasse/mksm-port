@@ -1,4 +1,4 @@
-From 1611e4469dbad3d7912f362b1ceb46b981a8879d Mon Sep 17 00:00:00 2001
+From 7fed22a3f4ffcebaf36043136f82cac1441c0b0f Mon Sep 17 00:00:00 2001
 From: Yago Lasse <yagolasse@gmail.com>
 Date: Thu, 15 Oct 2026 19:32:53 -0300
 Subject: [PATCH] kernel: precise KTIMERs - high-res wait, absolute due times,
@@ -24,10 +24,10 @@ Claude-Session: https://claude.ai/code/session_016ahYm8JBvCH5KhgtSu9Yoy
  1 file changed, 95 insertions(+), 27 deletions(-)
 
 diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
-index f5a4d91..623b32f 100644
+index 9bcde0c..7153411 100644
 --- a/src/kernel/kernel_bridge.c
 +++ b/src/kernel/kernel_bridge.c
-@@ -2558,25 +2558,45 @@ static void bridge_KeInitializeTimerEx(void)
+@@ -3005,25 +3005,45 @@ static void bridge_KeInitializeTimerEx(void)
   * during XInitDevices and enumerates from it.
   *
   * A due time is in 100 ns units, negative for relative and positive for an
@@ -83,7 +83,7 @@ index f5a4d91..623b32f 100644
  
  static DWORD WINAPI kernel_timer_thread(LPVOID unused)
  {
-@@ -2605,29 +2625,61 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
+@@ -3052,29 +3072,61 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
          g_fs_base = tib;
      }
  
@@ -152,7 +152,7 @@ index f5a4d91..623b32f 100644
              LeaveCriticalSection(&g_timer_lock);
  
              /* Outside the lock: the routine can set or cancel timers. */
-@@ -2645,22 +2697,43 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
+@@ -3092,22 +3144,43 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
              }
          }
      }
@@ -197,7 +197,7 @@ index f5a4d91..623b32f 100644
      EnterCriticalSection(&g_timer_lock);
      for (i = 0; i < XBOX_MAX_TIMERS; i++) {
          if (g_timers[i].timer_va == timer_va) { free_slot = i; was_set = 1; break; }
-@@ -2669,17 +2742,12 @@ static void kernel_set_timer(uint32_t timer_va, long long due_100ns,
+@@ -3116,17 +3189,12 @@ static void kernel_set_timer(uint32_t timer_va, long long due_100ns,
      if (free_slot >= 0) {
          g_timers[free_slot].timer_va  = timer_va;
          g_timers[free_slot].dpc_va    = dpc_va;

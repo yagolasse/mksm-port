@@ -82,6 +82,8 @@ if "%RECOMP_USB%"=="0" set "RECOMP_USB="
 if not defined RECOMP_KEYBOARD set "RECOMP_KEYBOARD=1"
 if not defined RECOMP_APU_DSP_ACK set "RECOMP_APU_DSP_ACK=auto"
 if not defined RECOMP_APU_EP_ALIVE set "RECOMP_APU_EP_ALIVE=0xFE85A018"
+rem The DMA-engine ring walk (toolkit v0.14+); the default segment scan loses the tail of each lap.
+if not defined RECOMP_PB_WALK set "RECOMP_PB_WALK=dma"
 if not defined RECOMP_HEAP_RECLAIM set "RECOMP_HEAP_RECLAIM=1"
 if "%RECOMP_HEAP_RECLAIM%"=="0" set "RECOMP_HEAP_RECLAIM="
 if not defined RECOMP_TITLE_KEVENTS set "RECOMP_TITLE_KEVENTS=1"

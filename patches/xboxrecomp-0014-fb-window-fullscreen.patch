@@ -1,4 +1,4 @@
-From 1d608df5319d4fd0db8c6a8da25fb602fde4d29a Mon Sep 17 00:00:00 2001
+From ce32797c4734e658cf814fba5753a50992d6a810 Mon Sep 17 00:00:00 2001
 From: Yago Lasse <yagolasse@gmail.com>
 Date: Thu, 15 Oct 2026 21:39:50 -0300
 Subject: [PATCH] video: fb window - aspect-fit any frame size, fullscreen,
@@ -19,12 +19,13 @@ the GDI blit, and xbox_FramebufferWindowClientSize() in physical pixels.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_016ahYm8JBvCH5KhgtSu9Yoy
 ---
- src/video/fb_present.c   | 372 ++++++++++++++++++++++++++++++++-------
- src/video/video_player.h |  15 +-
- 2 files changed, 321 insertions(+), 66 deletions(-)
+ src/video/fb_present.c     | 369 ++++++++++++++++++++++++++++++-------
+ src/video/fb_present_sdl.c |  12 ++
+ src/video/video_player.h   |  15 +-
+ 3 files changed, 330 insertions(+), 66 deletions(-)
 
 diff --git a/src/video/fb_present.c b/src/video/fb_present.c
-index 4de4120..5847e5e 100644
+index ced6ee2..d19cae7 100644
 --- a/src/video/fb_present.c
 +++ b/src/video/fb_present.c
 @@ -12,6 +12,14 @@
@@ -42,7 +43,7 @@ index 4de4120..5847e5e 100644
   * Off unless RECOMP_FB_WINDOW is set.
   */
  #include <stdint.h>
-@@ -26,7 +34,11 @@ extern ptrdiff_t xbox_GetMemoryOffset(void);
+@@ -35,7 +43,11 @@ extern ptrdiff_t xbox_GetMemoryOffset(void);
  
  static volatile LONG s_fb_running;
  static uint32_t      s_fb_va, s_fb_pitch, s_fb_width = 640, s_fb_height = 480;
@@ -55,7 +56,7 @@ index 4de4120..5847e5e 100644
  
  /* A finished frame, taken at the flip and shown until the next one.
   *
-@@ -39,9 +51,43 @@ static uint32_t     *s_rgb;           /* converted 32-bit copy for GDI */
+@@ -48,9 +60,43 @@ static uint32_t     *s_rgb;           /* converted 32-bit copy for GDI */
   *
   * Two buffers and an index, swapped after the copy completes, so the window
   * thread is never reading the one being filled. */
@@ -100,7 +101,7 @@ index 4de4120..5847e5e 100644
  void xbox_FramebufferWindowSet(uint32_t fb_va, uint32_t pitch)
  {
      /* RECOMP_FB_VA pins the window to one guest address instead of following
-@@ -59,6 +105,7 @@ void xbox_FramebufferWindowSet(uint32_t fb_va, uint32_t pitch)
+@@ -78,6 +124,7 @@ void xbox_FramebufferWindowSetAA(uint32_t sy)
  void xbox_FramebufferWindowPresent(uint32_t fb_va, uint32_t pitch)
  {
      const uint8_t *src;
@@ -108,7 +109,7 @@ index 4de4120..5847e5e 100644
      LONG next;
      uint32_t bpp, x, y;
  
-@@ -66,18 +113,14 @@ void xbox_FramebufferWindowPresent(uint32_t fb_va, uint32_t pitch)
+@@ -85,18 +132,14 @@ void xbox_FramebufferWindowPresent(uint32_t fb_va, uint32_t pitch)
          return;
      if (getenv("RECOMP_FB_VA"))
          return;                       /* pinned: leave the old path alone */
@@ -125,13 +126,13 @@ index 4de4120..5847e5e 100644
      bpp = pitch / s_fb_width;
      src = (const uint8_t *)((uintptr_t)fb_va + xbox_GetMemoryOffset());
      for (y = 0; y < s_fb_height; y++) {
-         const uint8_t *row = src + (size_t)y * pitch;
+         const uint8_t *row = src + (size_t)y * pitch * (bpp == 8 ? s_fb_aa_sy : 1);
 -        uint32_t *dst = s_present[next] + (size_t)y * s_fb_width;
 +        uint32_t *dst = f->px + (size_t)y * s_fb_width;
  
          if (bpp == 4) {
              memcpy(dst, row, (size_t)s_fb_width * 4);
-@@ -100,33 +143,43 @@ void xbox_FramebufferWindowPresent(uint32_t fb_va, uint32_t pitch)
+@@ -125,33 +168,43 @@ void xbox_FramebufferWindowPresent(uint32_t fb_va, uint32_t pitch)
  
  /* A finished frame from an external renderer (nv2a_pb_hook.h), which keeps
   * its surfaces on the host GPU, so there is no guest memory to read: the
@@ -190,11 +191,11 @@ index 4de4120..5847e5e 100644
 +    return wh != 0;
 +}
 +
- /* Which keys are down, for the pad stand-in in src/input.
-  *
-  * GetAsyncKeyState looked like the cheaper way to ask and does not work
-@@ -169,6 +222,107 @@ int xbox_FramebufferKeyDown(int vk)
-     return s_key_down[vk] != 0;
+ /* Title bar, the way ps3recomp's window shows it. Written by the flip,
+  * read once a second by the window thread; a torn read shows one stale
+  * number for a second, which nobody can tell apart from a real one. */
+@@ -174,6 +227,107 @@ void xbox_FramebufferWindowFrameStats(uint32_t draws)
+     InterlockedExchange(&s_frame_draws, (LONG)draws);
  }
  
 +/* DPI: the process is DPI-unaware (Windows scales its windows as bitmaps,
@@ -301,7 +302,7 @@ index 4de4120..5847e5e 100644
  static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
  {
      switch (m) {
-@@ -188,8 +342,45 @@ static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
+@@ -193,8 +347,45 @@ static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
          InterlockedExchange(&s_fb_running, 0);
          return 0;
  
@@ -344,10 +345,10 @@ index 4de4120..5847e5e 100644
 +                fb_set_fullscreen(h, !s_fullscreen);
 +            return 0;
 +        }
-         if ((unsigned)w < 256)
-             s_key_down[w] = 1;
+         xbox_InputKeySet((int)w, 1);
          /* RECOMP_KEY_TRACE: each key as it arrives, edge-triggered.
-@@ -210,6 +401,12 @@ static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
+          *
+@@ -214,6 +405,12 @@ static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
          /* System keys still go to Windows, or Alt+F4 stops closing us. */
          return m == WM_SYSKEYDOWN ? DefWindowProcA(h, m, w, l) : 0;
  
@@ -359,8 +360,8 @@ index 4de4120..5847e5e 100644
 +
      case WM_KEYUP:
      case WM_SYSKEYUP:
-         if ((unsigned)w < 256)
-@@ -224,6 +421,23 @@ static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
+         xbox_InputKeySet((int)w, 0);
+@@ -227,6 +424,23 @@ static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
      return DefWindowProcA(h, m, w, l);
  }
  
@@ -384,16 +385,16 @@ index 4de4120..5847e5e 100644
  /* The display formats an Xbox front buffer is actually set to. The pitch says
   * how wide a row is in bytes, so pitch/width gives the pixel size; the exact
   * component layout only matters for 16-bit, where 5:6:5 and 1:5:5:5 differ. */
-@@ -231,6 +445,8 @@ static void fb_convert(const uint8_t *src, uint32_t bpp)
+@@ -234,6 +448,8 @@ static void fb_convert(const uint8_t *src, uint32_t bpp)
  {
      uint32_t x, y;
  
 +    if (!fb_rgb_size(s_fb_width, s_fb_height))
 +        return;
      for (y = 0; y < s_fb_height; y++) {
-         const uint8_t *row = src + (size_t)y * s_fb_pitch;
-         uint32_t *dst = s_rgb + (size_t)y * s_fb_width;
-@@ -260,11 +476,12 @@ static void fb_convert(const uint8_t *src, uint32_t bpp)
+         const uint8_t *row = src + (size_t)y * s_fb_pitch
+                            * (bpp == 8 ? s_fb_aa_sy : 1);
+@@ -272,11 +488,12 @@ static void fb_convert(const uint8_t *src, uint32_t bpp)
  int xbox_FramebufferDumpBmp(const char *path)
  {
      FILE *f;
@@ -409,7 +410,7 @@ index 4de4120..5847e5e 100644
          return -1;
      f = fopen(path, "wb");
      if (!f)
-@@ -273,16 +490,16 @@ int xbox_FramebufferDumpBmp(const char *path)
+@@ -285,16 +502,16 @@ int xbox_FramebufferDumpBmp(const char *path)
      hdr[0] = 'B'; hdr[1] = 'M';
      memcpy(hdr + 2, &total, 4);
      hdr[10] = 54; hdr[14] = 40;
@@ -431,7 +432,7 @@ index 4de4120..5847e5e 100644
              line[x * 3 + 0] = (uint8_t)(src[x] & 0xFF);
              line[x * 3 + 1] = (uint8_t)((src[x] >> 8) & 0xFF);
              line[x * 3 + 2] = (uint8_t)((src[x] >> 16) & 0xFF);
-@@ -292,7 +509,7 @@ int xbox_FramebufferDumpBmp(const char *path)
+@@ -304,7 +521,7 @@ int xbox_FramebufferDumpBmp(const char *path)
      free(line);
      fclose(f);
      fprintf(stderr, "  [FBWIN] wrote %s (%ux%u from 0x%08X)\n",
@@ -440,7 +441,7 @@ index 4de4120..5847e5e 100644
      return 0;
  }
  
-@@ -300,14 +517,31 @@ static DWORD WINAPI fb_thread(LPVOID unused)
+@@ -312,14 +529,31 @@ static DWORD WINAPI fb_thread(LPVOID unused)
  {
      HWND hwnd;
      HDC hdc;
@@ -473,7 +474,7 @@ index 4de4120..5847e5e 100644
          wc.lpfnWndProc   = fb_wndproc;
          wc.hInstance     = GetModuleHandleA(NULL);
          wc.hCursor       = LoadCursorA(NULL, IDC_ARROW);
-@@ -315,9 +549,9 @@ static DWORD WINAPI fb_thread(LPVOID unused)
+@@ -327,9 +561,9 @@ static DWORD WINAPI fb_thread(LPVOID unused)
          RegisterClassA(&wc);
      }
      r.left = 0; r.top = 0; r.right = (LONG)s_fb_width; r.bottom = (LONG)s_fb_height;
@@ -485,7 +486,7 @@ index 4de4120..5847e5e 100644
                             CW_USEDEFAULT, CW_USEDEFAULT,
                             r.right - r.left, r.bottom - r.top,
                             NULL, NULL, GetModuleHandleA(NULL), NULL);
-@@ -325,20 +559,28 @@ static DWORD WINAPI fb_thread(LPVOID unused)
+@@ -337,20 +571,28 @@ static DWORD WINAPI fb_thread(LPVOID unused)
          InterlockedExchange(&s_fb_running, 0);
          return 0;
      }
@@ -526,7 +527,7 @@ index 4de4120..5847e5e 100644
  
      while (InterlockedCompareExchange(&s_fb_running, 1, 1)) {
          MSG msg;
-@@ -346,26 +588,22 @@ static DWORD WINAPI fb_thread(LPVOID unused)
+@@ -358,26 +600,22 @@ static DWORD WINAPI fb_thread(LPVOID unused)
              TranslateMessage(&msg);
              DispatchMessageA(&msg);
          }
@@ -561,7 +562,7 @@ index 4de4120..5847e5e 100644
          }
          {
              /* One dump a few seconds in, so the title has had time to render
-@@ -408,10 +646,13 @@ static DWORD WINAPI fb_thread(LPVOID unused)
+@@ -420,10 +658,13 @@ static DWORD WINAPI fb_thread(LPVOID unused)
          Sleep(16);
      }
  
@@ -575,22 +576,37 @@ index 4de4120..5847e5e 100644
      return 0;
  }
  
-@@ -438,4 +679,7 @@ void xbox_FramebufferWindowStart(void) {}
- int xbox_FramebufferKeyDown(int vk) { (void)vk; return 0; }
- void xbox_FramebufferWindowSetTitle(const uint16_t *n, int m) { (void)n; (void)m; }
- void xbox_FramebufferWindowFrameStats(uint32_t draws) { (void)draws; }
-+void *xbox_FramebufferWindowHwnd(void) { return 0; }
+diff --git a/src/video/fb_present_sdl.c b/src/video/fb_present_sdl.c
+index b325031..a60b932 100644
+--- a/src/video/fb_present_sdl.c
++++ b/src/video/fb_present_sdl.c
+@@ -201,6 +201,18 @@ void xbox_FramebufferWindowPresentPixels(const uint32_t *xrgb, uint32_t width,
+     __atomic_sub_fetch(&s_in_present, 1, __ATOMIC_SEQ_CST);
+ }
+ 
++/* The SDL window has no HWND and no GL hand-off yet. */
++void *xbox_FramebufferWindowHwnd(void) { return NULL; }
 +void xbox_FramebufferWindowGpuPresent(int on) { (void)on; }
-+int xbox_FramebufferWindowClientSize(uint32_t *w, uint32_t *h) { if (w) *w = 0; if (h) *h = 0; return 0; }
- #endif
++int xbox_FramebufferWindowClientSize(uint32_t *width, uint32_t *height)
++{
++    if (width)
++        *width = 0;
++    if (height)
++        *height = 0;
++    return 0;
++}
++
+ /* Title bar: "<XBE title> | FPS: n | draws: n", as the GDI window shows it.
+  * Written by the loader and the flip, read once a second by the main
+  * thread; a torn read shows one stale value for a second. */
 diff --git a/src/video/video_player.h b/src/video/video_player.h
-index 6114755..baf6b64 100644
+index 5c25ccc..b0dc582 100644
 --- a/src/video/video_player.h
 +++ b/src/video/video_player.h
-@@ -65,10 +65,21 @@ int xbox_FramebufferKeyDown(int vk);
- 
- void xbox_FramebufferWindowStart(void);
+@@ -62,10 +62,21 @@ void xbox_FramebufferWindowStart(void);
  void xbox_FramebufferWindowSet(uint32_t fb_va, uint32_t pitch);
+ /* Rows per displayed row: 2 for a 2x2 anti-aliased surface, else 1. */
+ void xbox_FramebufferWindowSetAA(uint32_t sy);
 -/* Show a frame an external renderer produced (0x00RRGGBB rows, top-down)
 - * instead of reading guest memory; for titles drawing through a method hook. */
 +/* Show a frame an external renderer produced (0x00RRGGBB rows, top-down, any

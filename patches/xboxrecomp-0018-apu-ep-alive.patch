@@ -1,4 +1,4 @@
-From 369d44c8fefe65322dbc98fbcb71532c21332002 Mon Sep 17 00:00:00 2001
+From ec86fcb2d1f92b71f0de78b7233a82899d7d9ace Mon Sep 17 00:00:00 2001
 From: Yago Lasse <yagolasse@gmail.com>
 Date: Fri, 16 Oct 2026 04:12:24 -0300
 Subject: [PATCH] apu: RECOMP_APU_EP_ALIVE keeps DirectSound's EP-alive word
@@ -17,11 +17,11 @@ Claude-Session: https://claude.ai/code/session_016ahYm8JBvCH5KhgtSu9Yoy
  1 file changed, 31 insertions(+)
 
 diff --git a/src/apu/apu_dsp.c b/src/apu/apu_dsp.c
-index b53c66e..9e5a6d0 100644
+index bd36f2a..d882954 100644
 --- a/src/apu/apu_dsp.c
 +++ b/src/apu/apu_dsp.c
-@@ -148,6 +148,36 @@ static int mcpx_apu_mixdown_all(void)
-     return on;
+@@ -155,6 +155,36 @@ static uint32_t *dsp_ack_auto_slot(MCPXAPUState *d)
+     return (uint32_t *)(mcpx_apu_phys(page) + GP_DOORBELL_OFFSET);
  }
  
 +/* ── EP "alive" word ─────────────────────────────────────────────────────
@@ -57,14 +57,14 @@ index b53c66e..9e5a6d0 100644
  void mcpx_apu_dsp_ack_poll(MCPXAPUState *d)
  {
      int i;
-@@ -156,6 +186,7 @@ void mcpx_apu_dsp_ack_poll(MCPXAPUState *d)
+@@ -163,6 +193,7 @@ void mcpx_apu_dsp_ack_poll(MCPXAPUState *d)
          dsp_ack_init();
      if (!d->ram_ptr)
          return;
 +    ep_alive_poll(d);
      if (s_dsp_ack_auto) {
-         uint32_t addr = dsp_ack_auto_addr(d);
-         uint32_t *slot = (uint32_t *)(d->ram_ptr + addr);
+         uint32_t *slot = dsp_ack_auto_slot(d);
+         if (slot && *slot) {
 -- 
 2.53.0.windows.2
 

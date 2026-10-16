@@ -139,6 +139,13 @@ there: use `RECOMP_PB_GPU_DUMP`, or `RECOMP_PB_GPU_PRESENT=pbo`.
 console view and prints the last 40 lines on exit; in cmd, turn `RECOMP_AC97_READY` off with `0`
 (empty means unset there). Keep the two scripts' defaults in sync.
 The failure path for a missing XBE shows a MessageBox, which blocks an unattended run.
+Saves: `main.c` (`resolve_save_dir`) passes the toolkit a title-specific save dir, `MKSM_SAVE_DIR`,
+else `%LOCALAPPDATA%\mksm_recomp` (logged as `[BOOT] save dir:`). It holds the game's
+`UDATA\4d570029` saves and the emulated hard disk (`Partition0-5.img`, sparse). Saves left in
+`<game>\UDATA`/`TDATA` by older builds are moved there once at boot (`[SAVE] moved`); not with
+the toolkit's `RECOMP_SAVE_DIR` set (it sends UDATA/TDATA elsewhere), and a failed move (another
+volume) leaves them in use where they are. Older builds used the shared `%LOCALAPPDATA%\xboxrecomp`;
+it can be deleted.
 
 ## Testing
 Unit tests for the Python tools (stdlib `unittest`, pytest also runs them; `stub_audit` needs

@@ -31,6 +31,7 @@
  */
 
 #include <windows.h>
+#include <shlobj.h>
 #include <dbghelp.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -90,6 +91,16 @@ extern ptrdiff_t g_xbox_mem_offset;
 
 static char g_game_dir[MAX_PATH];
 static char g_xbe_path[MAX_PATH];
+
+/* Save directory: the emulated hard disk (partition images, T:/U:/Z:) and,
+ * unless RECOMP_SAVE_DIR moves them, the title's UDATA/TDATA (the saves).
+ * MKSM_SAVE_DIR, else %LOCALAPPDATA%\mksm_recomp. Not the toolkit default
+ * (%LOCALAPPDATA%\xboxrecomp), which every xboxrecomp title shares, and not
+ * the game dir, which may be read-only (a Steam install). Made absolute by
+ * resolve_save_dir(). */
+#define SAVE_DIR_NAME           "mksm_recomp"
+
+static char g_save_dir[MAX_PATH];
 
 /* ── Forward declarations ──────────────────────────────────── */
 
@@ -545,6 +556,60 @@ static void resolve_game_dir(void)
     snprintf(g_xbe_path, MAX_PATH, "%s\\default.xbe", g_game_dir);
 }
 
+/* ── Save directory ────────────────────────────────────────── */
+
+static void resolve_save_dir(void)
+{
+    const char *env = getenv("MKSM_SAVE_DIR");
+    char base[MAX_PATH];
+    size_t len;
+
+    if (env && env[0]) {
+        if (!GetFullPathNameA(env, MAX_PATH, g_save_dir, NULL))
+            snprintf(g_save_dir, MAX_PATH, "%s", env);
+    } else if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, base))) {
+        snprintf(g_save_dir, MAX_PATH, "%s\\" SAVE_DIR_NAME, base);
+    } else {
+        snprintf(g_save_dir, MAX_PATH, "%s\\saves", g_game_dir);
+    }
+
+    len = strlen(g_save_dir);
+    while (len > 3 && (g_save_dir[len - 1] == '\\' || g_save_dir[len - 1] == '/'))
+        g_save_dir[--len] = '\0';
+}
+
+/* Builds before the toolkit's UDATA/TDATA rules (v0.14) wrote the saves into
+ * <game dir>\UDATA and \TDATA. Move them to the save dir once, so a player
+ * keeps them. Only when the save dir has none yet and RECOMP_SAVE_DIR isn't
+ * set (that one points the toolkit somewhere else). A move across volumes
+ * fails for a directory; then they stay where they are, and the toolkit
+ * keeps using them there (it warns about it). */
+static void migrate_legacy_saves(void)
+{
+    static const char *const names[] = { "UDATA", "TDATA" };
+    const char *ov = getenv("RECOMP_SAVE_DIR");
+
+    if (ov && ov[0])
+        return;
+    SHCreateDirectoryExA(NULL, g_save_dir, NULL);  /* absolute, any depth */
+    for (int i = 0; i < 2; i++) {
+        char from[MAX_PATH], to[MAX_PATH];
+        DWORD fa;
+        snprintf(from, MAX_PATH, "%s\\%s", g_game_dir, names[i]);
+        snprintf(to, MAX_PATH, "%s\\%s", g_save_dir, names[i]);
+        fa = GetFileAttributesA(from);
+        if (fa == INVALID_FILE_ATTRIBUTES || !(fa & FILE_ATTRIBUTE_DIRECTORY))
+            continue;
+        if (GetFileAttributesA(to) != INVALID_FILE_ATTRIBUTES)
+            continue;
+        if (MoveFileExA(from, to, 0))
+            fprintf(stderr, "[SAVE] moved %s to %s\n", from, to);
+        else
+            fprintf(stderr, "[SAVE] could not move %s to %s (error %lu); "
+                    "it stays in use there\n", from, to, GetLastError());
+    }
+}
+
 /* ── WinMain ───────────────────────────────────────────────── */
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
@@ -646,7 +711,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* Step 4: Set game directory for file I/O path translation */
     {
         extern void xbox_path_init(const char *game_dir, const char *save_dir);
-        xbox_path_init(g_game_dir, NULL);
+        resolve_save_dir();
+        migrate_legacy_saves();
+        fprintf(stderr, "[BOOT] save dir: %s\n", g_save_dir);
+        xbox_path_init(g_game_dir, g_save_dir);
     }
 
     /* Step 5: Initialize kernel bridge (thunk table in Xbox memory) */

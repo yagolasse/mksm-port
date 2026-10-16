@@ -12,6 +12,8 @@
 # Env: MKSM_GAME_DIR (default ../game_files): extracted disc root with default.xbe
 #      MKSM_EXE      (default build/Release/mksm_recomp.exe)
 #      MKSM_LOG      (default ../logs/run_<timestamp>.log)
+#      MKSM_SAVE_DIR (default %LOCALAPPDATA%\mksm_recomp): the saves and the
+#                    emulated hard disk; saves left in <game>\UDATA move there once
 #      Toolkit vars such as RECOMP_WATCHDOG_SECS / RECOMP_AC97_READY pass through.
 #      RECOMP_PB_EXEC defaults to 1: boot needs the pushbuffer executor, since
 #      D3D init waits for the GPU to report progress.

@@ -157,9 +157,14 @@ from the first pushbuffer method; the run lasts at least MS/1000 + 15 s) is the 
 opens and that the `.ref.bmp` is non-black (>= 30000 px). Replay a capture with `RECOMP_PB_REPLAY=<path>`
 and byte-compare `<path>.ref.bmp` vs `<path>.replay.bmp`. Captures are ~144 MB; clean up old ones.
 
-`--gpu` runs the checkpoints with `RECOMP_PB_GPU=1` (xemu's PGRAPH, OpenGL renderer): draws come
-from the `[XGPU]` stats line, which must show 0 bad handles, and the renderer must come up; with
-OpenGL, frames must have been presented and one of them non-black. Every run
+The checkpoints run on the GPU path by default (`RECOMP_PB_GPU=1`, xemu's PGRAPH, OpenGL
+renderer, like the run scripts; user, 2026-10-16): draws come from the `[XGPU]` stats line,
+which must show 0 bad handles, and the renderer must come up; with OpenGL, frames must have
+been presented and one of them non-black. This is the gate after a change. `--software` runs
+them on the software executor (`RECOMP_PB_GPU=0`); it has rendering glitches of its own, so
+it is only an occasional "does it still run" check, not a gate or a reference for visual bugs
+(compare against xemu). Captures always run on the software executor. `--gpu` is still
+accepted and does nothing. Every run
 also fails on `Assertion failed` (xemu keeps its asserts on; `abort()` exits 3 like the watchdog).
 
 ## Input
@@ -201,7 +206,7 @@ Movies (Sofdec) play on this path too (user, 2026-10-15, after 2.H.8c1). It stil
 samples every thread's stack each period (default 1000 us) for dur_ms, then prints `[PROF]` per thread
 with >= 2% CPU: CPU time, start routine, top exclusive/inclusive functions (`module!symbol`; guest
 code shows as `sub_XXXXXXXX`, the renderer lib has /Z7 debug info). For the level with the `pad`
-script: `RECOMP_PROF=62000,15000 python tools/smoke_test.py --gpu --only pad`.
+script: `RECOMP_PROF=62000,15000 python tools/smoke_test.py --only pad`.
 `RECOMP_PROF_FOCUS=<text>` also prints each thread's most common call chains through the first frame whose
 symbol contains the text (who calls it). The report takes a few seconds; end the window well before the
 watchdog (`62000,15000` for the pad level). The 0xC0000374 exits seen while it printed were a prof.c

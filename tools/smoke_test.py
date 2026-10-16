@@ -19,7 +19,7 @@ Usage:
     python tools/smoke_test.py [--game-dir DIR] [--exe EXE] [--log-dir DIR]
                                [--only boot|pad]
                                [--capture-ms MS | --capture-flip N] [--capture-path PATH]
-                               [--gpu]
+                               [--software]
 
 The game dir (holding default.xbe) defaults to MKSM_GAME_DIR, else
 ../game_files. No game data lives in this repo; without it the test exits 77
@@ -40,13 +40,15 @@ The capture file must exist, and [PBCAP] wrote must come after WADCRC.BIN opens
 (the level load), so a title-screen or movie frame is not accepted as a level
 frame.
 
---gpu runs the checkpoints with RECOMP_PB_GPU=1: the pushbuffer goes to xemu's
-PGRAPH (src/gpu, OpenGL renderer; RECOMP_PB_GPU_RENDERER=null for the null one)
-instead of the software executor. The draw count then comes from its [XGPU]
-stats line, which must also show no dropped object handles, and the renderer
-must have come up. With OpenGL, flips must also have presented frames and one
-of them must have been non-black. Not combinable with a capture (the
-capture's reference frame is the software executor's).
+The checkpoints run on the GPU path by default (RECOMP_PB_GPU=1, as the run
+scripts; user, 2026-10-16): the pushbuffer goes to xemu's PGRAPH (src/gpu,
+OpenGL renderer; RECOMP_PB_GPU_RENDERER=null for the null one). The draw count
+then comes from its [XGPU] stats line, which must also show no dropped object
+handles, and the renderer must have come up. With OpenGL, flips must also have
+presented frames and one of them must have been non-black.
+--software runs them on the software executor instead (RECOMP_PB_GPU=0). A
+capture always runs there (its reference frame is the software executor's).
+--gpu is accepted for old command lines and does nothing.
 """
 
 import argparse
@@ -279,8 +281,11 @@ def main():
                      help="capture the pad frame at this FLIP_STALL number")
     ap.add_argument("--capture-path",
                     help="capture file path (default <log_dir>/pbcap_level_<N>.pbcap)")
-    ap.add_argument("--gpu", action="store_true",
-                    help="RECOMP_PB_GPU=1: run on xemu's PGRAPH, not the software executor")
+    path = ap.add_mutually_exclusive_group()
+    path.add_argument("--software", action="store_true",
+                      help="RECOMP_PB_GPU=0: run on the software executor, not xemu's PGRAPH")
+    path.add_argument("--gpu", action="store_true",
+                      help="the default (RECOMP_PB_GPU=1); kept for old command lines")
     ap.add_argument("--audio", action="store_true",
                     help="play the game's audio (default: RECOMP_APU_VOLUME=0, muted)")
     args = ap.parse_args()
@@ -302,6 +307,7 @@ def main():
         print("FAIL: --gpu can't be combined with a capture (its reference frame is the "
               "software executor's)")
         return 1
+    gpu = not (args.software or capture)
     capture_env = {}
     capture_path = None
     capture_secs = None
@@ -332,13 +338,12 @@ def main():
         log = (log_dir / f"smoke_{stamp}_{cp.name}.log").resolve()
         secs = max(cp.secs, capture_secs) if capture_secs else None
         extra = dict(capture_env)
-        if args.gpu:
-            extra["RECOMP_PB_GPU"] = "1"
+        extra["RECOMP_PB_GPU"] = "1" if gpu else "0"
         code = run(cp, exe, game_dir, log, extra_env=extra or None, secs=secs,
                    audio=args.audio)
         text = log.read_text(encoding="utf-8", errors="replace")
         cap_after = "WADCRC.BIN" if (capture and cp.name == "pad") else None
-        for ok, msg in check(cp, code, text, capture_after=cap_after, gpu=args.gpu):
+        for ok, msg in check(cp, code, text, capture_after=cap_after, gpu=gpu):
             print(f"  {'ok  ' if ok else 'FAIL'} {msg}")
             if not ok:
                 failed.append(f"{cp.name}: {msg}")

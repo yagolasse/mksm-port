@@ -40,6 +40,7 @@ statically recompiling the retail `default.xbe` to C with
 - `tools/padding_seeds.py`: finds undetected functions after int3 padding (writes `seeds/padding.json`)
 - `tools/wavscan.py`: scans a `RECOMP_APU_WAV` recording for noise bursts, clicks, repeated/dropped blocks, clipping; `--excerpt START,DUR out.wav` cuts a clip
 - `tools/voicedump.py`: reads a `RECOMP_APU_VOICE_DUMP` (per-voice source samples): summary, stale-ring repeats, one voice as WAV
+- `tools/profsum.py`: summarizes `RECOMP_PROF` run logs: per-thread CPU % + top functions, level fps per `[XGPU]` interval, medians over several logs (A/B runs)
 - `tools/stub_audit.py`: sorts `gen/recomp_stubs_unresolved.c` into real code vs. decoded data (writes `seeds/stubs.json`)
 - `docs/`: generic notes on how the port works (`gpu-renderer.md`: design of the GPU renderer, a port of xemu's PGRAPH + OpenGL backend)
 - `tests/`: unit tests for `tools/*.py` on synthetic inputs (no game data), see Testing
@@ -212,6 +213,8 @@ script: `RECOMP_PROF=62000,15000 python tools/smoke_test.py --only pad`. Threads
 startup), runtime threads by role (`nv2a ack/pushbuffer` = the method thread, `wbc ack`, `gpu present`,
 `kernel timers`, `ohci usb`, `fb window`, `watchdog`, ...); unnamed ones (driver threads) keep the
 symbol. Name any new thread the same way. Debuggers and WPA show the names too.
+Summarize: `python tools/profsum.py [--inclusive] LOG...` (median per thread over several logs). Measure only on an
+idle machine (no game running: a background game cut the level from 60 to 12-32 fps, plan 2.7a2).
 `RECOMP_PROF_FOCUS=<text>` also prints each thread's most common call chains through the first frame whose
 symbol contains the text (who calls it). The report takes a few seconds; end the window well before the
 watchdog (`62000,15000` for the pad level). The 0xC0000374 exits seen while it printed were a prof.c

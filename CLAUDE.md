@@ -108,6 +108,11 @@ game window (`RECOMP_PB_GPU=1`, `RECOMP_FB_WINDOW=1`; `=0` turns either off):
 tools/run.sh                                  # MKSM_GAME_DIR / MKSM_EXE / MKSM_LOG override
 RECOMP_WATCHDOG_SECS=10 timeout 60 tools/run.sh
 ```
+The window (toolkit `fb_present.c`, patch 0024) scales the frame to fit with black bars and can be
+resized; Alt+Enter toggles borderless fullscreen (not seen by the game as Start),
+`RECOMP_FB_FULLSCREEN=1` starts fullscreen. `RECOMP_FB_DUMP` needs an absolute path (the run
+scripts start the exe in `build/Release`). For a renderer drawing into the window itself it
+exports the HWND, a "GPU presents" switch (no GDI blit) and the client size in physical pixels.
 `tools/run.bat` is the cmd twin (same defaults and overrides). It writes the log without a live
 console view and prints the last 40 lines on exit; in cmd, turn `RECOMP_AC97_READY` off with `0`
 (empty means unset there). Keep the two scripts' defaults in sync.

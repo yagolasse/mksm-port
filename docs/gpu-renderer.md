@@ -327,7 +327,14 @@ core, NVIDIA RTX 2060 / driver 596.49 on the dev machine, no GL error after init
   synchronous `glGetTexImage`. In xemu the UI thread requests that and waits on `sync_complete`.
 - **Window**: `main.c`'s callback passes the frame to the toolkit's `xbox_FramebufferWindowPresentPixels`
   (patch 0010; the GDI window shows it instead of guest memory) and the frame stats for the title bar.
-  `RECOMP_PB_GPU_DUMP` writes one presented frame as BMP.
+  `RECOMP_PB_GPU_DUMP` writes one presented frame as BMP. Since patch 0024 (plan 2.6a) the window
+  scales any frame size to fit (aspect kept, black bars, GDI `StretchDIBits`), resizes, toggles
+  borderless fullscreen on Alt+Enter, and is per-monitor DPI aware on its own thread. For 2.6b's
+  direct present it exports `xbox_FramebufferWindowHwnd` (class `CS_OWNDC`, styles clip
+  children/siblings, so a WGL context can live on its DC), `xbox_FramebufferWindowGpuPresent(1)`
+  (window thread skips its blit and WM_PAINT draws nothing) and `xbox_FramebufferWindowClientSize`
+  (physical pixels from WM_SIZE; GetClientRect from the DPI-unaware method thread may be scaled).
+  Never `SendMessage` the window from the method thread (it holds `pgraph.lock`).
 - **Pacing**: after presenting, the flip waits for the next 59.94 Hz VBlank on a fixed grid (high-resolution
   waitable timer); a late flip goes at once, one more than 4 periods late restarts the grid.
   `RECOMP_PB_GPU_VBLANK=<Hz>` changes it, 0 turns it off.

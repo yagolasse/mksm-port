@@ -1,0 +1,616 @@
+From 1d608df5319d4fd0db8c6a8da25fb602fde4d29a Mon Sep 17 00:00:00 2001
+From: Yago Lasse <yagolasse@gmail.com>
+Date: Thu, 15 Oct 2026 21:39:50 -0300
+Subject: [PATCH] video: fb window - aspect-fit any frame size, fullscreen,
+ DPI, GPU present hooks
+
+The framebuffer window scales the frame to its client area keeping the
+aspect, with black bars, and takes frames of any size from
+xbox_FramebufferWindowPresentPixels (they used to be cropped to 640x480).
+Alt+Enter toggles borderless fullscreen on the window's monitor (not passed
+on as a key press); RECOMP_FB_FULLSCREEN=1 starts that way. WM_SIZE,
+WM_PAINT and WM_DPICHANGED are handled, and the window thread is per-monitor
+DPI aware while the process stays unaware.
+
+For a renderer that draws into the window itself (a GL context on its DC):
+xbox_FramebufferWindowHwnd(), xbox_FramebufferWindowGpuPresent(1) to stop
+the GDI blit, and xbox_FramebufferWindowClientSize() in physical pixels.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016ahYm8JBvCH5KhgtSu9Yoy
+---
+ src/video/fb_present.c   | 372 ++++++++++++++++++++++++++++++++-------
+ src/video/video_player.h |  15 +-
+ 2 files changed, 321 insertions(+), 66 deletions(-)
+
+diff --git a/src/video/fb_present.c b/src/video/fb_present.c
+index 4de4120..5847e5e 100644
+--- a/src/video/fb_present.c
++++ b/src/video/fb_present.c
+@@ -12,6 +12,14 @@
+  * and the screen the better -- and it must keep working while the D3D8 layer
+  * is busy with something else, such as the FMV player's own window.
+  *
++ * A renderer that keeps its frames on the host GPU can instead draw into this
++ * window itself (xbox_FramebufferWindowHwnd + xbox_FramebufferWindowGpuPresent);
++ * the window thread then only handles messages, focus and keys.
++ *
++ * The frame is scaled to fit the client area, keeping its aspect, with black
++ * bars. Alt+Enter toggles borderless fullscreen on the window's monitor;
++ * RECOMP_FB_FULLSCREEN=1 starts that way.
++ *
+  * Off unless RECOMP_FB_WINDOW is set.
+  */
+ #include <stdint.h>
+@@ -26,7 +34,11 @@ extern ptrdiff_t xbox_GetMemoryOffset(void);
+ 
+ static volatile LONG s_fb_running;
+ static uint32_t      s_fb_va, s_fb_pitch, s_fb_width = 640, s_fb_height = 480;
+-static uint32_t     *s_rgb;           /* converted 32-bit copy for GDI */
++
++/* What the window shows: a converted 32-bit copy for GDI and the dump. */
++static uint32_t     *s_rgb;
++static uint32_t      s_rgb_w, s_rgb_h;
++static size_t        s_rgb_cap;      /* pixels */
+ 
+ /* A finished frame, taken at the flip and shown until the next one.
+  *
+@@ -39,9 +51,43 @@ static uint32_t     *s_rgb;           /* converted 32-bit copy for GDI */
+  *
+  * Two buffers and an index, swapped after the copy completes, so the window
+  * thread is never reading the one being filled. */
+-static uint32_t     *s_present[2];
++typedef struct {
++    uint32_t *px;
++    size_t    cap;                    /* pixels */
++    uint32_t  w, h;
++} fb_frame;
++static fb_frame      s_present[2];
+ static volatile LONG s_present_idx = -1;   /* -1 until the first flip */
+ 
++/* Set by a renderer that draws into the window itself: no GDI blit. */
++static volatile LONG s_gpu_present;
++static volatile HWND s_hwnd;
++static volatile LONG s_client_wh;          /* width << 16 | height */
++
++/* The buffer to fill for the next flip, big enough for w x h. A buffer that
++ * is too small is replaced and the old one leaked, not freed: two flips
++ * during one of the window thread's copies would otherwise have it reading
++ * freed memory. Frame sizes change a handful of times per run at most. */
++static fb_frame *fb_next_frame(uint32_t w, uint32_t h, LONG *next)
++{
++    fb_frame *f;
++    size_t need = (size_t)w * h;
++
++    *next = (s_present_idx == 0) ? 1 : 0;
++    f = &s_present[*next];
++    if (f->cap < need) {
++        size_t cap = need > (size_t)640 * 480 ? need : (size_t)640 * 480;
++        uint32_t *px = (uint32_t *)calloc(cap, 4);
++        if (!px)
++            return NULL;
++        f->px = px;
++        f->cap = cap;
++    }
++    f->w = w;
++    f->h = h;
++    return f;
++}
++
+ void xbox_FramebufferWindowSet(uint32_t fb_va, uint32_t pitch)
+ {
+     /* RECOMP_FB_VA pins the window to one guest address instead of following
+@@ -59,6 +105,7 @@ void xbox_FramebufferWindowSet(uint32_t fb_va, uint32_t pitch)
+ void xbox_FramebufferWindowPresent(uint32_t fb_va, uint32_t pitch)
+ {
+     const uint8_t *src;
++    fb_frame *f;
+     LONG next;
+     uint32_t bpp, x, y;
+ 
+@@ -66,18 +113,14 @@ void xbox_FramebufferWindowPresent(uint32_t fb_va, uint32_t pitch)
+         return;
+     if (getenv("RECOMP_FB_VA"))
+         return;                       /* pinned: leave the old path alone */
+-    next = (s_present_idx == 0) ? 1 : 0;
+-    if (!s_present[next]) {
+-        s_present[next] = (uint32_t *)calloc((size_t)s_fb_width * s_fb_height,
+-                                             4);
+-        if (!s_present[next])
+-            return;
+-    }
++    f = fb_next_frame(s_fb_width, s_fb_height, &next);
++    if (!f)
++        return;
+     bpp = pitch / s_fb_width;
+     src = (const uint8_t *)((uintptr_t)fb_va + xbox_GetMemoryOffset());
+     for (y = 0; y < s_fb_height; y++) {
+         const uint8_t *row = src + (size_t)y * pitch;
+-        uint32_t *dst = s_present[next] + (size_t)y * s_fb_width;
++        uint32_t *dst = f->px + (size_t)y * s_fb_width;
+ 
+         if (bpp == 4) {
+             memcpy(dst, row, (size_t)s_fb_width * 4);
+@@ -100,33 +143,43 @@ void xbox_FramebufferWindowPresent(uint32_t fb_va, uint32_t pitch)
+ 
+ /* A finished frame from an external renderer (nv2a_pb_hook.h), which keeps
+  * its surfaces on the host GPU, so there is no guest memory to read: the
+- * caller hands over 0x00RRGGBB rows, top-down. A frame of another size is
+- * cropped or padded with black at the window's 640x480. */
++ * caller hands over 0x00RRGGBB rows, top-down, of any size. */
+ void xbox_FramebufferWindowPresentPixels(const uint32_t *xrgb, uint32_t width,
+                                          uint32_t height)
+ {
++    fb_frame *f;
+     LONG next;
+-    uint32_t y, w, h;
+ 
+-    if (!s_fb_running || !xrgb)
++    if (!s_fb_running || !xrgb || !width || !height)
+         return;
+-    next = (s_present_idx == 0) ? 1 : 0;
+-    if (!s_present[next]) {
+-        s_present[next] = (uint32_t *)calloc((size_t)s_fb_width * s_fb_height,
+-                                             4);
+-        if (!s_present[next])
+-            return;
+-    }
+-    w = width < s_fb_width ? width : s_fb_width;
+-    h = height < s_fb_height ? height : s_fb_height;
+-    if (w < s_fb_width || h < s_fb_height)
+-        memset(s_present[next], 0, (size_t)s_fb_width * s_fb_height * 4);
+-    for (y = 0; y < h; y++)
+-        memcpy(s_present[next] + (size_t)y * s_fb_width,
+-               xrgb + (size_t)y * width, (size_t)w * 4);
++    f = fb_next_frame(width, height, &next);
++    if (!f)
++        return;
++    memcpy(f->px, xrgb, (size_t)width * height * 4);
+     InterlockedExchange(&s_present_idx, next);
+ }
+ 
++void *xbox_FramebufferWindowHwnd(void)
++{
++    return (void *)s_hwnd;
++}
++
++void xbox_FramebufferWindowGpuPresent(int on)
++{
++    InterlockedExchange(&s_gpu_present, on ? 1 : 0);
++}
++
++int xbox_FramebufferWindowClientSize(uint32_t *width, uint32_t *height)
++{
++    LONG wh = s_client_wh;
++
++    if (width)
++        *width = (uint32_t)(wh >> 16) & 0xFFFF;
++    if (height)
++        *height = (uint32_t)wh & 0xFFFF;
++    return wh != 0;
++}
++
+ /* Which keys are down, for the pad stand-in in src/input.
+  *
+  * GetAsyncKeyState looked like the cheaper way to ask and does not work
+@@ -169,6 +222,107 @@ int xbox_FramebufferKeyDown(int vk)
+     return s_key_down[vk] != 0;
+ }
+ 
++/* DPI: the process is DPI-unaware (Windows scales its windows as bitmaps,
++ * which blurs the picture), so only this window's thread opts in, per
++ * monitor. Looked up at run time: older Windows and Wine may lack them. */
++typedef HANDLE (WINAPI *set_thread_dpi_fn)(HANDLE);
++typedef UINT   (WINAPI *get_dpi_window_fn)(HWND);
++typedef BOOL   (WINAPI *adjust_rect_dpi_fn)(RECT *, DWORD, BOOL, DWORD, UINT);
++static get_dpi_window_fn  s_get_dpi_window;
++static adjust_rect_dpi_fn s_adjust_rect_dpi;
++#ifndef WM_DPICHANGED
++#define WM_DPICHANGED 0x02E0
++#endif
++
++#define FB_STYLE_WINDOWED (WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS)
++#define FB_STYLE_FULL     (WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS)
++
++/* Borderless fullscreen: a popup covering the monitor the window is on, not
++ * a display mode change, so Alt+Tab and other monitors keep working. The
++ * windowed placement is saved on the way in and restored on the way out. */
++static int             s_fullscreen;
++static WINDOWPLACEMENT s_windowed_place;
++
++static void fb_set_fullscreen(HWND h, int on)
++{
++    if (on == s_fullscreen)
++        return;
++    if (on) {
++        MONITORINFO mi;
++        mi.cbSize = sizeof(mi);
++        s_windowed_place.length = sizeof(s_windowed_place);
++        if (!GetWindowPlacement(h, &s_windowed_place) ||
++            !GetMonitorInfoA(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mi))
++            return;
++        SetWindowLongPtrA(h, GWL_STYLE, FB_STYLE_FULL | WS_VISIBLE);
++        SetWindowPos(h, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,
++                     mi.rcMonitor.right - mi.rcMonitor.left,
++                     mi.rcMonitor.bottom - mi.rcMonitor.top,
++                     SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
++    } else {
++        SetWindowLongPtrA(h, GWL_STYLE, FB_STYLE_WINDOWED | WS_VISIBLE);
++        SetWindowPlacement(h, &s_windowed_place);
++        SetWindowPos(h, NULL, 0, 0, 0, 0,
++                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
++                     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
++    }
++    s_fullscreen = on;
++    fprintf(stderr, "  [FBWIN] %s\n", on ? "fullscreen" : "windowed");
++}
++
++/* The largest rect of the frame's aspect that fits the client area, centred. */
++static void fb_fit_rect(const RECT *client, uint32_t fw, uint32_t fh, RECT *out)
++{
++    LONG cw = client->right - client->left, ch = client->bottom - client->top;
++    LONG w = cw, h = ch;
++
++    if (fw && fh) {
++        if ((int64_t)cw * fh > (int64_t)ch * fw)
++            w = (LONG)((int64_t)ch * fw / fh);    /* bars left and right */
++        else
++            h = (LONG)((int64_t)cw * fh / fw);    /* bars top and bottom */
++    }
++    out->left   = client->left + (cw - w) / 2;
++    out->top    = client->top + (ch - h) / 2;
++    out->right  = out->left + w;
++    out->bottom = out->top + h;
++}
++
++/* Put s_rgb on the window: aspect-fit, black bars. Bars are filled every time
++ * (four FillRects) rather than tracked across resizes. */
++static void fb_blit(HWND h, HDC hdc)
++{
++    RECT client, dst, bar;
++    BITMAPINFO bi;
++    HBRUSH black = (HBRUSH)GetStockObject(BLACK_BRUSH);
++
++    GetClientRect(h, &client);
++    if (!s_rgb || !s_rgb_w || !s_rgb_h) {
++        FillRect(hdc, &client, black);
++        return;
++    }
++    fb_fit_rect(&client, s_rgb_w, s_rgb_h, &dst);
++    bar = client; bar.right = dst.left;  FillRect(hdc, &bar, black);
++    bar = client; bar.left = dst.right;  FillRect(hdc, &bar, black);
++    bar = dst; bar.top = client.top;     bar.bottom = dst.top;  FillRect(hdc, &bar, black);
++    bar = dst; bar.top = dst.bottom;     bar.bottom = client.bottom; FillRect(hdc, &bar, black);
++
++    memset(&bi, 0, sizeof(bi));
++    bi.bmiHeader.biSize        = sizeof(bi.bmiHeader);
++    bi.bmiHeader.biWidth       = (LONG)s_rgb_w;
++    bi.bmiHeader.biHeight      = -(LONG)s_rgb_h;    /* top-down */
++    bi.bmiHeader.biPlanes      = 1;
++    bi.bmiHeader.biBitCount    = 32;
++    bi.bmiHeader.biCompression = BI_RGB;
++    /* HALFTONE averages when shrinking; COLORONCOLOR would drop rows. */
++    SetStretchBltMode(hdc, (dst.right - dst.left < (LONG)s_rgb_w) ? HALFTONE
++                                                                    : COLORONCOLOR);
++    SetBrushOrgEx(hdc, 0, 0, NULL);
++    StretchDIBits(hdc, dst.left, dst.top, dst.right - dst.left,
++                  dst.bottom - dst.top, 0, 0, (int)s_rgb_w, (int)s_rgb_h,
++                  s_rgb, &bi, DIB_RGB_COLORS, SRCCOPY);
++}
++
+ static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
+ {
+     switch (m) {
+@@ -188,8 +342,45 @@ static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
+         InterlockedExchange(&s_fb_running, 0);
+         return 0;
+ 
++    case WM_SIZE:
++        InterlockedExchange(&s_client_wh,
++                            (LONG)(((uint32_t)LOWORD(l) << 16) | HIWORD(l)));
++        return 0;
++
++    /* A GL renderer covers the whole client area each present; GDI erasing
++     * it first would only flash. The blit paints the bars itself. */
++    case WM_ERASEBKGND:
++        return 1;
++
++    case WM_PAINT: {
++        PAINTSTRUCT ps;
++        HDC dc = BeginPaint(h, &ps);
++        if (!s_gpu_present)
++            fb_blit(h, dc);
++        EndPaint(h, &ps);
++        return 0;
++    }
++
++    /* Moved to a monitor with another scale: take the size Windows suggests,
++     * so the window keeps its physical size. Not while fullscreen, where the
++     * rect is the monitor's and the suggestion would shrink it. */
++    case WM_DPICHANGED:
++        if (!s_fullscreen) {
++            const RECT *r = (const RECT *)l;
++            SetWindowPos(h, NULL, r->left, r->top, r->right - r->left,
++                         r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
++        }
++        return 0;
++
+     case WM_KEYDOWN:
+     case WM_SYSKEYDOWN:
++        /* Alt+Enter: fullscreen toggle, not Start. Bit 29 = Alt held,
++         * bit 30 = auto-repeat (holding the keys must not flicker). */
++        if (m == WM_SYSKEYDOWN && w == VK_RETURN && (l & (1 << 29))) {
++            if (!(l & (1 << 30)))
++                fb_set_fullscreen(h, !s_fullscreen);
++            return 0;
++        }
+         if ((unsigned)w < 256)
+             s_key_down[w] = 1;
+         /* RECOMP_KEY_TRACE: each key as it arrives, edge-triggered.
+@@ -210,6 +401,12 @@ static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
+         /* System keys still go to Windows, or Alt+F4 stops closing us. */
+         return m == WM_SYSKEYDOWN ? DefWindowProcA(h, m, w, l) : 0;
+ 
++    /* The character Alt+Enter makes; Windows would beep at it. */
++    case WM_SYSCHAR:
++        if (w == '\r')
++            return 0;
++        break;
++
+     case WM_KEYUP:
+     case WM_SYSKEYUP:
+         if ((unsigned)w < 256)
+@@ -224,6 +421,23 @@ static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
+     return DefWindowProcA(h, m, w, l);
+ }
+ 
++/* Make s_rgb hold w x h pixels (window thread only). */
++static int fb_rgb_size(uint32_t w, uint32_t h)
++{
++    size_t need = (size_t)w * h;
++
++    if (s_rgb_cap < need) {
++        uint32_t *p = (uint32_t *)realloc(s_rgb, need * 4);
++        if (!p)
++            return 0;
++        s_rgb = p;
++        s_rgb_cap = need;
++    }
++    s_rgb_w = w;
++    s_rgb_h = h;
++    return 1;
++}
++
+ /* The display formats an Xbox front buffer is actually set to. The pitch says
+  * how wide a row is in bytes, so pitch/width gives the pixel size; the exact
+  * component layout only matters for 16-bit, where 5:6:5 and 1:5:5:5 differ. */
+@@ -231,6 +445,8 @@ static void fb_convert(const uint8_t *src, uint32_t bpp)
+ {
+     uint32_t x, y;
+ 
++    if (!fb_rgb_size(s_fb_width, s_fb_height))
++        return;
+     for (y = 0; y < s_fb_height; y++) {
+         const uint8_t *row = src + (size_t)y * s_fb_pitch;
+         uint32_t *dst = s_rgb + (size_t)y * s_fb_width;
+@@ -260,11 +476,12 @@ static void fb_convert(const uint8_t *src, uint32_t bpp)
+ int xbox_FramebufferDumpBmp(const char *path)
+ {
+     FILE *f;
+-    uint32_t row = ((s_fb_width * 3u) + 3u) & ~3u;
+-    uint32_t img = row * s_fb_height, total = 54u + img, y, x;
++    uint32_t w = s_rgb_w, hgt = s_rgb_h;
++    uint32_t row = ((w * 3u) + 3u) & ~3u;
++    uint32_t img = row * hgt, total = 54u + img, y, x;
+     uint8_t hdr[54], *line;
+ 
+-    if (!s_rgb || !s_fb_va)
++    if (!s_rgb || !w || !hgt)
+         return -1;
+     f = fopen(path, "wb");
+     if (!f)
+@@ -273,16 +490,16 @@ int xbox_FramebufferDumpBmp(const char *path)
+     hdr[0] = 'B'; hdr[1] = 'M';
+     memcpy(hdr + 2, &total, 4);
+     hdr[10] = 54; hdr[14] = 40;
+-    memcpy(hdr + 18, &s_fb_width, 4);
+-    memcpy(hdr + 22, &s_fb_height, 4);
++    memcpy(hdr + 18, &w, 4);
++    memcpy(hdr + 22, &hgt, 4);
+     hdr[26] = 1; hdr[28] = 24;
+     memcpy(hdr + 34, &img, 4);
+     fwrite(hdr, 1, sizeof(hdr), f);
+ 
+     line = (uint8_t *)calloc(1, row);
+-    for (y = 0; y < s_fb_height; y++) {
+-        const uint32_t *src = s_rgb + (size_t)(s_fb_height - 1 - y) * s_fb_width;
+-        for (x = 0; x < s_fb_width; x++) {
++    for (y = 0; y < hgt; y++) {
++        const uint32_t *src = s_rgb + (size_t)(hgt - 1 - y) * w;
++        for (x = 0; x < w; x++) {
+             line[x * 3 + 0] = (uint8_t)(src[x] & 0xFF);
+             line[x * 3 + 1] = (uint8_t)((src[x] >> 8) & 0xFF);
+             line[x * 3 + 2] = (uint8_t)((src[x] >> 16) & 0xFF);
+@@ -292,7 +509,7 @@ int xbox_FramebufferDumpBmp(const char *path)
+     free(line);
+     fclose(f);
+     fprintf(stderr, "  [FBWIN] wrote %s (%ux%u from 0x%08X)\n",
+-            path, s_fb_width, s_fb_height, s_fb_va);
++            path, w, hgt, s_fb_va);
+     return 0;
+ }
+ 
+@@ -300,14 +517,31 @@ static DWORD WINAPI fb_thread(LPVOID unused)
+ {
+     HWND hwnd;
+     HDC hdc;
+-    BITMAPINFO bi;
+     RECT r;
++    UINT dpi = 96;
+ 
+     (void)unused;
+ 
++    {
++        HMODULE u32 = GetModuleHandleA("user32.dll");
++        set_thread_dpi_fn set_dpi = NULL;
++        if (u32) {
++            set_dpi = (set_thread_dpi_fn)(void *)GetProcAddress(
++                u32, "SetThreadDpiAwarenessContext");
++            s_get_dpi_window = (get_dpi_window_fn)(void *)GetProcAddress(
++                u32, "GetDpiForWindow");
++            s_adjust_rect_dpi = (adjust_rect_dpi_fn)(void *)GetProcAddress(
++                u32, "AdjustWindowRectExForDpi");
++        }
++        /* DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 */
++        if (set_dpi)
++            set_dpi((HANDLE)(INT_PTR)-4);
++    }
+     {
+         WNDCLASSA wc;
+         memset(&wc, 0, sizeof(wc));
++        /* CS_OWNDC: a GL context made on this window's DC stays valid. */
++        wc.style         = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
+         wc.lpfnWndProc   = fb_wndproc;
+         wc.hInstance     = GetModuleHandleA(NULL);
+         wc.hCursor       = LoadCursorA(NULL, IDC_ARROW);
+@@ -315,9 +549,9 @@ static DWORD WINAPI fb_thread(LPVOID unused)
+         RegisterClassA(&wc);
+     }
+     r.left = 0; r.top = 0; r.right = (LONG)s_fb_width; r.bottom = (LONG)s_fb_height;
+-    AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
++    AdjustWindowRect(&r, FB_STYLE_WINDOWED, FALSE);
+     hwnd = CreateWindowExA(0, "XboxRecompFramebuffer", "Xbox Recomp - Framebuffer",
+-                           WS_OVERLAPPEDWINDOW | WS_VISIBLE,
++                           FB_STYLE_WINDOWED,
+                            CW_USEDEFAULT, CW_USEDEFAULT,
+                            r.right - r.left, r.bottom - r.top,
+                            NULL, NULL, GetModuleHandleA(NULL), NULL);
+@@ -325,20 +559,28 @@ static DWORD WINAPI fb_thread(LPVOID unused)
+         InterlockedExchange(&s_fb_running, 0);
+         return 0;
+     }
++    /* Same physical size as 640x480 at 100%, on a scaled monitor too. */
++    if (s_get_dpi_window)
++        dpi = s_get_dpi_window(hwnd);
++    if (dpi != 96 && dpi && s_adjust_rect_dpi) {
++        r.left = 0; r.top = 0;
++        r.right = MulDiv((int)s_fb_width, (int)dpi, 96);
++        r.bottom = MulDiv((int)s_fb_height, (int)dpi, 96);
++        s_adjust_rect_dpi(&r, FB_STYLE_WINDOWED, FALSE, 0, dpi);
++        SetWindowPos(hwnd, NULL, 0, 0, r.right - r.left, r.bottom - r.top,
++                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
++    }
++    {
++        const char *fs = getenv("RECOMP_FB_FULLSCREEN");
++        ShowWindow(hwnd, SW_SHOW);
++        if (fs && *fs && *fs != '0')
++            fb_set_fullscreen(hwnd, 1);
++    }
+     hdc = GetDC(hwnd);
++    s_hwnd = hwnd;
+ 
+-    memset(&bi, 0, sizeof(bi));
+-    bi.bmiHeader.biSize        = sizeof(bi.bmiHeader);
+-    bi.bmiHeader.biWidth       = (LONG)s_fb_width;
+-    bi.bmiHeader.biHeight      = -(LONG)s_fb_height;   /* top-down */
+-    bi.bmiHeader.biPlanes      = 1;
+-    bi.bmiHeader.biBitCount    = 32;
+-    bi.bmiHeader.biCompression = BI_RGB;
+-
+-    s_rgb = (uint32_t *)calloc((size_t)s_fb_width * s_fb_height, 4);
+-
+-    fprintf(stderr, "  [FBWIN] framebuffer window open (%ux%u)\n",
+-            s_fb_width, s_fb_height);
++    fprintf(stderr, "  [FBWIN] framebuffer window open (%ux%u, dpi %u)\n",
++            s_fb_width, s_fb_height, dpi);
+ 
+     while (InterlockedCompareExchange(&s_fb_running, 1, 1)) {
+         MSG msg;
+@@ -346,26 +588,22 @@ static DWORD WINAPI fb_thread(LPVOID unused)
+             TranslateMessage(&msg);
+             DispatchMessageA(&msg);
+         }
+-        if (s_present_idx >= 0 && s_rgb) {
++        if (s_present_idx >= 0) {
+             /* A finished frame, published by the flip. Copied into s_rgb so
+              * the dump path and GDI see one consistent image even if the
+              * next flip lands mid-blit. */
+-            LONG idx = s_present_idx;
+-            if (s_present[idx])
+-                memcpy(s_rgb, s_present[idx],
+-                       (size_t)s_fb_width * s_fb_height * 4);
+-            StretchDIBits(hdc, 0, 0, (int)s_fb_width, (int)s_fb_height,
+-                          0, 0, (int)s_fb_width, (int)s_fb_height,
+-                          s_rgb, &bi, DIB_RGB_COLORS, SRCCOPY);
+-        } else if (s_fb_va && s_fb_pitch && s_rgb) {
++            const fb_frame *f = &s_present[s_present_idx];
++            if (f->px && fb_rgb_size(f->w, f->h))
++                memcpy(s_rgb, f->px, (size_t)f->w * f->h * 4);
++            if (!s_gpu_present)
++                fb_blit(hwnd, hdc);
++        } else if (s_fb_va && s_fb_pitch && !s_gpu_present) {
+             /* No flip yet, or pinned with RECOMP_FB_VA: read guest memory as
+              * before, which is also what a title that never flips needs. */
+             const uint8_t *src =
+                 (const uint8_t *)((uintptr_t)s_fb_va + xbox_GetMemoryOffset());
+             fb_convert(src, s_fb_pitch / s_fb_width);
+-            StretchDIBits(hdc, 0, 0, (int)s_fb_width, (int)s_fb_height,
+-                          0, 0, (int)s_fb_width, (int)s_fb_height,
+-                          s_rgb, &bi, DIB_RGB_COLORS, SRCCOPY);
++            fb_blit(hwnd, hdc);
+         }
+         {
+             /* One dump a few seconds in, so the title has had time to render
+@@ -408,10 +646,13 @@ static DWORD WINAPI fb_thread(LPVOID unused)
+         Sleep(16);
+     }
+ 
++    s_hwnd = NULL;
+     ReleaseDC(hwnd, hdc);
+     DestroyWindow(hwnd);
+     free(s_rgb);
+     s_rgb = NULL;
++    s_rgb_cap = 0;
++    s_rgb_w = s_rgb_h = 0;
+     return 0;
+ }
+ 
+@@ -438,4 +679,7 @@ void xbox_FramebufferWindowStart(void) {}
+ int xbox_FramebufferKeyDown(int vk) { (void)vk; return 0; }
+ void xbox_FramebufferWindowSetTitle(const uint16_t *n, int m) { (void)n; (void)m; }
+ void xbox_FramebufferWindowFrameStats(uint32_t draws) { (void)draws; }
++void *xbox_FramebufferWindowHwnd(void) { return 0; }
++void xbox_FramebufferWindowGpuPresent(int on) { (void)on; }
++int xbox_FramebufferWindowClientSize(uint32_t *w, uint32_t *h) { if (w) *w = 0; if (h) *h = 0; return 0; }
+ #endif
+diff --git a/src/video/video_player.h b/src/video/video_player.h
+index 6114755..baf6b64 100644
+--- a/src/video/video_player.h
++++ b/src/video/video_player.h
+@@ -65,10 +65,21 @@ int xbox_FramebufferKeyDown(int vk);
+ 
+ void xbox_FramebufferWindowStart(void);
+ void xbox_FramebufferWindowSet(uint32_t fb_va, uint32_t pitch);
+-/* Show a frame an external renderer produced (0x00RRGGBB rows, top-down)
+- * instead of reading guest memory; for titles drawing through a method hook. */
++/* Show a frame an external renderer produced (0x00RRGGBB rows, top-down, any
++ * size: it is scaled to fit the window with black bars) instead of reading
++ * guest memory; for titles drawing through a method hook. */
+ void xbox_FramebufferWindowPresentPixels(const uint32_t *xrgb, uint32_t width,
+                                          uint32_t height);
++/* For a renderer that draws into the window itself (a GL context on its DC).
++ * The HWND is NULL until the window exists. Its thread owns it: never
++ * SendMessage to it from a thread holding locks the title waits on.
++ * GpuPresent(1) stops the window's own GDI blit so the two don't fight.
++ * ClientSize is the client area in physical pixels as of the last WM_SIZE
++ * (the window is per-monitor DPI aware; the rest of the process is not, so
++ * GetClientRect from another thread may answer in scaled units); 0 = none. */
++void *xbox_FramebufferWindowHwnd(void);
++void xbox_FramebufferWindowGpuPresent(int on);
++int  xbox_FramebufferWindowClientSize(uint32_t *width, uint32_t *height);
+ int  xbox_FramebufferDumpBmp(const char *path);
+ /* Title bar: "<XBE title> | FPS: n | draws: n". The name is the certificate's
+  * UTF-16 title (40 chars max); the stats come from each flip. */
+-- 
+2.53.0.windows.2
+

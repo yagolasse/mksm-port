@@ -1,5 +1,9 @@
 [
   {
+    "start": "0x0001D960",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x00020A40",
     "note": "after int3 padding in .text, outside any detected function"
   },
@@ -8,8 +12,24 @@
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x00036740",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00037750",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00037760",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x0003AFB0",
     "note": "after int3 padding in .text, outside any detected function"
+  },
+  {
+    "start": "0x0003B0A0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
   },
   {
     "start": "0x0003BE50",
@@ -44,8 +64,16 @@
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x000512C0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x00051B80",
     "note": "after int3 padding in .text, outside any detected function"
+  },
+  {
+    "start": "0x0006AC30",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
   },
   {
     "start": "0x0006B0E0",
@@ -54,6 +82,10 @@
   {
     "start": "0x00070440",
     "note": "after int3 padding in .text, outside any detected function"
+  },
+  {
+    "start": "0x000721B0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
   },
   {
     "start": "0x00073410",
@@ -76,12 +108,28 @@
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x0007F7C0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x0007FB40",
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x0007FDF0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x0007FE20",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x000817C0",
     "note": "after int3 padding in .text, outside any detected function"
+  },
+  {
+    "start": "0x000843B0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
   },
   {
     "start": "0x00085B40",
@@ -96,8 +144,16 @@
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x00089740",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x0008C250",
     "note": "after int3 padding in .text, outside any detected function"
+  },
+  {
+    "start": "0x0008C5D0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
   },
   {
     "start": "0x000901F0",
@@ -116,6 +172,10 @@
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x0009B8E0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x000A2F30",
     "note": "after int3 padding in .text, outside any detected function"
   },
@@ -128,8 +188,20 @@
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x000A6960",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x000A72F0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x000B2AE0",
     "note": "after int3 padding in .text, outside any detected function"
+  },
+  {
+    "start": "0x000B2E50",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
   },
   {
     "start": "0x000B9500",
@@ -142,6 +214,26 @@
   {
     "start": "0x000B9670",
     "note": "after int3 padding in .text, outside any detected function"
+  },
+  {
+    "start": "0x000BA410",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x000BEC20",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x000C2E30",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x000C7BB0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x000C7DF0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
   },
   {
     "start": "0x000CB2E0",
@@ -160,8 +252,104 @@
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x000D48B0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x000D7C00",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x000DD930",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x000E0F80",
     "note": "after int3 padding in .text, outside any detected function"
+  },
+  {
+    "start": "0x00102010",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00114830",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00114C90",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00115050",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00115060",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00117BF0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00117C00",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00117C10",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00117EF0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00117F20",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00117F50",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00117F60",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x001181E0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x001182D0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x001182E0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x001182F0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00118FA0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x0011B950",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x0011BBE0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x0011E0B0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x0011E0E0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
   },
   {
     "start": "0x00125420",
@@ -172,6 +360,122 @@
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x001276C0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00129790",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x001297A0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x001297B0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x001297C0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x001297D0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x001297E0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x001297F0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00129800",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00129810",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00129820",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00129830",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00129840",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x0012A550",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x0012BF00",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x0012DEE0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x0012F770",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00130150",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x0013AAD0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x0013B420",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x0013D6C0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x0013DF10",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x0013E180",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x001404A0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00141BE0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x001420B0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00149640",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00152390",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00159A10",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x00161070",
     "note": "after int3 padding in .text, outside any detected function"
   },
@@ -180,16 +484,36 @@
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x00176230",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x001998B0",
     "note": "after int3 padding in .text, outside any detected function"
+  },
+  {
+    "start": "0x001A8120",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
   },
   {
     "start": "0x001A9F10",
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x001AC090",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x001AEC00",
     "note": "after int3 padding in .text, outside any detected function"
+  },
+  {
+    "start": "0x001B3B10",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x001B6850",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
   },
   {
     "start": "0x001B9B30",
@@ -204,6 +528,10 @@
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x001CB570",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x001CE280",
     "note": "after int3 padding in .text, outside any detected function"
   },
@@ -212,12 +540,24 @@
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x001D9440",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x001DA300",
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
     "start": "0x001EB730",
     "note": "after int3 padding in .text, outside any detected function"
+  },
+  {
+    "start": "0x001EBCF0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x001EFE50",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
   },
   {
     "start": "0x001EFFA0",
@@ -232,6 +572,22 @@
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x0024F110",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x002B3710",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x002B4930",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x002B91A0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x002C4600",
     "note": "after int3 padding in .text, outside any detected function"
   },
@@ -240,8 +596,32 @@
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x002CFC10",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x002CFC30",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x002CFC50",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x002CFC90",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x002DEFD0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x002DFF00",
     "note": "after int3 padding in .text, outside any detected function"
+  },
+  {
+    "start": "0x002ED450",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
   },
   {
     "start": "0x002F2410",
@@ -260,12 +640,80 @@
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
+    "start": "0x002FD510",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00306270",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x0030A840",
     "note": "after int3 padding in .text, outside any detected function"
   },
   {
     "start": "0x0030E2B0",
     "note": "after int3 padding in .text, outside any detected function"
+  },
+  {
+    "start": "0x00311DB0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00327390",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x003C45F0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x003C4970",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x003C4980",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x003C4990",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x003C49A0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x003C49B0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x003C49C0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x003C49D0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x003C49E0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x003C4A50",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x003C4BC0",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x003C4D80",
+    "note": "after int3 padding in .text, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x003C93C0",
+    "note": "after int3 padding in D3D, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
   },
   {
     "start": "0x003CA170",
@@ -284,7 +732,27 @@
     "note": "after int3 padding in D3D, outside any detected function"
   },
   {
+    "start": "0x003E2200",
+    "note": "after int3 padding in D3D, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x003F94A0",
+    "note": "after int3 padding in XGRPH, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00411720",
+    "note": "after int3 padding in DSOUND, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
+    "start": "0x00453380",
+    "note": "after int3 padding in D3DX, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
+  },
+  {
     "start": "0x0045A850",
     "note": "after int3 padding in PSFD00, outside any detected function"
+  },
+  {
+    "start": "0x0046E700",
+    "note": "after int3 padding in WMADEC, outside any detected function (found after the toolkit v0.14 re-lift, H.5b1)"
   }
 ]

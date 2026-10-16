@@ -68,5 +68,10 @@
   "start": "0x001C6ED0",
   "observed": true,
   "note": "Indirect-call target observed at runtime; decodes as a function body."
+ },
+ {
+  "start": "0x000EF6A0",
+  "observed": true,
+  "note": "Indirect-call target observed at runtime (H.5b1, ../logs/smoke_20261016_122637_boot.log: Failed to resolve VA after the toolkit v0.14 disasm dropped it); a small x87 helper, pointed to from a .data table."
  }
 ]

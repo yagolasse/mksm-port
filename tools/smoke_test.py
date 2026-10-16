@@ -187,7 +187,8 @@ def run(cp, exe, game_dir, log, extra_env=None, secs=None, audio=False):
     env.setdefault("RECOMP_TITLE_KEVENTS_SKIP", "")
     # DirectSound's EP-alive word (plan 2.7a6); RECOMP_APU_EP_ALIVE= (empty) = the old resets, for A/B.
     env.setdefault("RECOMP_APU_EP_ALIVE", "0xFE85A018")
-    # The DMA-engine ring walk (toolkit v0.14+, plan H.5a); RECOMP_PB_WALK= = the segment scan.
+    # The DMA-engine ring walk (toolkit v0.14+, plan H.5a). RECOMP_PB_WALK= (the segment scan)
+    # with RECOMP_WBC_ACK on hangs the GPU path at boot, 0 flips (plan H.5b1).
     env.setdefault("RECOMP_PB_WALK", "dma")
     # 85 ms of device buffers, as the run scripts (plan H.5a: 43 ms underran).
     env.setdefault("RECOMP_AUDIO_BUF_COUNT", "8")

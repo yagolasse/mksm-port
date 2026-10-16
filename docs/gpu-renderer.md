@@ -384,11 +384,12 @@ and the `JUMP` (a few hundred bytes to ~1.5 KB, the tail of a frame, every wrap)
 at the ring start were never executed. The software rasterizer shrugged that off; xemu sees a draw
 whose `END` never came, or a stage program change without its texture setup, and asserts. Patch
 0011 (before toolkit v0.14) walked the ring the way the GPU does: from GET (the old PUT) through any `JUMP` up to the new
-PUT (`nv2a_pb_scan_ring`). A walk that never meets PUT is logged (`[PB] ring walk ... never reached
-PUT`); `RECOMP_PB_WRAP_TRACE=1` logs the first wraps with the JUMP address and how many bytes the
-old bounds would have skipped. After it: 10 of 10 short GPU boots with 0 asserts and 0 masked
-stages. The texture-stage guard stays as a safety net. The walk also stops (and logs `[PB] walk left
-the contiguous window`) if a JUMP or CALL leads outside the contiguous window, instead of faulting.
+PUT (`nv2a_pb_scan_ring`). It logged a walk that never met PUT (`[PB] ring walk ... never reached
+PUT`), and `RECOMP_PB_WRAP_TRACE=1` logged the first wraps with the JUMP address and how many bytes
+the old bounds would have skipped (both gone with the patch). After it: 10 of 10 short GPU boots
+with 0 asserts and 0 masked stages. The texture-stage guard stays as a safety net. The walk also
+stopped (`[PB] walk left the contiguous window`) if a JUMP or CALL led outside the contiguous
+window, instead of faulting; upstream's walk does the same and logs `[PB] bad target ... resync`.
 Since toolkit v0.14 (plan H.5a) this is upstream's DMA-engine walk instead (`RECOMP_PB_WALK=dma`, a run
 script / smoke default): it keeps its own GET, follows JUMP and CALL/RETURN, publishes DMA_GET before
 every command and finishes a method that PUT cut off on the next kick. Our patches for the old walk

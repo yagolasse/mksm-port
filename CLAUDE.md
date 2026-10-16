@@ -32,14 +32,18 @@ statically recompiling the retail `default.xbe` to C with
   (RAMHT lookup, acks the NOP-notify and flip-stall waits, presents the last-drawn surface at the
   flip and paces flips to 59.94 Hz); `mksm_gpu.h` = the plain-C interface for
   cl-built code. Licenses: `LICENSE` (GPL-3.0, the combined work), `LICENSES/`, `NOTICE` (file → license)
-- `external/xboxrecomp/`: toolkit git submodule (pinned). Prefer fixing things in our `src/` first;
-  toolkit changes should go upstream or into a fork
+- `external/xboxrecomp/`: toolkit git submodule (pinned), from our fork
+  https://github.com/yagolasse/xboxrecomp (remote `origin`); add sp00nznet's repo as remote
+  `upstream` after cloning (`git remote add upstream https://github.com/sp00nznet/xboxrecomp.git`):
+  rebases and `tools/regen_patches.sh` use `upstream/main`. Prefer fixing things in our `src/`
+  first; toolkit changes stay in the fork and go upstream once the port is done
 - `tools/run.sh`, `tools/run.bat`: run the exe with the needed env defaults, log to `../logs/`
 - `tools/smoke_test.py`: boot smoke test (also CTest `smoke`), see Testing
 - `tools/xiso.py`: list/extract files from an Xbox disc image
 - `tools/padding_seeds.py`: finds undetected functions after int3 padding (writes `seeds/padding.json`)
+- `tools/seh_seeds.py`: the filter/handler blocks of the XBE's SEH scope tables (writes `seeds/seh.json`)
 - `tools/wavscan.py`: scans a `RECOMP_AUDIO_WAV` recording (older logs: `RECOMP_APU_WAV`) for noise bursts, clicks, repeated/dropped blocks, clipping; `--excerpt START,DUR out.wav` cuts a clip
-- `tools/voicedump.py`: reads a `RECOMP_APU_VOICE_DUMP` (per-voice source samples): summary, stale-ring repeats, one voice as WAV
+- `tools/voicedump.py`: reads a `RECOMP_APU_VOICE_DUMP` (per-voice samples): summary, stale-ring repeats, one voice as WAV. Two formats: our old record dump (with buffer offsets), and toolkit v0.14's raw s16 stereo 48 kHz files (`.raw`, one per voice, `=all` writes `<file>.<voice>.raw`): level, zero-crossing rate, exact copies of earlier output
 - `tools/profsum.py`: summarizes `RECOMP_PROF` run logs: per-thread CPU % + top functions, level fps per `[XGPU]` interval, medians over several logs (A/B runs)
 - `tools/stub_audit.py`: sorts `gen/recomp_stubs_unresolved.c` into real code vs. decoded data (writes `seeds/stubs.json`)
 - `docs/`: generic notes on how the port works (`gpu-renderer.md`: design of the GPU renderer, a port of xemu's PGRAPH + OpenGL backend)
@@ -56,7 +60,8 @@ statically recompiling the retail `default.xbe` to C with
 python -m tools.xbe_parser ../../../game_files/default.xbe --json ../../../game_files/default_analysis.json
 python -m tools.disasm ../../../game_files/default.xbe -v --seed-functions ../../seeds/observed.json \
     --seed-functions ../../seeds/padding.json --seed-functions ../../seeds/manual.json \
-    --seed-functions ../../seeds/stubs.json  # all code sections
+    --seed-functions ../../seeds/stubs.json --seed-functions ../../seeds/seh.json \
+    --seed-functions ../../seeds/indirect.json  # all code sections
 python -m tools.func_id ../../../game_files/default.xbe -v
 python -m tools.abi_analysis ../../../game_files/default.xbe -v
 bash ../../tools/ghidra/run_ghidra.sh   # our wrapper (Java export; Ghidra 12 has no Jython), ~20+ min
@@ -73,7 +78,19 @@ python -m tools.recomp ../../../game_files/default.xbe --all --split 250 --gen-d
   then re-run disasm and everything after it. `padding.json` is from `tools/padding_seeds.py`
   (functions after int3 padding that nothing calls; regenerate only from an unseeded disasm).
   `manual.json`: hand-found entries, each with a note saying why (e.g. a jump target after zero
-  padding). A call or jump to an undetected address lifts to a silent no-op stub in
+  padding). `seh.json` is from `tools/seh_seeds.py` (the filter/handler blocks of MSVC SEH scope
+  tables: only the CRT's exception handler and `RtlUnwind` reach them, through the table, so the
+  stub audit can't see them missing; toolkit v0.14's disasm dropped 41 of the 146). It depends
+  on the XBE only, so regenerate it from any disasm. Since v0.14 a seed inside a detected
+  function becomes an alias entry and doesn't split that function.
+  `indirect.json` is from `tools/indirect_seeds.py`: every incremental-link thunk target (the
+  runtime follows a thunk, but its target must be lifted; v0.14's disasm dropped 27, e.g.
+  `0x00036740`, `0x0006AC30`); XBE-only, regenerate any time. Don't seed an address just because
+  a data word equals it or an older lift had an entry there: small data values look like
+  pointers, and a seed in the middle of a function cuts it, so a loop over the cut recurses
+  until the host stack overflows (`0xC00000FD` at boot, plan H.5b1). Those go through the crash
+  loop (`observed.json`). After a toolkit update, compare the new lift's dispatch table with the
+  old one: entries it drops that nothing calls directly don't show up in the stub audit. A call or jump to an undetected address lifts to a silent no-op stub in
   `gen/recomp_stubs_unresolved.c` (`/* not detected */`); a `jmp`/`jcc` to one makes the jumping
   function return early. After each lift run `tools/stub_audit.py`: its `entry`/`split` rows are
   real code and go to `stubs.json`. `--seeds` overwrites the file with the current rows only, so
@@ -227,7 +244,8 @@ thread doing it after each executed segment, so the title runs ahead of the exec
 on the GPU path** (`=0` turns it off for A/B runs, `=1` forces it); it relies on the fence mirror,
 software method 5 (patch 0010) and a DMA_GET that moves during the ring walk: upstream's DMA-engine
 walk, `RECOMP_PB_WALK=dma` (a run script / smoke default since toolkit v0.14, plan H.5a; the toolkit's
-default segment scan loses the tail of each ring lap). On the software
+default segment scan loses the tail of each ring lap; with `RECOMP_PB_WALK=` (the segment scan)
+and the ack on, the GPU path hangs at boot with 0 flips, plan H.5b1). On the software
 executor it hangs (no fence mirror / software methods there), so it stays off there.
 `RECOMP_PB_EXEC=1` (set by the run scripts) is required: D3D init waits on GPU semaphore releases,
 which only the pushbuffer executor performs.

@@ -1,0 +1,586 @@
+[
+  {
+    "start": "0x000EB368",
+    "note": "SEH scope-table filter/handler (table 0x004A6FD8)"
+  },
+  {
+    "start": "0x000EB36C",
+    "note": "SEH scope-table filter/handler (table 0x004A6FD8)"
+  },
+  {
+    "start": "0x000EB504",
+    "note": "SEH scope-table filter/handler (table 0x004A6FE8)"
+  },
+  {
+    "start": "0x000EB9E4",
+    "note": "SEH scope-table filter/handler (table 0x004A7038)"
+  },
+  {
+    "start": "0x000EBA3D",
+    "note": "SEH scope-table filter/handler (table 0x004A7048)"
+  },
+  {
+    "start": "0x000EBA61",
+    "note": "SEH scope-table filter/handler (table 0x004A7048)"
+  },
+  {
+    "start": "0x000EBAB4",
+    "note": "SEH scope-table filter/handler (table 0x004A7058)"
+  },
+  {
+    "start": "0x000EC5EF",
+    "note": "SEH scope-table filter/handler (table 0x004A7080)"
+  },
+  {
+    "start": "0x000EC5F8",
+    "note": "SEH scope-table filter/handler (table 0x004A7080)"
+  },
+  {
+    "start": "0x000EC629",
+    "note": "SEH scope-table filter/handler (table 0x004A7080)"
+  },
+  {
+    "start": "0x000EC6A4",
+    "note": "SEH scope-table filter/handler (table 0x004A7080)"
+  },
+  {
+    "start": "0x000EC6AD",
+    "note": "SEH scope-table filter/handler (table 0x004A7080)"
+  },
+  {
+    "start": "0x000EC84F",
+    "note": "SEH scope-table filter/handler (table 0x004A70A8)"
+  },
+  {
+    "start": "0x000EC858",
+    "note": "SEH scope-table filter/handler (table 0x004A70A8)"
+  },
+  {
+    "start": "0x000EC886",
+    "note": "SEH scope-table filter/handler (table 0x004A70B8)"
+  },
+  {
+    "start": "0x000EC88F",
+    "note": "SEH scope-table filter/handler (table 0x004A70B8)"
+  },
+  {
+    "start": "0x000EC921",
+    "note": "SEH scope-table filter/handler (table 0x004A70C8)"
+  },
+  {
+    "start": "0x000EC964",
+    "note": "SEH scope-table filter/handler (table 0x004A70C8)"
+  },
+  {
+    "start": "0x000EC9D9",
+    "note": "SEH scope-table filter/handler (table 0x004A70C8)"
+  },
+  {
+    "start": "0x000ECBB3",
+    "note": "SEH scope-table filter/handler (table 0x004A70C8)"
+  },
+  {
+    "start": "0x000ECBB7",
+    "note": "SEH scope-table filter/handler (table 0x004A70C8)"
+  },
+  {
+    "start": "0x000ED1E6",
+    "note": "SEH scope-table filter/handler (table 0x004A70F0)"
+  },
+  {
+    "start": "0x000ED2E5",
+    "note": "SEH scope-table filter/handler (table 0x004A7100)"
+  },
+  {
+    "start": "0x000ED2E9",
+    "note": "SEH scope-table filter/handler (table 0x004A7100)"
+  },
+  {
+    "start": "0x000ED331",
+    "note": "SEH scope-table filter/handler (table 0x004A7110)"
+  },
+  {
+    "start": "0x000ED335",
+    "note": "SEH scope-table filter/handler (table 0x004A7110)"
+  },
+  {
+    "start": "0x000EDE21",
+    "note": "SEH scope-table filter/handler (table 0x004A7198)"
+  },
+  {
+    "start": "0x000EDE90",
+    "note": "SEH scope-table filter/handler (table 0x004A7360)"
+  },
+  {
+    "start": "0x000EDE94",
+    "note": "SEH scope-table filter/handler (table 0x004A7360)"
+  },
+  {
+    "start": "0x000EE1C2",
+    "note": "SEH scope-table filter/handler (table 0x004A7370)"
+  },
+  {
+    "start": "0x000EE26F",
+    "note": "SEH scope-table filter/handler (table 0x004A7380)"
+  },
+  {
+    "start": "0x000EE30A",
+    "note": "SEH scope-table filter/handler (table 0x004A7390)"
+  },
+  {
+    "start": "0x000EE4F9",
+    "note": "SEH scope-table filter/handler (table 0x004A73A0)"
+  },
+  {
+    "start": "0x000EE649",
+    "note": "SEH scope-table filter/handler (table 0x004A73B0)"
+  },
+  {
+    "start": "0x000EFE16",
+    "note": "SEH scope-table filter/handler (table 0x004A74B8)"
+  },
+  {
+    "start": "0x000EFE1A",
+    "note": "SEH scope-table filter/handler (table 0x004A74B8)"
+  },
+  {
+    "start": "0x000F1461",
+    "note": "SEH scope-table filter/handler (table 0x004A7A10)"
+  },
+  {
+    "start": "0x000F1769",
+    "note": "SEH scope-table filter/handler (table 0x004A7A20)"
+  },
+  {
+    "start": "0x000F19AC",
+    "note": "SEH scope-table filter/handler (table 0x004A7A30)"
+  },
+  {
+    "start": "0x000F1A8B",
+    "note": "SEH scope-table filter/handler (table 0x004A7A40)"
+  },
+  {
+    "start": "0x000F1A9F",
+    "note": "SEH scope-table filter/handler (table 0x004A7A40)"
+  },
+  {
+    "start": "0x000F1C2F",
+    "note": "SEH scope-table filter/handler (table 0x004A7A50)"
+  },
+  {
+    "start": "0x000F1EED",
+    "note": "SEH scope-table filter/handler (table 0x004A7A60)"
+  },
+  {
+    "start": "0x000F2568",
+    "note": "SEH scope-table filter/handler (table 0x004A7DE0)"
+  },
+  {
+    "start": "0x000F312A",
+    "note": "SEH scope-table filter/handler (table 0x004A7E10)"
+  },
+  {
+    "start": "0x000F3138",
+    "note": "SEH scope-table filter/handler (table 0x004A7E10)"
+  },
+  {
+    "start": "0x000F32BB",
+    "note": "SEH scope-table filter/handler (table 0x004A7E20)"
+  },
+  {
+    "start": "0x000F33BC",
+    "note": "SEH scope-table filter/handler (table 0x004A7E30)"
+  },
+  {
+    "start": "0x000F345C",
+    "note": "SEH scope-table filter/handler (table 0x004A7E30)"
+  },
+  {
+    "start": "0x000F34F2",
+    "note": "SEH scope-table filter/handler (table 0x004A7E30)"
+  },
+  {
+    "start": "0x000F3613",
+    "note": "SEH scope-table filter/handler (table 0x004A7E58)"
+  },
+  {
+    "start": "0x000F36B7",
+    "note": "SEH scope-table filter/handler (table 0x004A7E68)"
+  },
+  {
+    "start": "0x000F37E6",
+    "note": "SEH scope-table filter/handler (table 0x004A7E78)"
+  },
+  {
+    "start": "0x000F3817",
+    "note": "SEH scope-table filter/handler (table 0x004A7E78)"
+  },
+  {
+    "start": "0x000F3866",
+    "note": "SEH scope-table filter/handler (table 0x004A7E78)"
+  },
+  {
+    "start": "0x000F3AD4",
+    "note": "SEH scope-table filter/handler (table 0x004A7EA0)"
+  },
+  {
+    "start": "0x000F3E25",
+    "note": "SEH scope-table filter/handler (table 0x004A7EB0)"
+  },
+  {
+    "start": "0x000F3ECB",
+    "note": "SEH scope-table filter/handler (table 0x004A7EC0)"
+  },
+  {
+    "start": "0x000F3FDF",
+    "note": "SEH scope-table filter/handler (table 0x004A7ED0)"
+  },
+  {
+    "start": "0x000F4724",
+    "note": "SEH scope-table filter/handler (table 0x004A7EE0)"
+  },
+  {
+    "start": "0x000F472D",
+    "note": "SEH scope-table filter/handler (table 0x004A7EE0)"
+  },
+  {
+    "start": "0x000F5284",
+    "note": "SEH scope-table filter/handler (table 0x004A7F08)"
+  },
+  {
+    "start": "0x000F5292",
+    "note": "SEH scope-table filter/handler (table 0x004A7F08)"
+  },
+  {
+    "start": "0x000F52B3",
+    "note": "SEH scope-table filter/handler (table 0x004A7F08)"
+  },
+  {
+    "start": "0x000F64A9",
+    "note": "SEH scope-table filter/handler (table 0x004A7F08)"
+  },
+  {
+    "start": "0x000F64B7",
+    "note": "SEH scope-table filter/handler (table 0x004A7F08)"
+  },
+  {
+    "start": "0x000F6FEB",
+    "note": "SEH scope-table filter/handler (table 0x004A7F30)"
+  },
+  {
+    "start": "0x000F7822",
+    "note": "SEH scope-table filter/handler (table 0x004A7F40)"
+  },
+  {
+    "start": "0x000F7836",
+    "note": "SEH scope-table filter/handler (table 0x004A7F40)"
+  },
+  {
+    "start": "0x000F786B",
+    "note": "SEH scope-table filter/handler (table 0x004A7F40)"
+  },
+  {
+    "start": "0x000F7A5F",
+    "note": "SEH scope-table filter/handler (table 0x004A7F40)"
+  },
+  {
+    "start": "0x000F7BFC",
+    "note": "SEH scope-table filter/handler (table 0x004A7F68)"
+  },
+  {
+    "start": "0x000F7C00",
+    "note": "SEH scope-table filter/handler (table 0x004A7F68)"
+  },
+  {
+    "start": "0x000F7C22",
+    "note": "SEH scope-table filter/handler (table 0x004A7F68)"
+  },
+  {
+    "start": "0x000F819A",
+    "note": "SEH scope-table filter/handler (table 0x004A7F68)"
+  },
+  {
+    "start": "0x000F819E",
+    "note": "SEH scope-table filter/handler (table 0x004A7F68)"
+  },
+  {
+    "start": "0x000F82B4",
+    "note": "SEH scope-table filter/handler (table 0x004A7F68)"
+  },
+  {
+    "start": "0x000F82C8",
+    "note": "SEH scope-table filter/handler (table 0x004A7F68)"
+  },
+  {
+    "start": "0x000F8350",
+    "note": "SEH scope-table filter/handler (table 0x004A7F68)"
+  },
+  {
+    "start": "0x000F83BB",
+    "note": "SEH scope-table filter/handler (table 0x004A7FA8)"
+  },
+  {
+    "start": "0x000F83BF",
+    "note": "SEH scope-table filter/handler (table 0x004A7FA8)"
+  },
+  {
+    "start": "0x000F8424",
+    "note": "SEH scope-table filter/handler (table 0x004A7FB8)"
+  },
+  {
+    "start": "0x000F8428",
+    "note": "SEH scope-table filter/handler (table 0x004A7FB8)"
+  },
+  {
+    "start": "0x000F848F",
+    "note": "SEH scope-table filter/handler (table 0x004A7FC8)"
+  },
+  {
+    "start": "0x000F8493",
+    "note": "SEH scope-table filter/handler (table 0x004A7FC8)"
+  },
+  {
+    "start": "0x000F84E6",
+    "note": "SEH scope-table filter/handler (table 0x004A7FD8)"
+  },
+  {
+    "start": "0x000F84EA",
+    "note": "SEH scope-table filter/handler (table 0x004A7FD8)"
+  },
+  {
+    "start": "0x000FA277",
+    "note": "SEH scope-table filter/handler (table 0x004A81A0)"
+  },
+  {
+    "start": "0x000FA27B",
+    "note": "SEH scope-table filter/handler (table 0x004A81A0)"
+  },
+  {
+    "start": "0x000FA2DC",
+    "note": "SEH scope-table filter/handler (table 0x004A81B0)"
+  },
+  {
+    "start": "0x000FA2E0",
+    "note": "SEH scope-table filter/handler (table 0x004A81B0)"
+  },
+  {
+    "start": "0x000FA336",
+    "note": "SEH scope-table filter/handler (table 0x004A81C0)"
+  },
+  {
+    "start": "0x000FA33A",
+    "note": "SEH scope-table filter/handler (table 0x004A81C0)"
+  },
+  {
+    "start": "0x000FA374",
+    "note": "SEH scope-table filter/handler (table 0x004A81D0)"
+  },
+  {
+    "start": "0x000FA378",
+    "note": "SEH scope-table filter/handler (table 0x004A81D0)"
+  },
+  {
+    "start": "0x000FB159",
+    "note": "SEH scope-table filter/handler (table 0x004A83D8)"
+  },
+  {
+    "start": "0x000FB15D",
+    "note": "SEH scope-table filter/handler (table 0x004A83D8)"
+  },
+  {
+    "start": "0x000FB17B",
+    "note": "SEH scope-table filter/handler (table 0x004A83D8)"
+  },
+  {
+    "start": "0x000FD890",
+    "note": "SEH scope-table filter/handler (table 0x004A84E8)"
+  },
+  {
+    "start": "0x000FD894",
+    "note": "SEH scope-table filter/handler (table 0x004A84E8)"
+  },
+  {
+    "start": "0x000FD8FC",
+    "note": "SEH scope-table filter/handler (table 0x004A84F8)"
+  },
+  {
+    "start": "0x000FD900",
+    "note": "SEH scope-table filter/handler (table 0x004A84F8)"
+  },
+  {
+    "start": "0x000FD934",
+    "note": "SEH scope-table filter/handler (table 0x004A8508)"
+  },
+  {
+    "start": "0x000FD938",
+    "note": "SEH scope-table filter/handler (table 0x004A8508)"
+  },
+  {
+    "start": "0x000FD96E",
+    "note": "SEH scope-table filter/handler (table 0x004A8518)"
+  },
+  {
+    "start": "0x000FD972",
+    "note": "SEH scope-table filter/handler (table 0x004A8518)"
+  },
+  {
+    "start": "0x002A9962",
+    "note": "SEH scope-table filter/handler (table 0x004C25D0)"
+  },
+  {
+    "start": "0x002AA0CF",
+    "note": "SEH scope-table filter/handler (table 0x004C25E0)"
+  },
+  {
+    "start": "0x002AA12B",
+    "note": "SEH scope-table filter/handler (table 0x004C25F0)"
+  },
+  {
+    "start": "0x002AB7E0",
+    "note": "SEH scope-table filter/handler (table 0x004C2600)"
+  },
+  {
+    "start": "0x002AB809",
+    "note": "SEH scope-table filter/handler (table 0x004C2610)"
+  },
+  {
+    "start": "0x002AB81D",
+    "note": "SEH scope-table filter/handler (table 0x004C2610)"
+  },
+  {
+    "start": "0x002AB931",
+    "note": "SEH scope-table filter/handler (table 0x004C2620)"
+  },
+  {
+    "start": "0x002ABC50",
+    "note": "SEH scope-table filter/handler (table 0x004C2630)"
+  },
+  {
+    "start": "0x002ABCA5",
+    "note": "SEH scope-table filter/handler (table 0x004C2640)"
+  },
+  {
+    "start": "0x002ABF78",
+    "note": "SEH scope-table filter/handler (table 0x004C2650)"
+  },
+  {
+    "start": "0x002AC07B",
+    "note": "SEH scope-table filter/handler (table 0x004C2660)"
+  },
+  {
+    "start": "0x002B43CA",
+    "note": "SEH scope-table filter/handler (table 0x004C3388)"
+  },
+  {
+    "start": "0x002B43D0",
+    "note": "SEH scope-table filter/handler (table 0x004C3388)"
+  },
+  {
+    "start": "0x002B4455",
+    "note": "SEH scope-table filter/handler (table 0x004C33D0)"
+  },
+  {
+    "start": "0x002B445B",
+    "note": "SEH scope-table filter/handler (table 0x004C33D0)"
+  },
+  {
+    "start": "0x002B4A46",
+    "note": "SEH scope-table filter/handler (table 0x004C36F8)"
+  },
+  {
+    "start": "0x002B4A4C",
+    "note": "SEH scope-table filter/handler (table 0x004C36F8)"
+  },
+  {
+    "start": "0x002B4BE5",
+    "note": "SEH scope-table filter/handler (table 0x004C3860)"
+  },
+  {
+    "start": "0x002B4BEB",
+    "note": "SEH scope-table filter/handler (table 0x004C3860)"
+  },
+  {
+    "start": "0x002D2F7A",
+    "note": "SEH scope-table filter/handler (table 0x004C9728)"
+  },
+  {
+    "start": "0x002D2F80",
+    "note": "SEH scope-table filter/handler (table 0x004C9728)"
+  },
+  {
+    "start": "0x002D2FDF",
+    "note": "SEH scope-table filter/handler (table 0x004C9770)"
+  },
+  {
+    "start": "0x002D2FE5",
+    "note": "SEH scope-table filter/handler (table 0x004C9770)"
+  },
+  {
+    "start": "0x002D304A",
+    "note": "SEH scope-table filter/handler (table 0x004C97B8)"
+  },
+  {
+    "start": "0x002D3050",
+    "note": "SEH scope-table filter/handler (table 0x004C97B8)"
+  },
+  {
+    "start": "0x002D30BA",
+    "note": "SEH scope-table filter/handler (table 0x004C9800)"
+  },
+  {
+    "start": "0x002D30C0",
+    "note": "SEH scope-table filter/handler (table 0x004C9800)"
+  },
+  {
+    "start": "0x00326BDE",
+    "note": "SEH scope-table filter/handler (table 0x004D0640)"
+  },
+  {
+    "start": "0x00326CB6",
+    "note": "SEH scope-table filter/handler (table 0x004D0650)"
+  },
+  {
+    "start": "0x00326E59",
+    "note": "SEH scope-table filter/handler (table 0x004D0660)"
+  },
+  {
+    "start": "0x00326EB9",
+    "note": "SEH scope-table filter/handler (table 0x004D0670)"
+  },
+  {
+    "start": "0x003276DB",
+    "note": "SEH scope-table filter/handler (table 0x004D06C0)"
+  },
+  {
+    "start": "0x00327A66",
+    "note": "SEH scope-table filter/handler (table 0x004D06D0)"
+  },
+  {
+    "start": "0x00327A9B",
+    "note": "SEH scope-table filter/handler (table 0x004D06E0)"
+  },
+  {
+    "start": "0x00327AD9",
+    "note": "SEH scope-table filter/handler (table 0x004D06F0)"
+  },
+  {
+    "start": "0x0032B0FA",
+    "note": "SEH scope-table filter/handler (table 0x004D0958)"
+  },
+  {
+    "start": "0x003F57AE",
+    "note": "SEH scope-table filter/handler (table 0x004C2780)"
+  },
+  {
+    "start": "0x003F57B2",
+    "note": "SEH scope-table filter/handler (table 0x004C2780)"
+  },
+  {
+    "start": "0x0046467B",
+    "note": "SEH scope-table filter/handler (table 0x004D0808)"
+  },
+  {
+    "start": "0x0046467F",
+    "note": "SEH scope-table filter/handler (table 0x004D0808)"
+  }
+]

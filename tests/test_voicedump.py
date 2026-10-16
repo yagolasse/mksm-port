@@ -98,5 +98,82 @@ class VoiceDumpTest(unittest.TestCase):
             self.assertEqual(w.getnframes(), 4 * RING)
 
 
+def raw_bytes(mono):
+    smp = array.array("h")
+    for v in mono:
+        smp.extend((v, v))
+    if sys.byteorder == "big":
+        smp.byteswap()
+    return smp.tobytes()
+
+
+def music(n, seed=0):
+    """Non-repeating, non-silent test signal."""
+    return [((i * 7919 + seed) * 104729 % 40000) - 20000 for i in range(n)]
+
+
+class RawDumpTest(unittest.TestCase):
+    """The toolkit v0.14 format: raw s16 stereo, one voice per file."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write(self, name, data):
+        path = os.path.join(self.tmp.name, name)
+        with open(path, "wb") as f:
+            f.write(data)
+        return path
+
+    def test_fresh_signal_has_no_copies(self):
+        smp = voicedump.read_raw(self.write("a.raw", raw_bytes(music(20000))))
+        self.assertEqual(voicedump.raw_copies(smp), [])
+
+    def test_stale_stretch_is_found_at_any_offset(self):
+        sig = music(20000)
+        sig[12345:12345 + 500] = sig[3001:3001 + 500]   # unaligned both ends
+        smp = voicedump.read_raw(self.write("b.raw", raw_bytes(sig)))
+        runs = voicedump.raw_copies(smp)
+        self.assertEqual(len(runs), 1)
+        at, src, length, peak = runs[0]
+        self.assertEqual((at, src, length), (12345, 3001, 500))
+        self.assertGreater(peak, voicedump.MIN_LEVEL)
+
+    def test_short_and_silent_copies_are_ignored(self):
+        sig = music(20000)
+        sig[9000:9000 + voicedump.MIN_RUN] = sig[100:100 + voicedump.MIN_RUN]
+        sig[15000:16000] = [0] * 1000
+        sig[17000:18000] = [0] * 1000
+        smp = voicedump.read_raw(self.write("c.raw", raw_bytes(sig)))
+        self.assertEqual(voicedump.raw_copies(smp), [])
+
+    def test_stats_cut_frame_and_wav(self):
+        data = raw_bytes([1000, -1000] * 2400) + b"\x01\x02"  # half a frame left over
+        path = self.write("d.raw", data)
+        smp = voicedump.read_raw(path)
+        n, peak, rms, zcr = voicedump.raw_stats(smp)
+        self.assertEqual((n, peak), (4800, 1000))
+        self.assertAlmostEqual(rms, 1000.0)
+        self.assertAlmostEqual(zcr, 1.0, places=3)
+        out = os.path.join(self.tmp.name, "d.wav")
+        self.assertEqual(voicedump.raw_wav(path, out, t0=0.025, t1=0.075), 2400)
+        with wave.open(out) as w:
+            self.assertEqual(w.getframerate(), 48000)
+
+    def test_cli_picks_raw_mode_from_the_extension(self):
+        import io
+        from contextlib import redirect_stdout
+        p1 = self.write("v.1.raw", raw_bytes(music(5000)))
+        p2 = self.write("v.2.raw", raw_bytes(music(5000, seed=3)))
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            self.assertEqual(voicedump.main([p1, p2]), 0)
+        lines = buf.getvalue().splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertIn("v.1.raw", lines[1])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -19,7 +19,7 @@ set -euo pipefail
 PORT="$(cd "$(dirname "$0")/.." && pwd)"
 SUB="$PORT/external/xboxrecomp"
 PATCHES="$PORT/patches"
-UPSTREAM="${UPSTREAM:-origin/main}"
+UPSTREAM="${UPSTREAM:-upstream/main}"   # remote "upstream" = sp00nznet; "origin" = our fork
 
 base="$(git -C "$SUB" merge-base HEAD "$UPSTREAM")"
 mapfile -t commits < <(git -C "$SUB" rev-list --reverse "$base..HEAD")

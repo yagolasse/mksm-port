@@ -156,6 +156,14 @@ int mksm_gpu_init(const MksmGpuMemory *mem, int opengl)
 
     g_config.display.renderer =
         opengl ? CONFIG_DISPLAY_RENDERER_OPENGL : CONFIG_DISPLAY_RENDERER_NULL;
+    /* RECOMP_PB_GPU_SCALE=1..4: xemu's internal resolution scale. The GL renderer reads it
+     * when it sets up its surfaces; surfaces are then drawn at width x height x scale, CPU
+     * reads (downloads) are downscaled back to 1x, and the present copies the scaled surface. */
+    const char *scale = getenv("RECOMP_PB_GPU_SCALE");
+    if (scale && *scale) {
+        long v = strtol(scale, NULL, 10);
+        g_config.display.quality.surface_scale = v < 1 ? 1 : v > 4 ? 4 : (int)v;
+    }
     pgraph_init(d);
     nv2a_context_init();
     /* early_context_init leaves the GL display context current on this thread; the method
@@ -166,8 +174,9 @@ int mksm_gpu_init(const MksmGpuMemory *mem, int opengl)
 
     s_dev = d;
     fprintf(stderr, "[XGPU] PGRAPH set up: vram %zu MiB, ramin %zu KiB, %s renderer, "
-            "vblank %.2f Hz\n", mem->vram_size >> 20, mem->ramin_size >> 10,
-            opengl ? "OpenGL" : "null", s_vblank_hz);
+            "vblank %.2f Hz, surface scale %ux\n", mem->vram_size >> 20, mem->ramin_size >> 10,
+            opengl ? "OpenGL" : "null", s_vblank_hz,
+            (unsigned)g_config.display.quality.surface_scale);
     return 0;
 }
 

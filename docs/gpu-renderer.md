@@ -283,7 +283,9 @@ The OpenGL renderer (`pgraph/gl/*`, 11 files) and the GLSL generators (`pgraph/g
   `QEMU_BUILD_BUG_MSG`, `qatomic_xchg/cmpxchg`, `qemu_thread_create/join` (Win32 threads),
   `qemu_fopen/mkdir/unlink`, `TARGET_PAGE_ALIGN`, `VGADisplayParams` + `VGACommonState.get_resolution/
   get_params` (filled by `mksm_gpu.c`, 2.H.4b), `xemu-version.h`, config fields
-  `display.quality.surface_scale` (1) and `perf.cache_shaders` (off).
+  `display.quality.surface_scale` (1; `RECOMP_PB_GPU_SCALE` sets it in `mksm_gpu_init`, plan 4.1:
+  read once when the GL renderer sets up its surfaces; xemu's runtime change halts and kicks PFIFO,
+  which we don't have) and `perf.cache_shaders` (off).
 - **Dirty memory and accelerator** (`xemu_stubs.c`): `memory_region_test_and_clear_dirty` always returns
   true and `memory_region_set_client_dirty` is a no-op (the "always dirty" plan above), so vertex data
   is re-uploaded per draw range and textures re-hashed. `tcg_enabled()` returns **true**: under xemu's

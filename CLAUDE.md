@@ -213,7 +213,10 @@ so during movies later; each line ends with its real interval in seconds, which 
 surface drawn last into the framebuffer window (`RECOMP_FB_WINDOW=1`) and waits for a 59.94 Hz VBlank.
 `RECOMP_PB_GPU_RENDERER=null` = xemu's null renderer (draws nothing), `RECOMP_PB_GPU_VBLANK=<Hz>` sets
 the pacing (0 = uncapped), `RECOMP_PB_GPU_DUMP=<file.bmp>` (+ `RECOMP_PB_GPU_DUMP_FLIP=<N>`, default
-600) dumps one presented frame. `RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
+600) dumps one presented frame. `RECOMP_PB_GPU_SCALE=1..4` (plan 4.1, default 1) sets xemu's internal
+resolution scale at start-up: surfaces render at Nx, CPU reads of surfaces are downscaled to 1x,
+the window shows the scaled surface (the dump and the `pbo` path see it at Nx too); not changeable
+while running. `RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
 changed on every use (default: once per pushbuffer kick, texture pages only when their content hash
 changed, see `docs/gpu-renderer.md`; for A/B runs); `=kick` drops the texture-page hash.
 By default (`RECOMP_PB_GPU_PRESENT=window`, plan 2.6b) the method thread draws the scanout surface

@@ -72,7 +72,6 @@ RUN_ENV = {
     "RECOMP_APU_DSP_ACK": "auto",
     "RECOMP_HEAP_RECLAIM": "1",
     "RECOMP_TITLE_KEVENTS": "1",
-    "RECOMP_TITLE_KEVENTS_SKIP": "0x003F29CC",
 }
 
 # The 1.12c pad script: Start through the title, brightness and main menu,
@@ -182,6 +181,11 @@ def run(cp, exe, game_dir, log, extra_env=None, secs=None, audio=False):
         # Silent by default (unattended runs); the APU and its stats still run.
         # A volume set in the caller's environment wins.
         env.setdefault("RECOMP_APU_VOLUME", "0")
+    # Empty: D3D's VBlank event 0x003F29CC blocks for real (main.c's vblank thread sets it,
+    # plan 2.7a6); RECOMP_TITLE_KEVENTS_SKIP=0x003F29CC in the environment = the old spin, for A/B.
+    env.setdefault("RECOMP_TITLE_KEVENTS_SKIP", "")
+    # DirectSound's EP-alive word (plan 2.7a6); RECOMP_APU_EP_ALIVE= (empty) = the old resets, for A/B.
+    env.setdefault("RECOMP_APU_EP_ALIVE", "0xFE85A018")
     env.update(RUN_ENV)
     env.update(cp.env)
     if extra_env:

@@ -28,14 +28,18 @@
 #      (scratch page 0 + 0x810, logged as "DSP doorbell auto"). A fixed
 #      address also works but moves with the allocation order. If audio init
 #      hangs, compare ebx in a RECOMP_WATCHDOG_SECS dump with the logged one.
+#      RECOMP_APU_EP_ALIVE defaults to 0xFE85A018: that EP DSP word reads 0xCCCCCC
+#      ("EP program running"), else DirectSound resets the DSPs and busy-waits
+#      10 ms about 20 times a second (plan 2.7a6). Empty turns it off.
 #      RECOMP_HEAP_RECLAIM defaults to 1 (0 turns it off): freed contiguous
 #      and heap blocks are reused. Without it the contiguous arena runs out
 #      by the second OPENING.SFD and the movie after New Game stays black.
 #      RECOMP_TITLE_KEVENTS defaults to 1 (0 turns it off): events the game
 #      builds by hand get a host event, so waits on them block instead of
 #      failing at once (the XDK timer thread needs it). RECOMP_TITLE_KEVENTS_SKIP
-#      defaults to D3D's event 0x003F29CC, which a GPU interrupt sets that the
-#      runtime doesn't model: waiting on it for real hangs the boot.
+#      (empty by default) lists events that keep failing at once; D3D's VBlank
+#      event 0x003F29CC was one until main.c's vblank thread set it (plan
+#      2.7a6): RECOMP_TITLE_KEVENTS_SKIP=0x003F29CC is the old behaviour.
 #      RECOMP_PB_GPU defaults to 1 (0 = the software executor): xemu's PGRAPH on
 #      OpenGL draws the frames (movies included).
 #      RECOMP_FB_WINDOW defaults to 1 (0 or empty turns it off): the game window.
@@ -73,6 +77,7 @@ else
 fi
 export RECOMP_KEYBOARD="${RECOMP_KEYBOARD-1}"
 export RECOMP_APU_DSP_ACK="${RECOMP_APU_DSP_ACK-auto}"
+export RECOMP_APU_EP_ALIVE="${RECOMP_APU_EP_ALIVE-0xFE85A018}"
 RECOMP_HEAP_RECLAIM="${RECOMP_HEAP_RECLAIM-1}"
 if [ -z "$RECOMP_HEAP_RECLAIM" ] || [ "$RECOMP_HEAP_RECLAIM" = 0 ]; then
     unset RECOMP_HEAP_RECLAIM
@@ -80,7 +85,7 @@ else
     export RECOMP_HEAP_RECLAIM
 fi
 export RECOMP_TITLE_KEVENTS="${RECOMP_TITLE_KEVENTS-1}"
-export RECOMP_TITLE_KEVENTS_SKIP="${RECOMP_TITLE_KEVENTS_SKIP-0x003F29CC}"
+export RECOMP_TITLE_KEVENTS_SKIP="${RECOMP_TITLE_KEVENTS_SKIP-}"
 export RECOMP_PB_GPU="${RECOMP_PB_GPU-1}"
 RECOMP_FB_WINDOW="${RECOMP_FB_WINDOW-1}"
 if [ -z "$RECOMP_FB_WINDOW" ] || [ "$RECOMP_FB_WINDOW" = 0 ]; then

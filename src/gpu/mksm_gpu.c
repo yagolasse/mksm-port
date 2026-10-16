@@ -183,19 +183,23 @@ static void report(void)
     if (now - last_ns < 5000000000LL) {
         return;
     }
+    /* With few methods per second (movies) the line comes well after 5 s: it ends with the
+     * real interval, which a rate from two lines must divide by. */
+    double interval_s = last_ns ? (now - last_ns) / 1e9 : 0.0;
     last_ns = now;
     fprintf(stderr,
             "[XGPU] methods %lu, objects %lu, draws %lu, flips %lu, nop notifies %lu, "
             "fences %lu, semaphores %lu, bad handles %lu, irq updates %lu, dirty epochs %lu, "
             "tex pages hashed %lu changed %lu, surface downloads %lu uploads %lu to-tex %lu, "
-            "masked stages %lu, presents %lu (no surface %lu, last %ux%u, %lu non-black px)\n",
+            "masked stages %lu, presents %lu (no surface %lu, last %ux%u, %lu non-black px), "
+            "%.2f s\n",
             s_stats.methods, s_stats.objects, s_stats.draws, s_stats.flips, s_stats.nops,
             s_stats.fences, s_stats.semaphores, s_stats.bad_handles, xemu_stub_counts.update_irq,
             xemu_stub_counts.dirty_epochs, xemu_stub_counts.tex_pages_hashed,
             xemu_stub_counts.tex_pages_changed,
             s_stats.surf_downloads, s_stats.surf_uploads, s_stats.surf_to_tex,
             s_stats.masked_stages, s_stats.presents, s_stats.no_surface, s_stats.last_w, s_stats.last_h,
-            s_stats.last_nonblack);
+            s_stats.last_nonblack, interval_s);
 }
 
 /* D3D's pushbuffer fence: it sends a context-pattern object's SET_MONOCHROME_COLOR0 with a
@@ -709,14 +713,47 @@ static void present_scanout(NV2AState *d)
     }
 }
 
-/* Waits for the next VBlank on a fixed grid from the first flip. A flip that is already late
- * (a slow frame, a load) goes at once; one more than a few periods late restarts the grid
- * rather than letting the following frames run uncapped to catch up. */
+/* VBlanks from the host's VBlank clock (mksm_gpu_vblank_tick), if it runs. */
+static volatile LONG s_ticks;
+static HANDLE s_tick_event;
+
+void mksm_gpu_vblank_tick(void)
+{
+    if (!s_tick_event) {
+        HANDLE e = CreateEventW(NULL, FALSE, FALSE, NULL);
+        if (InterlockedCompareExchangePointer(&s_tick_event, e, NULL) != NULL) {
+            CloseHandle(e);
+        }
+    }
+    InterlockedIncrement(&s_ticks);
+    SetEvent(s_tick_event);
+}
+
+/* Waits for the next VBlank. With the host VBlank clock running, at most one flip per tick,
+ * on the same ticks the title's VBlank waits see (two free-running 59.94 Hz grids beat: a
+ * frame that waits for one and then the other loses a period now and then; the intro movie
+ * flipped at ~52/s). A flip with a tick passed since the previous one is late and goes at once.
+ * Without the clock: a fixed grid from the first flip. A flip that is already late (a slow
+ * frame, a load) goes at once; one more than a few periods late restarts the grid rather than
+ * letting the following frames run uncapped to catch up. */
 static void wait_vblank(void)
 {
     static HANDLE timer;
     static int64_t next;
+    static LONG last_tick;
     if (s_vblank_hz <= 0) {
+        return;
+    }
+    if (s_ticks) {
+        LONG cur = s_ticks;
+        if (cur != last_tick) {
+            last_tick = cur;
+            return;
+        }
+        while (s_ticks == cur) {
+            WaitForSingleObject(s_tick_event, 50);   /* the timeout only guards a stopped clock */
+        }
+        last_tick = s_ticks;
         return;
     }
     int64_t period = (int64_t)(1e9 / s_vblank_hz);

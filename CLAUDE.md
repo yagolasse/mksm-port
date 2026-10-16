@@ -184,7 +184,8 @@ guest stack, and recent ICALL targets. Fix by adding overrides in `recomp_manual
 support. Useful env vars from the toolkit: `RECOMP_WATCHDOG_SECS`, `RECOMP_AC97_READY`.
 `RECOMP_PB_GPU=1` (default in the run scripts since 2.H.8c1, `=0` = software executor; toolkit patches
 0009-0010) hands every decoded method to xemu's PGRAPH
-(OpenGL renderer) instead of the software executor (`[XGPU]` lines every 5 s); each flip presents the
+(OpenGL renderer) instead of the software executor (`[XGPU]` lines every >= 5 s, checked every 16k methods,
+so during movies later; each line ends with its real interval in seconds, which `tools/profsum.py` divides by); each flip presents the
 surface drawn last into the framebuffer window (`RECOMP_FB_WINDOW=1`) and waits for a 59.94 Hz VBlank.
 `RECOMP_PB_GPU_RENDERER=null` = xemu's null renderer (draws nothing), `RECOMP_PB_GPU_VBLANK=<Hz>` sets
 the pacing (0 = uncapped), `RECOMP_PB_GPU_DUMP=<file.bmp>` (+ `RECOMP_PB_GPU_DUMP_FLIP=<N>`, default
@@ -271,6 +272,15 @@ still run). `RECOMP_APU_WAV=<path>` (patch 0023) records every output block as s
 the contiguous arena runs out (`[CONTIG] arena exhausted`) and the movie after New Game stays black.
 They also set `RECOMP_TITLE_KEVENTS=1` (events the game builds by hand get a host event, so waits
 on them block instead of failing at once; the XDK timer thread behind the audio tick needs it) with
-`RECOMP_TITLE_KEVENTS_SKIP=0x003F29CC` (patch 0003): D3D's event, set by a GPU interrupt the runtime
-doesn't model, keeps the fail-at-once path, else the boot hangs. A new hang on a hand-built event
-→ log its VA (`event 0x... built by the title`) and try adding it to the skip list.
+`RECOMP_TITLE_KEVENTS_SKIP` (patch 0003; empty by default): events listed there keep the fail-at-once
+path. D3D's VBlank event `0x003F29CC` was on it until plan 2.7a6: `main.c`'s `vblank` thread now ticks
+at 59.94 Hz (`RECOMP_PB_GPU_VBLANK` if > 0) and has the toolkit set it (`xbox_Nv2aVBlank`, patch 0028:
+the event D3D's VBlank DPC sets, miniport + 0x194), so `BlockUntilVerticalBlank` blocks as on hardware
+and the title's VBlank-paced workers stop spinning (~2 cores). The GPU path's flips pace on the same
+ticks (`mksm_gpu_vblank_tick`). `RECOMP_TITLE_KEVENTS_SKIP=0x003F29CC` = the old spin, for A/B runs.
+Patch 0029 keeps one pending wake-up per thread for self-suspend / resume pairs (a resume that
+arrives while the target is still running is not lost; no switch: the plain path crashed at boot in
+`NtResumeThread` once the VBlank wait blocked, not traced), and patch 0030's `RECOMP_APU_EP_ALIVE=0xFE85A018` (run
+script / smoke default) keeps DirectSound's EP-alive word at `0xCCCCCC`: without it DirectSound reset
+the DSPs and busy-waited 10 ms ~20 times a second. A new hang on a hand-built event → log its VA
+(`event 0x... built by the title`) and try adding it to the skip list.

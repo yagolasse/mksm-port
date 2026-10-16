@@ -366,6 +366,60 @@ static void wbc_ack_start(bool gpu)
     }
 }
 
+/* D3D's BlockUntilVerticalBlank resets a notification event and waits for the VBlank DPC to
+ * set it; the runtime delivers no NV2A interrupts, so the title's VBlank-paced worker threads
+ * spun on a wait that failed at once (~1.3 cores, plan 2.7a3). This thread stands in for the
+ * PCRTC: on a fixed 59.94 Hz grid (RECOMP_PB_GPU_VBLANK, if > 0) it has the toolkit set that
+ * event (xbox_Nv2aVBlank). The wait only blocks if the event is not in
+ * RECOMP_TITLE_KEVENTS_SKIP: listing it there (0x003F29CC) is the old spin, for A/B runs.
+ * The GPU path paces its flips on the same ticks (mksm_gpu_vblank_tick). */
+extern int xbox_Nv2aVBlank(void);
+
+static DWORD WINAPI vblank_thread(LPVOID param)
+{
+    double hz = *(double *)param;
+    HANDLE timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                          TIMER_ALL_ACCESS);
+    LARGE_INTEGER freq, now;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&now);
+    const double period = (double)freq.QuadPart / hz;
+    double next = (double)now.QuadPart + period;
+    for (;;) {
+        QueryPerformanceCounter(&now);
+        double ahead = next - (double)now.QuadPart;
+        if (ahead > 0) {
+            LARGE_INTEGER due = { .QuadPart = -(LONGLONG)(ahead * 1e7 / (double)freq.QuadPart) };
+            if (timer && SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE))
+                WaitForSingleObject(timer, INFINITE);
+            else
+                Sleep((DWORD)(ahead * 1000.0 / (double)freq.QuadPart));
+        } else if (-ahead > 4 * period) {
+            next = (double)now.QuadPart;           /* far behind (a stall): restart the grid */
+        }
+        next += period;
+        xbox_Nv2aVBlank();
+#ifdef MKSM_HAVE_GPU
+        mksm_gpu_vblank_tick();                    /* flips pace on the same ticks */
+#endif
+    }
+    return 0;
+}
+
+static void vblank_start(void)
+{
+    static double hz = 60000.0 / 1001.0;
+    const char *v = getenv("RECOMP_PB_GPU_VBLANK");
+    if (v && atof(v) > 0)
+        hz = atof(v);
+    HANDLE th = CreateThread(NULL, 0, vblank_thread, &hz, 0, NULL);
+    if (th) {
+        xbox_name_thread(th, "vblank");
+        SetThreadPriority(th, THREAD_PRIORITY_ABOVE_NORMAL);
+        CloseHandle(th);
+    }
+}
+
 extern MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr);
 extern MCPXAPUState *g_apu_state;
 extern bool apu_hook_handle_mmio(PCONTEXT ctx, uintptr_t fault_addr,
@@ -548,6 +602,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     /* RECOMP_PB_GPU=1: before the replay below, so a capture can replay through it too. */
     wbc_ack_start(gpu_init_from_env());
+    vblank_start();
 
     /* Replay a captured frame instead of booting the game (RECOMP_PB_REPLAY).
      *

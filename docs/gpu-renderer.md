@@ -355,9 +355,14 @@ core, NVIDIA RTX 2060 / driver 596.49 on the dev machine, no GL error after init
   context and back each flip) made NVIDIA turn its driver thread off (gone from the profile; its work
   and `DrvPresentBuffers`' waits landed on the method thread: 74% → 92% busy, level dips to 52 fps).
   With the present thread the driver thread stays and the present costs the method thread ~1-2%.
-- **Pacing**: after presenting, the flip waits for the next 59.94 Hz VBlank on a fixed grid (high-resolution
-  waitable timer); a late flip goes at once, one more than 4 periods late restarts the grid.
-  `RECOMP_PB_GPU_VBLANK=<Hz>` changes it, 0 turns it off.
+- **Pacing**: after presenting, the flip waits for the next VBlank of the host VBlank clock: `main.c`'s
+  `vblank` thread (59.94 Hz, high-resolution waitable timer) calls `mksm_gpu_vblank_tick()` on each tick,
+  the same tick on which it sets D3D's VBlank event for the title (plan 2.7a6). At most one flip per tick;
+  a flip with a tick passed since the previous one is late and goes at once. Two free-running grids
+  (one for the flips, one for the title's `BlockUntilVerticalBlank`) would beat against each other.
+  Without ticks (no clock running) the flip falls back to its own fixed grid from the first flip (a late
+  flip goes at once, one more than 4 periods late restarts the grid). `RECOMP_PB_GPU_VBLANK=<Hz>` sets the
+  rate of both, 0 turns the flip pacing off.
 - **Texture-stage guard**: the title sometimes leaves a sampling mode (PROJECT2D) in a stage of the
   shader stage program while that texture is disabled (`TEXCTL0` = 0, the format still valid), and
   xemu's `get_sampler_type` asserts on it (dimensionality is only read for enabled stages). Seen within

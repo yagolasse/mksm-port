@@ -1,7 +1,7 @@
 """Summarize RECOMP_PROF profiles and level fps from one or more run logs.
 
-Per log: frame rate per [XGPU] interval (flips / 5 s; the interval is >= 5 s
-wall clock), the intervals inside the profile window, and per thread the CPU
+Per log: frame rate per [XGPU] interval (flips / the interval the line ends
+with; 5 s for logs from before that field), the intervals inside the profile window, and per thread the CPU
 share of the window and the top exclusive functions. With several logs it
 also prints the median per thread name (the thread id differs per run; the
 name, from SetThreadDescription or the start symbol, does not) and the median
@@ -20,7 +20,7 @@ import re
 import statistics
 import sys
 
-XGPU_RE = re.compile(r"\[XGPU\] methods \d+.*?draws (\d+), flips (\d+)")
+XGPU_RE = re.compile(r"\[XGPU\] methods \d+.*?draws (\d+), flips (\d+).*?(?:px\), ([\d.]+) s)?$")
 THREAD_RE = re.compile(
     r"\[PROF\] thread \d+ \((.*)\): \d+ samples, CPU (\d+) ms = (\d+)% of the window")
 SAMPLING_RE = re.compile(r"\[PROF\] sampling \d+ threads")
@@ -51,11 +51,13 @@ def parse(text, top=5):
         m = XGPU_RE.search(line)
         if m:
             draws, flips = int(m.group(1)), int(m.group(2))
+            # Newer lines end with the real interval (later than 5 s when few methods come).
+            secs = float(m.group(3)) if m.group(3) and float(m.group(3)) > 0 else INTERVAL_S
             if prev is not None and flips > prev[1]:
                 n = flips - prev[1]
                 # An interval counts as profiled only if it began and ended in the window.
                 inside = state == "in" and prev[2]
-                intervals.append((n / INTERVAL_S, (draws - prev[0]) // n, inside))
+                intervals.append((n / secs, (draws - prev[0]) // n, inside))
             prev = (draws, flips, state == "in")
             continue
         m = THREAD_RE.match(line)

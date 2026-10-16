@@ -41,6 +41,11 @@ LOG = "\n".join([
 
 
 class ProfsumTest(unittest.TestCase):
+    def test_interval_field(self):
+        line = xgpu(300, 300) + ", 10.00 s"     # a 10 s interval: 30 fps, not 60
+        r = profsum.parse("\n".join([xgpu(0, 0) + ", 0.00 s", line]))
+        self.assertEqual([f for f, _, _ in r["intervals"]], [30.0])
+
     def test_parse(self):
         r = profsum.parse(LOG, top=5)
         self.assertEqual(r["window_ms"], 15016)

@@ -68,6 +68,11 @@ void mksm_gpu_set_notify(MksmGpuNotifyFn fn);
  * VBlank, the way the title's FLIP_STALL waits for the CRTC. 0 turns it off. */
 void mksm_gpu_set_vblank_hz(double hz);
 
+/* One VBlank of the host's VBlank clock (main.c's vblank thread; any thread). Once it ticks,
+ * flips are paced on its ticks instead of the renderer's own grid, so they line up with the
+ * title's VBlank waits. */
+void mksm_gpu_vblank_tick(void);
+
 /* One decoded pushbuffer method, in stream order (the toolkit's nv2a_pb_method_hook_fn).
  * Stands in for xemu's PFIFO puller: resolves object handles through RAMHT, then calls
  * pgraph_method. */

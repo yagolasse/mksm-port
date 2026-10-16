@@ -31,14 +31,18 @@ rem      DirectSound init waits on, found from the APU's GP scratch table
 rem      (scratch page 0 + 0x810, logged as "DSP doorbell auto"). A fixed
 rem      address also works but moves with the allocation order. If audio init
 rem      hangs, compare ebx in a RECOMP_WATCHDOG_SECS dump with the logged one.
+rem      RECOMP_APU_EP_ALIVE defaults to 0xFE85A018: that EP DSP word reads 0xCCCCCC
+rem      ("EP program running"), else DirectSound resets the DSPs and busy-waits
+rem      10 ms about 20 times a second (plan 2.7a6). Empty turns it off.
 rem      RECOMP_HEAP_RECLAIM defaults to 1 (0 turns it off): freed contiguous
 rem      and heap blocks are reused. Without it the contiguous arena runs out
 rem      by the second OPENING.SFD and the movie after New Game stays black.
 rem      RECOMP_TITLE_KEVENTS defaults to 1 (0 turns it off): events the game
 rem      builds by hand get a host event, so waits on them block instead of
 rem      failing at once (the XDK timer thread needs it). RECOMP_TITLE_KEVENTS_SKIP
-rem      defaults to D3D's event 0x003F29CC, which a GPU interrupt sets that the
-rem      runtime doesn't model: waiting on it for real hangs the boot.
+rem      (empty by default) lists events that keep failing at once; D3D's VBlank
+rem      event 0x003F29CC was one until main.c's vblank thread set it (plan
+rem      2.7a6): RECOMP_TITLE_KEVENTS_SKIP=0x003F29CC is the old behaviour.
 rem      RECOMP_PB_GPU defaults to 1 (0 = the software executor): xemu's PGRAPH on
 rem      OpenGL draws the frames (movies included).
 rem      RECOMP_FB_WINDOW defaults to 1 (0 turns it off): the game window.
@@ -77,10 +81,10 @@ if not defined RECOMP_USB set "RECOMP_USB=1"
 if "%RECOMP_USB%"=="0" set "RECOMP_USB="
 if not defined RECOMP_KEYBOARD set "RECOMP_KEYBOARD=1"
 if not defined RECOMP_APU_DSP_ACK set "RECOMP_APU_DSP_ACK=auto"
+if not defined RECOMP_APU_EP_ALIVE set "RECOMP_APU_EP_ALIVE=0xFE85A018"
 if not defined RECOMP_HEAP_RECLAIM set "RECOMP_HEAP_RECLAIM=1"
 if "%RECOMP_HEAP_RECLAIM%"=="0" set "RECOMP_HEAP_RECLAIM="
 if not defined RECOMP_TITLE_KEVENTS set "RECOMP_TITLE_KEVENTS=1"
-if not defined RECOMP_TITLE_KEVENTS_SKIP set "RECOMP_TITLE_KEVENTS_SKIP=0x003F29CC"
 if not defined RECOMP_PB_GPU set "RECOMP_PB_GPU=1"
 if not defined RECOMP_FB_WINDOW set "RECOMP_FB_WINDOW=1"
 if "%RECOMP_FB_WINDOW%"=="0" set "RECOMP_FB_WINDOW="

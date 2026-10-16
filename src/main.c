@@ -385,6 +385,57 @@ static void wbc_ack_start(bool gpu)
  * RECOMP_TITLE_KEVENTS_SKIP: listing it there (0x003F29CC) is the old spin, for A/B runs.
  * The GPU path paces its flips on the same ticks (mksm_gpu_vblank_tick). */
 extern int xbox_Nv2aVBlank(void);
+extern uint32_t xbox_GetConnectedInterrupt(uint32_t vector);
+
+/* D3D's VBlank DPC also calls the title's VBlank callback (D3DDevice_SetVerticalBlankCallback,
+ * kept at miniport + 0x190) with a D3DVBLANKDATA. xbox_Nv2aVBlank only sets the event, so the
+ * callback never ran: its VBlank counters stayed 0, and the loading screen, which draws its
+ * progress bar and presents only when the counter moves, showed no bar (plan 2.H.5a). The
+ * game's callback only counts, so it's mirrored here rather than run as guest code on this
+ * host thread: field parity at 0x0063898C, VBlanks at 0x00637B20, and at 0x00638990 unless
+ * 0x006C92EC is set. Only while the registered callback is that one; any other is logged once.
+ * RECOMP_TITLE_VBLANK_CB=0 turns it off (A/B); RECOMP_VBLANK_STATS=1 prints the counters
+ * once a second. */
+#define TITLE_VBLANK_CB_VA      0x00119030u
+#define TITLE_VBLANK_FIELD_VA   0x0063898Cu
+#define TITLE_VBLANK_COUNT_VA   0x00637B20u
+#define TITLE_VBLANK_COUNT2_VA  0x00638990u
+#define TITLE_VBLANK_HOLD_VA    0x006C92ECu
+#define NV2A_IRQ_VECTOR         3u
+
+static void title_vblank_callback(uint32_t vblank)
+{
+    static int on = -1, stats = -1;
+    static uint32_t other_cb;
+    uint8_t *base = (uint8_t *)xbox_GetMemoryOffset();
+    uint32_t kint, miniport, cb;
+
+    if (on < 0) {
+        const char *e = getenv("RECOMP_TITLE_VBLANK_CB");
+        const char *s = getenv("RECOMP_VBLANK_STATS");
+        on = !(e && e[0] == '0');
+        stats = s && s[0] && s[0] != '0';
+    }
+    kint = xbox_GetConnectedInterrupt(NV2A_IRQ_VECTOR);
+    miniport = kint ? *(volatile uint32_t *)(base + kint + 4) : 0;
+    cb = miniport ? *(volatile uint32_t *)(base + miniport + 0x190) : 0;
+
+    if (on && cb == TITLE_VBLANK_CB_VA) {
+        *(volatile uint8_t *)(base + TITLE_VBLANK_FIELD_VA) = (uint8_t)(vblank & 1);
+        (*(volatile uint32_t *)(base + TITLE_VBLANK_COUNT_VA))++;
+        if (!*(volatile uint32_t *)(base + TITLE_VBLANK_HOLD_VA))
+            (*(volatile uint32_t *)(base + TITLE_VBLANK_COUNT2_VA))++;
+    } else if (cb && cb != TITLE_VBLANK_CB_VA && cb != other_cb) {
+        other_cb = cb;
+        fprintf(stderr, "[VBLANK] unknown title callback 0x%08X, not run\n", cb);
+    }
+    if (stats && vblank % 60 == 0)
+        fprintf(stderr, "[VBLANK] tick %u cb 0x%08X%s count 0x%08X count2 0x%08X hold %u\n",
+                vblank, cb, on ? "" : " (off)",
+                *(volatile uint32_t *)(base + TITLE_VBLANK_COUNT_VA),
+                *(volatile uint32_t *)(base + TITLE_VBLANK_COUNT2_VA),
+                *(volatile uint32_t *)(base + TITLE_VBLANK_HOLD_VA));
+}
 
 static DWORD WINAPI vblank_thread(LPVOID param)
 {
@@ -396,6 +447,7 @@ static DWORD WINAPI vblank_thread(LPVOID param)
     QueryPerformanceCounter(&now);
     const double period = (double)freq.QuadPart / hz;
     double next = (double)now.QuadPart + period;
+    uint32_t vblank = 0;
     for (;;) {
         QueryPerformanceCounter(&now);
         double ahead = next - (double)now.QuadPart;
@@ -409,6 +461,8 @@ static DWORD WINAPI vblank_thread(LPVOID param)
             next = (double)now.QuadPart;           /* far behind (a stall): restart the grid */
         }
         next += period;
+        /* Callback before the event, so a thread woken by the event sees the new count. */
+        title_vblank_callback(++vblank);
         xbox_Nv2aVBlank();
 #ifdef MKSM_HAVE_GPU
         mksm_gpu_vblank_tick();                    /* flips pace on the same ticks */

@@ -288,6 +288,12 @@ at 59.94 Hz (`RECOMP_PB_GPU_VBLANK` if > 0) and has the toolkit set it (`xbox_Nv
 the event D3D's VBlank DPC sets, miniport + 0x194), so `BlockUntilVerticalBlank` blocks as on hardware
 and the title's VBlank-paced workers stop spinning (~2 cores). The GPU path's flips pace on the same
 ticks (`mksm_gpu_vblank_tick`). `RECOMP_TITLE_KEVENTS_SKIP=0x003F29CC` = the old spin, for A/B runs.
+The same thread stands in for the title's VBlank callback (`title_vblank_callback`, plan B1b):
+D3D's DPC calls the one registered at miniport + 0x190, the toolkit doesn't, so the game's VBlank
+counters never moved and the loading screen drew no progress bar. The game's callback only counts,
+so `main.c` does the same counting itself while that callback is the registered one (an unknown
+one is logged, not run). `RECOMP_TITLE_VBLANK_CB=0` turns it off (A/B); `RECOMP_VBLANK_STATS=1`
+prints `[VBLANK]` with the counters once a second.
 Patch 0017 keeps one pending wake-up per thread for self-suspend / resume pairs (a resume that
 arrives while the target is still running is not lost; no switch: the plain path crashed at boot in
 `NtResumeThread` once the VBlank wait blocked, not traced), and patch 0018's `RECOMP_APU_EP_ALIVE=0xFE85A018` (run

@@ -1,0 +1,53 @@
+From 02fa790017336f924a773407a021c1b062e98b96 Mon Sep 17 00:00:00 2001
+From: The FBC Agent <thefbcspecialagent@gmail.com>
+Date: Fri, 16 Oct 2026 15:39:25 -0300
+Subject: [PATCH] platform: GetThreadId in the POSIX compat layer
+
+The self-suspend fix in kernel_thread.c compares GetThreadId(handle) with
+GetCurrentThreadId(); the compat layer had no GetThreadId, so the Linux
+build failed (implicit declaration). Returns the id CreateThread handed out,
+the current id for the pseudo handle, 0 otherwise.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016ahYm8JBvCH5KhgtSu9Yoy
+---
+ src/platform/win32_compat.c | 10 ++++++++++
+ src/platform/win32_compat.h |  1 +
+ 2 files changed, 11 insertions(+)
+
+diff --git a/src/platform/win32_compat.c b/src/platform/win32_compat.c
+index a1b9780..9c2937f 100644
+--- a/src/platform/win32_compat.c
++++ b/src/platform/win32_compat.c
+@@ -323,6 +323,16 @@ DWORD GetCurrentThreadId(void)
+     return t_tid;
+ }
+ 
++/* The id CreateThread reported for a thread handle; 0 for anything else, as on
++ * Windows. The main thread has no handle object, only its pseudo handle. */
++DWORD GetThreadId(HANDLE h)
++{
++    w32_object *o;
++    if (h == PSEUDO_CURRENT_THREAD) return GetCurrentThreadId();
++    o = (w32_object *)h;
++    return (o && o->kind == K_THREAD) ? o->tid : 0;
++}
++
+ DWORD GetCurrentProcessId(void) { return (DWORD)getpid(); }
+ HANDLE GetCurrentThread(void)   { return t_self_obj ? (HANDLE)t_self_obj : PSEUDO_CURRENT_THREAD; }
+ HANDLE GetCurrentProcess(void)  { return PSEUDO_CURRENT_PROCESS; }
+diff --git a/src/platform/win32_compat.h b/src/platform/win32_compat.h
+index c838a56..478c53f 100644
+--- a/src/platform/win32_compat.h
++++ b/src/platform/win32_compat.h
+@@ -164,6 +164,7 @@ DWORD  ResumeThread(HANDLE h);
+ DWORD  SuspendThread(HANDLE h);
+ BOOL   TerminateThread(HANDLE h, DWORD exitCode);
+ DWORD  GetCurrentThreadId(void);
++DWORD  GetThreadId(HANDLE h);
+ HANDLE GetCurrentThread(void);
+ HANDLE GetCurrentProcess(void);
+ DWORD  GetCurrentProcessId(void);
+-- 
+2.53.0.windows.2
+

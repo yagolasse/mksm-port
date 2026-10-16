@@ -37,6 +37,7 @@ statically recompiling the retail `default.xbe` to C with
 - `tools/smoke_test.py`: boot smoke test (also CTest `smoke`), see Testing
 - `tools/xiso.py`: list/extract files from an Xbox disc image
 - `tools/padding_seeds.py`: finds undetected functions after int3 padding (writes `seeds/padding.json`)
+- `tools/wavscan.py`: scans a `RECOMP_APU_WAV` recording for noise bursts, clicks, repeated/dropped blocks, clipping; `--excerpt START,DUR out.wav` cuts a clip
 - `tools/stub_audit.py`: sorts `gen/recomp_stubs_unresolved.c` into real code vs. decoded data (writes `seeds/stubs.json`)
 - `docs/`: generic notes on how the port works (`gpu-renderer.md`: design of the GPU renderer, a port of xemu's PGRAPH + OpenGL backend)
 - `tests/`: unit tests for `tools/*.py` on synthetic inputs (no game data), see Testing
@@ -228,7 +229,9 @@ is read from heap RAM for pages the heap handed out, else from the contiguous wi
 `RECOMP_APU_DATA_HEAP=0/1` forces window/RAM for A/B. `RECOMP_APU_MONITOR=vp` taps the VP's own
 L/R voice sum (xemu's default without DSPs) instead of our even/odd mixbin mixdown, for A/B by ear.
 `RECOMP_APU_VOLUME=<0..1>` sets the output volume (patch 0020; 0 = silent, the APU and its stats
-still run). `RECOMP_APU_TRACE_SECTL=1` logs SECTL writes with the host RIP (symbolize with
+still run). `RECOMP_APU_WAV=<path>` (patch 0023) records every output block as sent to XAudio2
+(before the volume, so muted smoke runs record too) to a 48 kHz stereo WAV; scan it with
+`tools/wavscan.py`. `RECOMP_APU_TRACE_SECTL=1` logs SECTL writes with the host RIP (symbolize with
 `llvm-symbolizer --obj=build/Release/mksm_recomp.exe 0x140000000+rip-base`). `RECOMP_HEAP_RECLAIM=1` (also a default) reuses freed contiguous/heap blocks: without it
 the contiguous arena runs out (`[CONTIG] arena exhausted`) and the movie after New Game stays black.
 They also set `RECOMP_TITLE_KEVENTS=1` (events the game builds by hand get a host event, so waits

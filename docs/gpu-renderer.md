@@ -335,6 +335,26 @@ core, NVIDIA RTX 2060 / driver 596.49 on the dev machine, no GL error after init
   (window thread skips its blit and WM_PAINT draws nothing) and `xbox_FramebufferWindowClientSize`
   (physical pixels from WM_SIZE; GetClientRect from the DPI-unaware method thread may be scaled).
   Never `SendMessage` the window from the method thread (it holds `pgraph.lock`).
+- **Window present (plan 2.6b, the default)**: once `xbox_FramebufferWindowHwnd()` is non-NULL (handed
+  in through `mksm_gpu_set_window`, so the lib itself never calls the toolkit and `gpu_link` still
+  links), the method thread creates a second context on the window's DC while the render context is
+  current (`glo_context_create_for_window` in `gloffscreen_wgl.c`: same pixel format as the hidden
+  windows, newest 4.x core, sharing with the render context, `wglSwapIntervalEXT(0)`) and starts a
+  **present thread** that owns it. Each flip the method thread copies the scanout surface on the GPU
+  (`glCopyImageSubData` into a texture of the surface's internal format), fences it, `glFlush`, and
+  posts it to a three-slot mailbox (one shown, at most one waiting; a newer frame replaces the waiting
+  one). The present thread `glWaitSync`s (GPU side), clears the client area black, sets the viewport to
+  the surface's aspect fitted into `..ClientSize` (0 = minimised: no draw), draws one triangle from
+  `gl_VertexID` through a sampler object (bilinear, or `RECOMP_PB_GPU_FILTER=nearest`) and swaps; it
+  calls `..GpuPresent(1)` once its program is built. The frame shows at its own flip (PBO: one late).
+  The present callback gets `xrgb = NULL` (title-bar stats only). For the `[XGPU]` non-black count and
+  `RECOMP_PB_GPU_DUMP`, flips with `flips % 256 <= 1` (and the two up to the dump flip) also run the PBO
+  read, without handing the frame to the window. Headless (no window) and `RECOMP_PB_GPU_PRESENT=pbo`
+  keep the PBO path; a failed set-up logs and falls back to it.
+  **First try, rejected**: drawing and swapping on the method thread (`wglMakeCurrent` to the window
+  context and back each flip) made NVIDIA turn its driver thread off (gone from the profile; its work
+  and `DrvPresentBuffers`' waits landed on the method thread: 74% → 92% busy, level dips to 52 fps).
+  With the present thread the driver thread stays and the present costs the method thread ~1-2%.
 - **Pacing**: after presenting, the flip waits for the next 59.94 Hz VBlank on a fixed grid (high-resolution
   waitable timer); a late flip goes at once, one more than 4 periods late restarts the grid.
   `RECOMP_PB_GPU_VBLANK=<Hz>` changes it, 0 turns it off.

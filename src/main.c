@@ -241,6 +241,9 @@ static void gpu_notify(uint32_t param)
 extern void xbox_FramebufferWindowPresentPixels(const uint32_t *xrgb, uint32_t width,
                                                 uint32_t height);
 extern void xbox_FramebufferWindowFrameStats(uint32_t draws);
+extern void *xbox_FramebufferWindowHwnd(void);
+extern void xbox_FramebufferWindowGpuPresent(int on);
+extern int xbox_FramebufferWindowClientSize(uint32_t *width, uint32_t *height);
 
 #define GPU_VRAM_VA      0x80000000u        /* the contiguous window = physical view */
 #define GPU_VRAM_SIZE    (64u << 20)
@@ -252,10 +255,12 @@ extern void xbox_FramebufferWindowFrameStats(uint32_t draws);
 #define GPU_FENCE_OFF    0x00400B10u        /* NV_PGRAPH_PATT_COLOR0 */
 
 /* Each GPU frame goes to the framebuffer window (RECOMP_FB_WINDOW), as the software
- * executor's flip does with guest memory. */
+ * executor's flip does with guest memory, unless the renderer drew it into the window
+ * itself (xrgb = NULL, plan 2.6b); the title bar's stats either way. */
 static void gpu_present(const uint32_t *xrgb, unsigned width, unsigned height, unsigned draws)
 {
-    xbox_FramebufferWindowPresentPixels(xrgb, width, height);
+    if (xrgb)
+        xbox_FramebufferWindowPresentPixels(xrgb, width, height);
     xbox_FramebufferWindowFrameStats(draws);
 }
 
@@ -291,6 +296,14 @@ static bool gpu_init_from_env(void)
         return false;
     }
     mksm_gpu_set_present(gpu_present);
+    {
+        const MksmGpuWindow window = {
+            .hwnd = xbox_FramebufferWindowHwnd,
+            .gpu_present = xbox_FramebufferWindowGpuPresent,
+            .client_size = xbox_FramebufferWindowClientSize,
+        };
+        mksm_gpu_set_window(&window);
+    }
     mksm_gpu_set_notify(gpu_notify);
     nv2a_pb_set_method_hook(mksm_gpu_method);
     fprintf(stderr, "[BOOT] RECOMP_PB_GPU: pushbuffer -> xemu PGRAPH\n");

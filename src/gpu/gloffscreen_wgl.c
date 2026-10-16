@@ -9,6 +9,9 @@
  * current context to be queried, so the first call creates a throwaway legacy context once.
  * GL entry points are loaded with glad when the first real context is current.
  *
+ * Also (gloffscreen_wgl.h, not part of xemu's interface): a context on an existing window, the
+ * game window the method thread presents into, and its SwapBuffers.
+ *
  * SPDX-License-Identifier: MIT
  */
 
@@ -19,16 +22,20 @@
 #include <string.h>
 
 #include <glad/wgl.h>
-#include "gloffscreen.h"
+#include "gloffscreen_wgl.h"
 
 struct _GloContext {
     HWND hwnd;
     HDC hdc;
     HGLRC hglrc;
+    int own_window;     /* 0: a context on someone else's window (glo_context_create_for_window) */
 };
 
 static const wchar_t kClassName[] = L"mksm_gloffscreen";
 static int s_wgl_loaded, s_gl_loaded;
+
+static int set_pixel_format(HDC hdc);
+static HGLRC create_core_context(HDC hdc);
 
 static void fatal(const char *what)
 {
@@ -113,7 +120,81 @@ GloContext *glo_context_create(void)
     assert(context != NULL);
     context->hwnd = create_hidden_window();
     context->hdc = GetDC(context->hwnd);
+    context->own_window = 1;
 
+    if (!set_pixel_format(context->hdc)) {
+        fatal("wglChoosePixelFormatARB / SetPixelFormat");
+    }
+    context->hglrc = create_core_context(context->hdc);
+    if (!context->hglrc) {
+        fatal("wglCreateContextAttribsARB (OpenGL 4.0+ core)");
+    }
+
+    glo_set_current(context);
+    if (!s_gl_loaded) {
+        if (!gladLoaderLoadGL()) {
+            fprintf(stderr, "gloffscreen: loading the OpenGL entry points failed\n");
+            exit(1);
+        }
+        s_gl_loaded = 1;
+    }
+    return context;
+}
+
+GloContext *glo_context_create_for_window(void *hwnd)
+{
+    if (!s_wgl_loaded || !s_gl_loaded || !hwnd) {
+        return NULL;
+    }
+    HGLRC prev_rc = wglGetCurrentContext();
+    HDC prev_dc = wglGetCurrentDC();
+
+    GloContext *context = (GloContext *)calloc(1, sizeof(*context));
+    if (!context) {
+        return NULL;
+    }
+    context->hwnd = (HWND)hwnd;
+    context->hdc = GetDC(context->hwnd);
+    /* A pixel format can be set once per window; one already there (a second context on the
+     * same window) is kept. */
+    if (!context->hdc || (!GetPixelFormat(context->hdc) && !set_pixel_format(context->hdc))) {
+        fprintf(stderr, "gloffscreen: pixel format on the window failed (error %lu)\n",
+                GetLastError());
+        goto fail;
+    }
+    context->hglrc = create_core_context(context->hdc);
+    if (!context->hglrc || !wglMakeCurrent(context->hdc, context->hglrc)) {
+        fprintf(stderr, "gloffscreen: context on the window failed (error %lu)\n",
+                GetLastError());
+        goto fail;
+    }
+    /* Presents never wait for the monitor: the flip pacing does the waiting. */
+    if (GLAD_WGL_EXT_swap_control) {
+        wglSwapIntervalEXT(0);
+    }
+    wglMakeCurrent(prev_dc, prev_rc);
+    return context;
+
+fail:
+    if (context->hglrc) {
+        wglDeleteContext(context->hglrc);
+    }
+    if (context->hdc) {
+        ReleaseDC(context->hwnd, context->hdc);
+    }
+    free(context);
+    wglMakeCurrent(prev_dc, prev_rc);
+    return NULL;
+}
+
+void glo_swap_buffers(GloContext *context)
+{
+    SwapBuffers(context->hdc);
+}
+
+/* RGBA8, depth 24, stencil 8, double-buffered: the descriptor xemu asks SDL for. */
+static int set_pixel_format(HDC hdc)
+{
     const int fmt_attribs[] = {
         WGL_DRAW_TO_WINDOW_ARB, GL_TRUE,
         WGL_SUPPORT_OPENGL_ARB, GL_TRUE,
@@ -131,40 +212,29 @@ GloContext *glo_context_create(void)
     int fmt;
     UINT nfmt = 0;
     PIXELFORMATDESCRIPTOR pfd;
-    if (!wglChoosePixelFormatARB(context->hdc, fmt_attribs, NULL, 1, &fmt, &nfmt) || !nfmt ||
-        !DescribePixelFormat(context->hdc, fmt, sizeof(pfd), &pfd) ||
-        !SetPixelFormat(context->hdc, fmt, &pfd)) {
-        fatal("wglChoosePixelFormatARB / SetPixelFormat");
-    }
+    return wglChoosePixelFormatARB(hdc, fmt_attribs, NULL, 1, &fmt, &nfmt) && nfmt &&
+           DescribePixelFormat(hdc, fmt, sizeof(pfd), &pfd) && SetPixelFormat(hdc, fmt, &pfd);
+}
 
-    /* xemu asks SDL for 4.0 core but calls later entry points (glProgramUniform*, 4.1) that
-     * libepoxy resolves whatever the version. glad only loads up to the version the context
-     * reports, and NVIDIA reports exactly what was asked, so ask for the newest core version
-     * the driver has (core profiles are backward compatible) and go down to 4.0. */
+/* An OpenGL 4.x core context on `hdc` sharing objects with the current one, or NULL.
+ * xemu asks SDL for 4.0 core but calls later entry points (glProgramUniform*, 4.1) that
+ * libepoxy resolves whatever the version. glad only loads up to the version the context
+ * reports, and NVIDIA reports exactly what was asked, so ask for the newest core version
+ * the driver has (core profiles are backward compatible) and go down to 4.0. */
+static HGLRC create_core_context(HDC hdc)
+{
     static const int minors[] = { 6, 5, 4, 3, 2, 1, 0 };
-    for (size_t i = 0; i < sizeof(minors) / sizeof(minors[0]) && !context->hglrc; i++) {
+    HGLRC rc = NULL;
+    for (size_t i = 0; i < sizeof(minors) / sizeof(minors[0]) && !rc; i++) {
         const int ctx_attribs[] = {
             WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
             WGL_CONTEXT_MINOR_VERSION_ARB, minors[i],
             WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
             0,
         };
-        context->hglrc =
-            wglCreateContextAttribsARB(context->hdc, wglGetCurrentContext(), ctx_attribs);
+        rc = wglCreateContextAttribsARB(hdc, wglGetCurrentContext(), ctx_attribs);
     }
-    if (!context->hglrc) {
-        fatal("wglCreateContextAttribsARB (OpenGL 4.0+ core)");
-    }
-
-    glo_set_current(context);
-    if (!s_gl_loaded) {
-        if (!gladLoaderLoadGL()) {
-            fprintf(stderr, "gloffscreen: loading the OpenGL entry points failed\n");
-            exit(1);
-        }
-        s_gl_loaded = 1;
-    }
-    return context;
+    return rc;
 }
 
 void glo_set_current(GloContext *context)
@@ -184,7 +254,9 @@ void glo_context_destroy(GloContext *context)
     glo_set_current(NULL);
     wglDeleteContext(context->hglrc);
     ReleaseDC(context->hwnd, context->hdc);
-    DestroyWindow(context->hwnd);
+    if (context->own_window) {
+        DestroyWindow(context->hwnd);
+    }
     free(context);
 }
 

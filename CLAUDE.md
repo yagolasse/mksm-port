@@ -26,7 +26,8 @@ statically recompiling the retail `default.xbe` to C with
   (`qemu/lru.h`, `queue.h`, `mstring.h`, `fast-hash`), also unmodified;
   `xemu/shim/` = stand-ins for the QEMU/glib/xemu headers they include (incl. `epoxy/gl.h` → glad);
   `nv2a_vsh_cpu/`, `xxhash/` = vendored libraries; `glad/` = generated GL 4.6 core/WGL loader;
-  `gloffscreen_wgl.c` = xemu's GL context layer on WGL (hidden windows, newest 4.x core, shared contexts);
+  `gloffscreen_wgl.c` = xemu's GL context layer on WGL (hidden windows, newest 4.x core, shared contexts;
+  plus `gloffscreen_wgl.h`: a context on the game window for the present);
   `xemu_stubs.c` = externals from unported xemu files; `mksm_gpu.c` = stands in for xemu's PFIFO
   (RAMHT lookup, acks the NOP-notify and flip-stall waits, presents the last-drawn surface at the
   flip and paces flips to 59.94 Hz); `mksm_gpu.h` = the plain-C interface for
@@ -112,7 +113,9 @@ The window (toolkit `fb_present.c`, patch 0024) scales the frame to fit with bla
 resized; Alt+Enter toggles borderless fullscreen (not seen by the game as Start),
 `RECOMP_FB_FULLSCREEN=1` starts fullscreen. `RECOMP_FB_DUMP` needs an absolute path (the run
 scripts start the exe in `build/Release`). For a renderer drawing into the window itself it
-exports the HWND, a "GPU presents" switch (no GDI blit) and the client size in physical pixels.
+exports the HWND, a "GPU presents" switch (no GDI blit) and the client size in physical pixels;
+the GPU path uses them (plan 2.6b), so `RECOMP_FB_DUMP` sees only an occasional sampled frame
+there: use `RECOMP_PB_GPU_DUMP`, or `RECOMP_PB_GPU_PRESENT=pbo`.
 `tools/run.bat` is the cmd twin (same defaults and overrides). It writes the log without a live
 console view and prints the last 40 lines on exit; in cmd, turn `RECOMP_AC97_READY` off with `0`
 (empty means unset there). Keep the two scripts' defaults in sync.
@@ -181,9 +184,14 @@ the pacing (0 = uncapped), `RECOMP_PB_GPU_DUMP=<file.bmp>` (+ `RECOMP_PB_GPU_DUM
 600) dumps one presented frame. `RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
 changed on every use (default: once per pushbuffer kick, texture pages only when their content hash
 changed, see `docs/gpu-renderer.md`; for A/B runs); `=kick` drops the texture-page hash.
+By default (`RECOMP_PB_GPU_PRESENT=window`, plan 2.6b) the method thread draws the scanout surface
+straight into the game window: a GPU copy handed to a present thread that owns a second GL context
+on the window's DC (aspect-fit, black bars, `SwapBuffers`, vsync off; `RECOMP_PB_GPU_FILTER=nearest` instead of bilinear); two flips in 256 are
+also read back for the `[XGPU]` non-black count and `RECOMP_PB_GPU_DUMP`. Until the window exists
+(and always headless) frames go the `pbo` way: `RECOMP_PB_GPU_PRESENT=pbo` reads the scanout surface
+into a pixel-pack buffer and hands it to the GDI window one flip later (2.H.8c2b);
 `RECOMP_PB_GPU_PRESENT=sync` presents through xemu's display pass and a synchronous readback (the
-pre-2.H.8c2b path, for A/B); by default the scanout surface is read into a pixel-pack buffer and
-shown one flip later. The `[XGPU]` line also counts xemu's surface downloads/uploads/surface-to-texture.
+pre-2.H.8c2b path, for A/B). The `[XGPU]` line also counts xemu's surface downloads/uploads/surface-to-texture.
 `RECOMP_PB_GPU_GLCHECK=1` makes `glGetError` real again (xemu asserts it per draw; by default the shim
 answers `GL_NO_ERROR`, a guess that each call can stall NVIDIA's threaded driver; not measured alone).
 Movies (Sofdec) play on this path too (user, 2026-10-15, after 2.H.8c1). It still needs

@@ -39,10 +39,25 @@ int mksm_gpu_init(const MksmGpuMemory *mem, int opengl);
 
 /* Receives each finished frame at the flip (OpenGL renderer only): the surface the title
  * drew last, as top-down 0x00RRGGBB rows of `width` pixels. `draws` = draws since the last
- * flip. Runs on the method thread; the pixels are only valid during the call. */
+ * flip. Runs on the method thread; the pixels are only valid during the call. xrgb = NULL:
+ * the frame went straight into the window (mksm_gpu_set_window), only the stats are new. */
 typedef void (*MksmGpuPresentFn)(const uint32_t *xrgb, unsigned width, unsigned height,
                                  unsigned draws);
 void mksm_gpu_set_present(MksmGpuPresentFn fn);
+
+/* The game window, for presenting into it with OpenGL from the method thread (the toolkit's
+ * fb_present.c; plan 2.6b). Called on the method thread; none of them may block on the window
+ * thread (the method thread holds pgraph.lock). */
+typedef struct MksmGpuWindow {
+    void *(*hwnd)(void);                  /* the HWND once the window exists, else NULL */
+    void (*gpu_present)(int on);          /* 1: the window stops drawing frames itself */
+    int (*client_size)(uint32_t *width, uint32_t *height); /* physical pixels; 0 = not known */
+} MksmGpuWindow;
+
+/* With a window set and RECOMP_PB_GPU_PRESENT unset or "window", each flip draws the scanout
+ * surface into it (aspect-fit, black bars, RECOMP_PB_GPU_FILTER=nearest|linear) and swaps;
+ * until the window exists, frames go to the present callback as before. */
+void mksm_gpu_set_window(const MksmGpuWindow *window);
 
 /* Receives the parameter of each software notify (NO_OPERATION with a non-zero parameter),
  * which on hardware interrupts the title's GPU handler. Runs on the method thread. */

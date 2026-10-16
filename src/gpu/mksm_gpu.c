@@ -23,10 +23,11 @@
  * Scanout (OpenGL renderer): the title never writes PCRTC_START (D3D's VBlank handler would,
  * and there is none), so the flip shows the surface the title drew into last, as the software
  * executor does. That address goes into pcrtc.start and the VGA hooks report its pitch and
- * size. The surface is read back without waiting for the GPU and handed to the present
- * callback one flip later (present_async; RECOMP_PB_GPU_PRESENT=sync = xemu's own display
- * pass, pgraph_gl_sync, as xemu's UI thread asks for it). Both run on the method thread at
- * the flip, before the VBlank wait.
+ * size. Once the game window exists, the surface is drawn straight into it from a second
+ * context (present_window); before that, or with RECOMP_PB_GPU_PRESENT=pbo, it is read back
+ * without waiting for the GPU and handed to the present callback one flip later
+ * (present_async; =sync = xemu's own display pass, pgraph_gl_sync, as xemu's UI thread asks
+ * for it). All run on the method thread at the flip, before the VBlank wait.
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
@@ -35,6 +36,7 @@
 #include "hw/xbox/nv2a/pgraph/gl/renderer.h"
 #include "mksm_gpu.h"
 #include "xemu_stubs.h"
+#include "gloffscreen_wgl.h"
 #include "ui/xemu-settings.h"
 
 static NV2AState *s_dev;
@@ -224,7 +226,7 @@ static void note_scanout(NV2AState *d)
 
 /* RECOMP_PB_GPU_DUMP=<path.bmp>: one presented frame as a 24-bit BMP, at the flip given by
  * RECOMP_PB_GPU_DUMP_FLIP (default 600). */
-static void maybe_dump(const uint32_t *xrgb, unsigned w, unsigned h)
+static const char *dump_path(unsigned long *at_flip)
 {
     static const char *path = (const char *)-1;
     static unsigned long at;
@@ -233,6 +235,14 @@ static void maybe_dump(const uint32_t *xrgb, unsigned w, unsigned h)
         const char *f = getenv("RECOMP_PB_GPU_DUMP_FLIP");
         at = f ? strtoul(f, NULL, 0) : 600;
     }
+    *at_flip = at;
+    return path;
+}
+
+static void maybe_dump(const uint32_t *xrgb, unsigned w, unsigned h)
+{
+    unsigned long at;
+    const char *path = dump_path(&at);
     if (!path || s_stats.flips != at) {
         return;
     }
@@ -268,9 +278,10 @@ static void maybe_dump(const uint32_t *xrgb, unsigned w, unsigned h)
 }
 
 /* Hands one frame (0xAARRGGBB words, rows `src_step` words apart, the first row at `src`)
- * to the present callback as top-down 0x00RRGGBB rows. */
+ * to the present callback as top-down 0x00RRGGBB rows. hand_over = false: a frame read back
+ * only for the stats and the dump (the window present already showed it). */
 static void present_pixels(const uint32_t *src, ptrdiff_t src_step, unsigned w, unsigned h,
-                           unsigned draws)
+                           unsigned draws, bool hand_over)
 {
     static uint32_t *pixels;
     static size_t cap;
@@ -288,13 +299,15 @@ static void present_pixels(const uint32_t *src, ptrdiff_t src_step, unsigned w, 
             nonblack += v != 0;
         }
     }
-    s_stats.presents++;
-    s_stats.last_w = w;
-    s_stats.last_h = h;
     s_stats.last_nonblack = nonblack;
     maybe_dump(pixels, w, h);
-    if (s_present) {
-        s_present(pixels, w, h, draws);
+    if (hand_over) {
+        s_stats.presents++;
+        s_stats.last_w = w;
+        s_stats.last_h = h;
+        if (s_present) {
+            s_present(pixels, w, h, draws);
+        }
     }
 }
 
@@ -339,7 +352,7 @@ static void present_sync(NV2AState *d, SurfaceBinding *surface)
     glBindTexture(GL_TEXTURE_2D, 0);
     glo_set_current(g_nv2a_context_render);
     present_pixels(gl_rows + (size_t)(h - 1) * w, -(ptrdiff_t)w, w, h,
-                   (unsigned)s_stats.frame_draws);
+                   (unsigned)s_stats.frame_draws, true);
 }
 
 /* The default present: the scanout surface is read straight from its texture in the render
@@ -348,8 +361,9 @@ static void present_sync(NV2AState *d, SurfaceBinding *surface)
  * one flip late. xemu's display pass only adds the PVIDEO overlay (its registers are never
  * written here) and the scale to the CRTC mode (which is the surface size here), so a plain
  * read of the surface gives the same pixels. The surface texture's first row is the top one.
- * A surface format GL can't convert to BGRA8 (none seen) would need the display pass. */
-static void present_async(NV2AState *d, SurfaceBinding *surface)
+ * A surface format GL can't convert to BGRA8 (none seen) would need the display pass.
+ * hand_over: see present_pixels. */
+static void present_async(NV2AState *d, SurfaceBinding *surface, bool hand_over)
 {
     PGRAPHState *pg = &d->pgraph;
     PGRAPHGLState *r = pg->gl_renderer_state;
@@ -404,30 +418,293 @@ static void present_async(NV2AState *d, SurfaceBinding *surface)
             GL_PIXEL_PACK_BUFFER, 0, (GLsizeiptr)slot[prev].w * slot[prev].h * 4,
             GL_MAP_READ_BIT);
         if (px) {
-            present_pixels(px, slot[prev].w, slot[prev].w, slot[prev].h, slot[prev].draws);
+            present_pixels(px, slot[prev].w, slot[prev].w, slot[prev].h, slot[prev].draws,
+                           hand_over);
             glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
         }
     }
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 }
 
-/* The flip's scanout, OpenGL only. Called with pgraph.lock held. */
+/* The window present (plan 2.6b): the scanout surface goes straight into the game window, no
+ * readback and no GDI, and shows at its own flip.
+ *
+ * The method thread only copies the surface on the GPU (glCopyImageSubData) into one of three
+ * textures, fences the copy and hands the texture to a present thread. That thread owns a
+ * second context on the window's DC (sharing objects with the render context), waits for the
+ * fence on the GPU (glWaitSync), draws the texture as one triangle into an aspect-fit viewport
+ * (black bars) and swaps. Drawing and swapping on the method thread itself (switching contexts
+ * twice per flip) turned NVIDIA's driver thread off and put SwapBuffers' waits on the method
+ * thread: 74% -> 92% busy, level dips to 52 fps (plan 2.6b).
+ *
+ * The three textures are a mailbox: one the present thread shows, at most one waiting
+ * (`ready`; a newer frame replaces it), and the method thread fills one that is neither. The
+ * window's own thread keeps messages, focus and keys and draws nothing. */
+enum { WIN_SLOTS = 3 };
+
+static struct {
+    MksmGpuWindow fns;
+    bool have_fns;
+    volatile LONG failed, up;     /* set by the present thread */
+    GloContext *ctx;
+    CRITICAL_SECTION lock;
+    HANDLE wake;                  /* auto-reset: a frame is ready */
+    int ready, showing;           /* slot indices or -1; under lock */
+    struct {
+        GLuint tex;
+        GLenum fmt;
+        unsigned w, h;            /* texture size (scaled surface) */
+        unsigned aw, ah;          /* the surface's size, for the aspect */
+        GLsync fence;
+    } slot[WIN_SLOTS];
+} s_win;
+
+void mksm_gpu_set_window(const MksmGpuWindow *window)
+{
+    s_win.fns = *window;
+    s_win.have_fns = true;
+}
+
+static GLuint compile_shader(GLenum type, const char *src)
+{
+    GLuint sh = glCreateShader(type);
+    glShaderSource(sh, 1, &src, NULL);
+    glCompileShader(sh);
+    GLint ok = 0;
+    glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+        char log[512] = "";
+        glGetShaderInfoLog(sh, sizeof(log), NULL, log);
+        fprintf(stderr, "[XGPU] window present: shader compile failed: %s\n", log);
+        glDeleteShader(sh);
+        return 0;
+    }
+    return sh;
+}
+
+/* The present thread's program: a triangle covering the viewport, no vertex data. The
+ * surface's first texture row is its top line, so t runs downwards. 0 on failure. */
+static GLuint window_program(void)
+{
+    static const char vs_src[] =
+        "#version 400 core\n"
+        "out vec2 uv;\n"
+        "void main() {\n"
+        "    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n"
+        "    uv = vec2(p.x, 1.0 - p.y);\n"
+        "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+        "}\n";
+    static const char fs_src[] =
+        "#version 400 core\n"
+        "in vec2 uv;\n"
+        "uniform sampler2D tex;\n"
+        "layout(location = 0) out vec4 color;\n"
+        "void main() {\n"
+        "    color = vec4(texture(tex, uv).rgb, 1.0);\n"
+        "}\n";
+    GLuint vs = compile_shader(GL_VERTEX_SHADER, vs_src);
+    GLuint fs = compile_shader(GL_FRAGMENT_SHADER, fs_src);
+    GLuint prog = 0;
+    if (vs && fs) {
+        prog = glCreateProgram();
+        glAttachShader(prog, vs);
+        glAttachShader(prog, fs);
+        glLinkProgram(prog);
+        GLint linked = 0;
+        glGetProgramiv(prog, GL_LINK_STATUS, &linked);
+        if (!linked) {
+            fprintf(stderr, "[XGPU] window present: program link failed\n");
+            glDeleteProgram(prog);
+            prog = 0;
+        }
+    }
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    return prog;
+}
+
+static DWORD WINAPI present_thread(LPVOID unused)
+{
+    (void)unused;
+    glo_set_current(s_win.ctx);
+    GLuint prog = window_program();
+    if (!prog) {
+        fprintf(stderr, "[XGPU] window present unavailable, reading frames back instead\n");
+        InterlockedExchange(&s_win.failed, 1);
+        glo_set_current(NULL);
+        return 0;
+    }
+    glUseProgram(prog);
+    glUniform1i(glGetUniformLocation(prog, "tex"), 0);
+    GLuint vao, sampler;
+    glGenVertexArrays(1, &vao);    /* core profile draws need one bound */
+    glBindVertexArray(vao);
+    /* A sampler object, so the textures' own filter state doesn't matter. */
+    const char *f = getenv("RECOMP_PB_GPU_FILTER");
+    GLint filter = f && strcmp(f, "nearest") == 0 ? GL_NEAREST : GL_LINEAR;
+    glGenSamplers(1, &sampler);
+    glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, filter);
+    glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, filter);
+    glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glSamplerParameteri(sampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindSampler(0, sampler);
+    glActiveTexture(GL_TEXTURE0);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    s_win.fns.gpu_present(1);
+    InterlockedExchange(&s_win.up, 1);
+    fprintf(stderr, "[XGPU] presenting into the game window from thread %lu (%s filter)\n",
+            GetCurrentThreadId(), filter == GL_NEAREST ? "nearest" : "linear");
+
+    for (;;) {
+        WaitForSingleObject(s_win.wake, INFINITE);
+        EnterCriticalSection(&s_win.lock);
+        int i = s_win.ready;
+        if (i >= 0) {
+            s_win.showing = i;
+            s_win.ready = -1;
+        }
+        LeaveCriticalSection(&s_win.lock);
+        if (i < 0) {
+            continue;
+        }
+        if (s_win.slot[i].fence) {
+            glWaitSync(s_win.slot[i].fence, 0, GL_TIMEOUT_IGNORED);
+            glDeleteSync(s_win.slot[i].fence);
+            s_win.slot[i].fence = NULL;
+        }
+        uint32_t cw = 0, ch = 0;
+        s_win.fns.client_size(&cw, &ch);
+        if (!cw || !ch) {    /* minimised */
+            continue;
+        }
+        glViewport(0, 0, (GLsizei)cw, (GLsizei)ch);
+        glClear(GL_COLOR_BUFFER_BIT);
+        /* The largest rect of the surface's aspect that fits, centred. */
+        uint32_t aw = s_win.slot[i].aw, ah = s_win.slot[i].ah, w = cw, h = ch;
+        if ((uint64_t)cw * ah > (uint64_t)ch * aw) {
+            w = (uint32_t)((uint64_t)ch * aw / ah);
+        } else {
+            h = (uint32_t)((uint64_t)cw * ah / aw);
+        }
+        glViewport((GLint)(cw - w) / 2, (GLint)(ch - h) / 2, (GLsizei)w, (GLsizei)h);
+        glBindTexture(GL_TEXTURE_2D, s_win.slot[i].tex);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glo_swap_buffers(s_win.ctx);
+    }
+}
+
+/* Returns false while the window can't be drawn into (not open yet, or set-up failed): the
+ * caller presents through the present callback instead. Method thread, render context. */
+static bool present_window(NV2AState *d, SurfaceBinding *surface)
+{
+    if (s_win.failed) {
+        return false;
+    }
+    if (!s_win.ctx) {
+        void *hwnd = s_win.have_fns ? s_win.fns.hwnd() : NULL;
+        if (!hwnd) {
+            return false;
+        }
+        /* Created here, where the render context is current, so the two share objects. */
+        s_win.ctx = glo_context_create_for_window(hwnd);
+        InitializeCriticalSection(&s_win.lock);
+        s_win.wake = CreateEventW(NULL, FALSE, FALSE, NULL);
+        s_win.ready = s_win.showing = -1;
+        HANDLE th = s_win.ctx && s_win.wake ? CreateThread(NULL, 0, present_thread, NULL, 0, NULL)
+                                            : NULL;
+        if (!th) {
+            fprintf(stderr, "[XGPU] window present unavailable, reading frames back instead\n");
+            s_win.failed = 1;
+            return false;
+        }
+        CloseHandle(th);
+    }
+    if (!s_win.up) {
+        return false;    /* the present thread is still setting up */
+    }
+    if (surface->upload_pending) {
+        pgraph_gl_upload_surface_data(d, surface, !tcg_enabled());
+    }
+
+    EnterCriticalSection(&s_win.lock);
+    int i = 0;
+    while (i == s_win.ready || i == s_win.showing) {
+        i++;
+    }
+    LeaveCriticalSection(&s_win.lock);
+
+    /* Slot i is neither shown nor waiting: the method thread has it to itself. */
+    unsigned scale = d->pgraph.surface_scale_factor ? d->pgraph.surface_scale_factor : 1;
+    unsigned w = surface->width * scale, h = surface->height * scale;
+    GLenum fmt = surface->fmt.gl_internal_format;
+    if (s_win.slot[i].fence) {    /* a frame that was replaced before it was shown */
+        glDeleteSync(s_win.slot[i].fence);
+        s_win.slot[i].fence = NULL;
+    }
+    if (!s_win.slot[i].tex || s_win.slot[i].w != w || s_win.slot[i].h != h ||
+        s_win.slot[i].fmt != fmt) {
+        /* Same internal format as the surface: glCopyImageSubData copies raw texels. */
+        glDeleteTextures(1, &s_win.slot[i].tex);
+        glGenTextures(1, &s_win.slot[i].tex);
+        glBindTexture(GL_TEXTURE_2D, s_win.slot[i].tex);
+        glTexStorage2D(GL_TEXTURE_2D, 1, fmt, (GLsizei)w, (GLsizei)h);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        s_win.slot[i].w = w;
+        s_win.slot[i].h = h;
+        s_win.slot[i].fmt = fmt;
+    }
+    glCopyImageSubData(surface->gl_buffer, GL_TEXTURE_2D, 0, 0, 0, 0, s_win.slot[i].tex,
+                       GL_TEXTURE_2D, 0, 0, 0, 0, (GLsizei)w, (GLsizei)h, 1);
+    s_win.slot[i].aw = surface->width;
+    s_win.slot[i].ah = surface->height;
+    s_win.slot[i].fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    glFlush();
+
+    EnterCriticalSection(&s_win.lock);
+    s_win.ready = i;
+    LeaveCriticalSection(&s_win.lock);
+    SetEvent(s_win.wake);
+
+    s_stats.presents++;
+    s_stats.last_w = surface->width;
+    s_stats.last_h = surface->height;
+    if (s_present) {
+        s_present(NULL, surface->width, surface->height, (unsigned)s_stats.frame_draws);
+    }
+    return true;
+}
+
+/* The flip's scanout, OpenGL only. Called with pgraph.lock held.
+ * RECOMP_PB_GPU_PRESENT: window (default) / pbo (present_async) / sync (present_sync). */
 static void present_scanout(NV2AState *d)
 {
-    static int sync = -1;
-    if (sync < 0) {
+    enum { MODE_WINDOW, MODE_PBO, MODE_SYNC };
+    static int mode = -1;
+    if (mode < 0) {
         const char *e = getenv("RECOMP_PB_GPU_PRESENT");
-        sync = e && strcmp(e, "sync") == 0;
+        mode = !e || !*e || strcmp(e, "window") == 0 ? MODE_WINDOW
+               : strcmp(e, "sync") == 0             ? MODE_SYNC
+                                                    : MODE_PBO;
     }
     SurfaceBinding *surface = scanout_surface(d);
     if (!surface) {
         s_stats.no_surface++;
         return;
     }
-    if (sync) {
+    if (mode == MODE_SYNC) {
         present_sync(d, surface);
+    } else if (mode == MODE_PBO || !present_window(d, surface)) {
+        present_async(d, surface, true);
     } else {
-        present_async(d, surface);
+        /* The window shows the frame on the GPU; for the [XGPU] non-black count and
+         * RECOMP_PB_GPU_DUMP, two flips in every 256 (and the two up to the dump flip) are also
+         * read back. A read is handed out one flip later, so a pair gives one fresh frame. */
+        unsigned long at;
+        const char *dump = dump_path(&at);
+        unsigned long f = s_stats.flips;
+        if ((f & 0xFF) <= 1 || (dump && (f == at || f + 1 == at))) {
+            present_async(d, surface, false);
+        }
     }
 }
 

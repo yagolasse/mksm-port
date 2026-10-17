@@ -258,8 +258,13 @@ it), cropping only black rows; the others stay pillarboxed. `RECOMP_MOVIE_ZOOM=0
 `RECOMP_MOVIE_ZOOM_GAUNTLET=1` also zooms the Gauntlet trailer (cuts its full-frame shots). The
 dump shows the unzoomed frame. `RECOMP_CINE_LOG=1` prints `[cine]` lines when the cutscene signals change (sequence
 flag, cinematic camera, letterbox bars, fade) and at movie start/end.
+With the wide buffer the HUD sits at the screen edges (plan B5d2, `RECOMP_HUD_EDGES=0` keeps
+it at its 4:3 place in the centre 640): `recomp_manual.c` records the HUD manager's elements
+as the game builds them, moves each left/right piece by ∓(W-640)/2 for its draw (centred ones
+stay) and moves the text an element's callback queues the same way.
 `RECOMP_HUD_LOG=1` (plan B5d1) logs every 300th sprite flush: the drawn sprites (position, size,
-anchor flags) and the next frame's queued text and rect quads with their callers (`[HUD]` lines).
+anchor flags, HUD side) and the next frame's queued text and rect quads with the HUD element
+whose callback queued them (`[HUD]` lines).
 `RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
 changed on every use (default: once per pushbuffer kick, texture pages only when their content hash
 changed, see `docs/gpu-renderer.md`; for A/B runs); `=kick` drops the texture-page hash.

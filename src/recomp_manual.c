@@ -485,16 +485,25 @@ static void wide_shift_rect_args(void)
     GUEST_U32(g_esp + 12u) = (uint32_t)x1;
 }
 
-/* ── HUD survey (plan B5d1) ────────────────────────────────────────────────
+/* ── HUD at the screen edges (plan B5d2) ───────────────────────────────────
  *
- * RECOMP_HUD_LOG=1: which 2D pieces the HUD draws, for anchoring it to the screen edges.
- * The HUD update 0x00091150 runs the HUD element updates; one of them, 0x00084C70, calls
- * 0x00084A50 once per player HUD (player 1, then 2). Sprites the HUD code shows or hides
- * (0x0015DAE0, thiscall ecx = sprite) inside those calls are tagged with the context; every
- * 600th sprite flush (0x0011D140) logs the drawn sprites (0x0011D000, entry: rect at +0,
- * sprite at +8; sprite x/y floats +0xC0/+0xC4, anchor flags +0x78), and the text
- * (0x001EEF90, thiscall x, y, colour, string, align) and rect quads (0x00125E10) queued
- * during the frame before it, with their callers. */
+ * With the wide buffer the HUD (authored for 640) sits pillarboxed in the centre 640 columns.
+ * RECOMP_HUD_EDGES (default on with RECOMP_ASPECT_WIDE; =0 keeps the 4:3 place) moves it out to
+ * the screen edges: pieces on the left by -(W - 640) / 2, on the right by +(W - 640) / 2,
+ * centred ones stay (../docs/widescreen.md § 15/16).
+ * - The HUD manager (built by 0x000921D0) keeps its elements, one sprite each, in a pointer
+ *   array (mgr +0, 128 slots). Elements come from layout tables (0x00091240, thiscall ecx = mgr,
+ *   the table first) or per player (0x000914F0); the wrapper below remembers the centred ones:
+ *   made from the bottom-bar or popup tables, or placed at x 320.
+ * - Side of the others: the sprite's x (+0xC0, 640 space) at the draw vs 320. The draw
+ *   (0x0011D000, cdecl entry; sprite at entry +8) gets the x moved for the call.
+ * - The HUD text is queued by the elements' per-frame callbacks (run by 0x001B6900 through
+ *   +0x1FC, with the element as the argument) via the text helper 0x001EEF90: the callback's
+ *   element is caught at the indirect call (recomp_lookup_manual) and its text moved alike.
+ *
+ * RECOMP_HUD_LOG=1 (plan B5d1) logs every 300th sprite flush: the drawn sprites (position,
+ * size, anchor flags, HUD side) and the next frame's queued text and rect quads with the
+ * element whose callback queued them (`[HUD]` lines). */
 static int hud_log_on(void)
 {
     static int on = -1;
@@ -505,20 +514,104 @@ static int hud_log_on(void)
     return on;
 }
 
-/* 0 = not in HUD code, 1 = HUD update, 2 / 3 = player 1 / 2 HUD */
-static int hud_ctx, hud_player_seq;
-static unsigned hud_frame;
-
-#define HUD_TAGS 1024
-static struct { uint32_t sprite, ra; int ctx; } hud_tags[HUD_TAGS];
-static int hud_ntags;
-
-static int hud_tag_find(uint32_t sprite)
+/* how far HUD pieces move to the edges (0 = off) */
+static int hud_edge_shift(void)
 {
-    for (int i = 0; i < hud_ntags; i++)
-        if (hud_tags[i].sprite == sprite)
-            return i;
-    return -1;
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("RECOMP_HUD_EDGES");
+        on = !(e && *e == '0');
+    }
+    return on ? wide_2d_shift() : 0;
+}
+
+#define HUD_SLOTS 128u
+static uint32_t hud_mgr, hud_cur;
+static int hud_in_loop;
+static uint32_t hud_centred[HUD_SLOTS];
+static unsigned hud_ncentred, hud_frame;
+
+/* RAM, or its 0x80000000 mirror (the HUD's sprites and manager live there) */
+static int hud_va_ok(uint32_t va)
+{
+    return (va >= 0x00010000u && va < 0x04000000u) || (va >= 0x80000000u && va < 0x84000000u);
+}
+
+static uint32_t hud_list(void)
+{
+    uint32_t list = hud_va_ok(hud_mgr) ? GUEST_U32(hud_mgr) : 0;
+    return hud_va_ok(list) ? list : 0;
+}
+
+/* -1 left, +1 right, 0 centred or not a HUD element */
+static int hud_side(uint32_t s)
+{
+    uint32_t list = hud_list();
+    float x;
+    unsigned i;
+    if (!list || !s)
+        return 0;
+    for (i = 0; i < HUD_SLOTS && GUEST_U32(list + 4u * i) != s; i++)
+        ;
+    if (i == HUD_SLOTS)
+        return 0;
+    for (i = 0; i < hud_ncentred; i++)
+        if (hud_centred[i] == s)
+            return 0;
+    x = GUEST_F32(s + 0xC0u);
+    return x < 320.0f ? -1 : x > 320.0f ? 1 : 0;
+}
+
+/* Elements from a layout table (0x38-byte rows, x at +8). */
+extern void sub_00091240_gen(void);
+void sub_00091240(void)
+{
+    uint32_t mgr = g_ecx, table = GUEST_U32(g_esp + 4u), list, before[HUD_SLOTS];
+    int centred_table = table == 0x004EC2C8u || table == 0x004EC878u;
+    unsigned i, j;
+    list = hud_va_ok(mgr) ? GUEST_U32(mgr) : 0;
+    if (!hud_va_ok(list)) {
+        sub_00091240_gen();
+        return;
+    }
+    if (mgr != hud_mgr || GUEST_U32(mgr + 4u) == 0)
+        hud_ncentred = 0;    /* a new HUD */
+    hud_mgr = mgr;
+    for (i = 0; i < HUD_SLOTS; i++)
+        before[i] = GUEST_U32(list + 4u * i);
+    sub_00091240_gen();
+    for (i = 0; i < HUD_SLOTS; i++) {
+        uint32_t s = GUEST_U32(list + 4u * i);
+        if (!s || s == before[i])
+            continue;
+        for (j = 0; j < hud_ncentred && hud_centred[j] != s; j++)
+            ;
+        if (centred_table || GUEST_F32(s + 0xC0u) == 320.0f) {
+            if (j == hud_ncentred && hud_ncentred < HUD_SLOTS)
+                hud_centred[hud_ncentred++] = s;
+        } else if (j < hud_ncentred) {
+            hud_centred[j] = hud_centred[--hud_ncentred];
+        }
+    }
+}
+
+/* the per-frame element callbacks; hud_cur is the element whose callback runs */
+extern void sub_001B6900_gen(void);
+void sub_001B6900(void)
+{
+    hud_cur = 0;
+    hud_in_loop = 1;
+    sub_001B6900_gen();
+    hud_in_loop = 0;
+    hud_cur = 0;
+}
+
+/* called from recomp_lookup_manual for every indirect call: the loop's call returns to
+ * 0x001B691D with the element as the only argument */
+static void hud_note_callback(void)
+{
+    if (hud_in_loop && GUEST_U32(g_esp) == 0x001B691Du)
+        hud_cur = GUEST_U32(g_esp + 4u);
 }
 
 static int hud_log_frame(void)
@@ -532,42 +625,6 @@ static int hud_log_queue_frame(void)
     return hud_log_on() && hud_frame % 300u == 0u && hud_frame;
 }
 
-extern void sub_00091150_gen(void);
-void sub_00091150(void)
-{
-    int was = hud_ctx;
-    if (!hud_ctx)
-        hud_ctx = 1;
-    sub_00091150_gen();
-    hud_ctx = was;
-}
-
-void sub_00084C70_enter(void) { hud_player_seq = 0; }
-
-extern void sub_00084A50_gen(void);
-void sub_00084A50(void)
-{
-    int was = hud_ctx;
-    hud_ctx = hud_player_seq++ ? 3 : 2;
-    sub_00084A50_gen();
-    hud_ctx = was;
-}
-
-void sub_0015DAE0_enter(void)
-{
-    int i;
-    if (!hud_log_on() || !hud_ctx)
-        return;
-    i = hud_tag_find(g_ecx);
-    if (i < 0 && hud_ntags < HUD_TAGS)
-        i = hud_ntags++;
-    if (i >= 0) {
-        hud_tags[i].sprite = g_ecx;
-        hud_tags[i].ra = GUEST_U32(g_esp);
-        hud_tags[i].ctx = hud_ctx;
-    }
-}
-
 void sub_0011D140_enter(void)
 {
     hud_frame++;
@@ -576,71 +633,65 @@ void sub_0011D140_enter(void)
                 hud_frame);
 }
 
-void sub_0011D000_enter(void)
+static void hud_log_sprite(uint32_t e)
 {
-    uint32_t e, rect, s;
-    int i;
-    if (!hud_log_frame())
-        return;
-    e = GUEST_U32(g_esp + 4u);
-    rect = e ? GUEST_U32(e) : 0;
-    s = e ? GUEST_U32(e + 8u) : 0;
+    uint32_t rect = e ? GUEST_U32(e) : 0, s = e ? GUEST_U32(e + 8u) : 0;
     if (!rect || !s || GUEST_U8(s + 0x70u) || !GUEST_U32(s + 0x128u))
         return;
-    i = hud_tag_find(s);
-    fprintf(stderr, "[HUD] sprite 0x%08X ctx=%d ra=0x%08X x=%.1f y=%.1f flags=0x%02X w=%d h=%d "
-            "tex=0x%08X refs", s, i < 0 ? 0 : hud_tags[i].ctx, i < 0 ? 0 : hud_tags[i].ra,
-            GUEST_F32(s + 0xC0u), GUEST_F32(s + 0xC4u), GUEST_U32(s + 0x78u) & 0xFFu,
+    fprintf(stderr, "[HUD] sprite 0x%08X side=%d x=%.1f y=%.1f flags=0x%02X w=%d h=%d "
+            "tex=0x%08X\n", s, hud_side(s), GUEST_F32(s + 0xC0u), GUEST_F32(s + 0xC4u),
+            GUEST_U32(s + 0x78u) & 0xFFu,
             *(volatile int16_t *)((uintptr_t)rect + 4u + g_xbox_mem_offset),
             *(volatile int16_t *)((uintptr_t)rect + 6u + g_xbox_mem_offset),
             GUEST_U32(s + 0x128u));
-    /* who holds a pointer to it in the game's data/bss (the HUD's own struct, if any) */
-    {
-        int n = 0;
-        for (uint32_t va = 0x004E0000u; va < 0x00700000u && n < 6; va += 4)
-            if (GUEST_U32(va) == s) {
-                fprintf(stderr, " 0x%08X", va);
-                n++;
-            }
-    }
-    fprintf(stderr, "\n");
 }
 
-/* the UI text helper the HUD code calls (cdecl; args logged raw) */
-void sub_00152AE0_enter(void)
+/* sprite draw (cdecl entry): a HUD piece drawn at its edge-anchored x */
+extern void sub_0011D000_gen(void);
+void sub_0011D000(void)
 {
-    if (!hud_log_queue_frame())
+    uint32_t e = GUEST_U32(g_esp + 4u), s = e ? GUEST_U32(e + 8u) : 0;
+    int dx = hud_edge_shift(), side = dx && s ? hud_side(s) : 0;
+    float x;
+    if (hud_log_frame())
+        hud_log_sprite(e);
+    if (!side) {
+        sub_0011D000_gen();
         return;
-    fprintf(stderr, "[HUD] text2 ctx=%d ra=0x%08X args %08X %08X %08X %08X %08X %08X\n",
-            hud_ctx, GUEST_U32(g_esp), GUEST_U32(g_esp + 4u), GUEST_U32(g_esp + 8u),
-            GUEST_U32(g_esp + 12u), GUEST_U32(g_esp + 16u), GUEST_U32(g_esp + 20u),
-            GUEST_U32(g_esp + 24u));
+    }
+    x = GUEST_F32(s + 0xC0u);
+    GUEST_F32(s + 0xC0u) = x + (float)(side * dx);
+    sub_0011D000_gen();
+    GUEST_F32(s + 0xC0u) = x;
 }
 
+/* text (thiscall; x, y floats, colour, string, align): a HUD element's text follows it */
 void sub_001EEF90_enter(void)
 {
-    char str[48];
-    uint32_t va;
-    size_t i;
-    if (!hud_log_queue_frame())
-        return;
-    va = GUEST_U32(g_esp + 0x10u);
-    for (i = 0; va && i < sizeof(str) - 1 && GUEST_U8(va + i); i++) {
-        uint8_t c = GUEST_U8(va + i);
-        str[i] = c >= 0x20 && c < 0x7F ? (char)c : '.';
+    int dx = hud_edge_shift(), side = dx && hud_cur ? hud_side(hud_cur) : 0;
+    if (hud_log_queue_frame()) {
+        char str[48];
+        uint32_t va = GUEST_U32(g_esp + 0x10u);
+        size_t i;
+        for (i = 0; va && i < sizeof(str) - 1 && GUEST_U8(va + i); i++) {
+            uint8_t c = GUEST_U8(va + i);
+            str[i] = c >= 0x20 && c < 0x7F ? (char)c : '.';
+        }
+        str[i] = 0;
+        fprintf(stderr, "[HUD] text elem=0x%08X side=%d ra=0x%08X x=%.1f y=%.1f align=%d "
+                "\"%s\"\n", hud_cur, side, GUEST_U32(g_esp), GUEST_F32(g_esp + 4u),
+                GUEST_F32(g_esp + 8u), (int)GUEST_U32(g_esp + 0x14u), str);
     }
-    str[i] = 0;
-    fprintf(stderr, "[HUD] text ctx=%d ra=0x%08X x=%.1f y=%.1f align=%d \"%s\"\n", hud_ctx,
-            GUEST_U32(g_esp), GUEST_F32(g_esp + 4u), GUEST_F32(g_esp + 8u),
-            (int)GUEST_U32(g_esp + 0x14u), str);
+    if (side)
+        GUEST_F32(g_esp + 4u) += (float)(side * dx);
 }
 
 static void hud_log_rect(void)
 {
     if (!hud_log_queue_frame())
         return;
-    fprintf(stderr, "[HUD] rect ctx=%d ra=0x%08X %d,%d .. %d,%d\n", hud_ctx, GUEST_U32(g_esp),
-            (int)GUEST_U32(g_esp + 4u), (int)GUEST_U32(g_esp + 8u),
+    fprintf(stderr, "[HUD] rect elem=0x%08X ra=0x%08X %d,%d .. %d,%d\n", hud_cur,
+            GUEST_U32(g_esp), (int)GUEST_U32(g_esp + 4u), (int)GUEST_U32(g_esp + 8u),
             (int)GUEST_U32(g_esp + 12u), (int)GUEST_U32(g_esp + 16u));
 }
 
@@ -827,6 +878,7 @@ void sub_000CB780_enter(void)
 
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
 {
+    hud_note_callback();
     if (xbox_va == 0x00319DF0u && audio_tick_stats())
         return counted_audio_tick;
 

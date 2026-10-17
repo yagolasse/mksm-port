@@ -56,6 +56,11 @@ glad 2.0.8 (OpenGL / WGL loader, generated)
   License: generated code is WTFPL OR CC0-1.0; the Khronos API definitions it is built from are
            Apache-2.0 (SPDX line in each file); khrplatform.h is MIT-style (text in the file)
 
+SDL 2.32.10 (game window and keys; linked static into the exe)
+  Source:  https://github.com/libsdl-org/SDL, tag release-2.32.10 (fetched by CMake at configure
+           time, not in this repo)
+  License: zlib, LICENSE.txt in SDL's source tree (copyright Sam Lantinga)
+
 xboxrecomp
   Source:  https://github.com/sp00nznet/xboxrecomp (git submodule, external/xboxrecomp)
   License: see external/xboxrecomp/LICENSE and external/xboxrecomp/LICENSES

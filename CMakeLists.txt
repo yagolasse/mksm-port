@@ -33,6 +33,32 @@ add_compile_definitions(
 set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/xboxrecomp" CACHE PATH
     "Path to the xboxrecomp toolkit root directory")
 
+# ── SDL2 (plan B9a1) ────────────────────────────────────────────
+#
+# MKSM_SDL_WINDOW=ON (default): the game window and its keys go through SDL2
+# (toolkit XBOX_SDL_WINDOW, src/video/fb_present_sdl.c) instead of the GDI window.
+# SDL2 is built from its source here and linked static (one exe, no SDL2.dll;
+# zlib licence, see NOTICE). OFF = the GDI window, for A/B runs.
+option(MKSM_SDL_WINDOW "Game window through SDL2 (static) instead of GDI" ON)
+if(MKSM_SDL_WINDOW)
+    include(FetchContent)
+    FetchContent_Declare(SDL2
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+        GIT_TAG        release-2.32.10
+        GIT_SHALLOW    ON)
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST OFF CACHE BOOL "" FORCE)
+    set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+    set(SDL2_DISABLE_UNINSTALL ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(SDL2)
+    # The toolkit links SDL2::SDL2.
+    if(NOT TARGET SDL2::SDL2)
+        add_library(SDL2::SDL2 ALIAS SDL2-static)
+    endif()
+    set(XBOX_SDL_WINDOW ON)
+endif()
+
 # Add xboxrecomp as a subdirectory -- this builds all 6 runtime libraries
 # and provides the 'xboxrecomp' umbrella target to link against.
 add_subdirectory(${XBOXRECOMP_DIR} ${CMAKE_BINARY_DIR}/xboxrecomp)

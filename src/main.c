@@ -253,6 +253,7 @@ static void gpu_notify(uint32_t param)
 extern void xbox_FramebufferWindowPresentPixels(const uint32_t *xrgb, uint32_t width,
                                                 uint32_t height);
 extern void xbox_FramebufferWindowFrameStats(uint32_t draws);
+extern void xbox_FramebufferWindowExternalPresent(int on);
 extern void *xbox_FramebufferWindowHwnd(void);
 extern void xbox_FramebufferWindowGpuPresent(int on);
 extern int xbox_FramebufferWindowClientSize(uint32_t *width, uint32_t *height);
@@ -315,6 +316,14 @@ static bool gpu_init_from_env(void)
             .client_size = xbox_FramebufferWindowClientSize,
         };
         mksm_gpu_set_window(&window);
+    }
+    /* The window present draws into the window itself: the SDL window (B9a1) then makes
+     * no renderer of its own. Same test as mksm_gpu.c's present mode; before the window
+     * opens (the toolkit opens it at the first display-mode set). */
+    {
+        const char *pm = getenv("RECOMP_PB_GPU_PRESENT");
+        if (opengl && (!pm || !*pm || strcmp(pm, "window") == 0))
+            xbox_FramebufferWindowExternalPresent(1);
     }
     mksm_gpu_set_notify(gpu_notify);
     nv2a_pb_set_method_hook(mksm_gpu_method);

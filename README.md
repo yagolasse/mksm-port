@@ -50,7 +50,8 @@ binary, so you produce it yourself from your own copy (step 3 below).
 ## Requirements
 
 - Windows 10/11 x64, a GPU with OpenGL 4.x
-- Visual Studio 2022 (C++ workload) and CMake
+- Visual Studio 2022 (C++ workload) and CMake; Git (the first configure downloads SDL2's source
+  and builds it into the exe)
 - clang-cl (LLVM 18 or newer) and Ninja on `PATH`, for the GPU renderer library
 - Python 3.10+ with `capstone` (`pip install capstone`)
 - Git Bash (the run scripts and pipeline commands are POSIX shell)
@@ -96,6 +97,7 @@ binary, so you produce it yourself from your own copy (step 3 below).
    cmake --build build --config Release --parallel 6
    ```
    If clang-cl isn't at the default path, pass `-DMKSM_CLANG_CL=<path to clang-cl.exe>`.
+   `-DMKSM_SDL_WINDOW=OFF` builds the older Win32 (GDI) game window instead of the SDL2 one.
 
 5. **Check** (optional): `python tools/smoke_test.py` runs the game headless through the intros,
    the menus and into the first level.
@@ -113,6 +115,7 @@ overrides it) and write a log to `../logs/run_<timestamp>.log`.
   white/black, 1/3 = triggers, numpad 8/2/4/6 = left stick, I/J/K/L = right stick. An XInput
   controller works as pad 1.
 - Alt+Enter toggles borderless fullscreen (`RECOMP_FB_FULLSCREEN=1` starts in it).
+  `RECOMP_WINDOW_SCALE=2` (up to 8) opens the window at twice 640x480.
 - `RECOMP_PB_GPU_SCALE=2` (or 3, 4) renders at a higher internal resolution.
 - `RECOMP_ASPECT=16:9 RECOMP_ASPECT_WIDE=1` (experimental; also `16:10`, `21:9`) renders a
   wide view: menus and text stay pillarboxed at 4:3, the in-game HUD moves to the screen edges

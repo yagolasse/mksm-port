@@ -20,6 +20,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
 
 /* ── ICALL trace ring buffer ───────────────────────────────── */
 
@@ -378,10 +379,63 @@ static int cine_log_on(void);
 /* With the wide buffer a movie keeps 640x480: the set-up resets the device to the movie's size
  * (0x0011B200, same present parameters) and draws a 640-space quad; the present pillarboxes
  * it. The tear-down ends with the display init 0x0011B290, which widens the buffer again. */
+/* Movie zoom (plan B5c2): most movies are letterboxed inside their 4:3 frame, so on a wider
+ * window the present may zoom them up to the share the picture fills (480 / picture rows, by
+ * decoding the files: ../docs/widescreen.md § 14), cropping only black rows. The rest (logo or
+ * card on black, full-frame shots) stay pillarboxed. Keyed by the file name the movie player
+ * 0x00128DE0 (name, w, h, ...) gets, the only caller of the set-up. RECOMP_MOVIE_ZOOM=0 turns it
+ * off; RECOMP_MOVIE_ZOOM_GAUNTLET=1 zooms the Gauntlet trailer too, which cuts 17% of its
+ * full-frame shots at 16:9. */
+static float movie_zoom_for(const char *name)
+{
+    static const struct { const char *name; float zoom; } table[] = {
+        { "opening.sfd", 480.0f / 288 }, { "end006.sfd", 480.0f / 340 },
+        { "end011.sfd", 480.0f / 352 },  { "final.sfd", 480.0f / 340 },
+        { "blitz.sfd", 480.0f / 322 },
+    };
+    const char *e = getenv("RECOMP_MOVIE_ZOOM"), *base = name, *p;
+    if (e && *e == '0')
+        return 0.0f;
+    for (p = name; *p; p++)
+        if (*p == '\\' || *p == '/' || *p == ':')
+            base = p + 1;
+    for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+        if (_stricmp(base, table[i].name) == 0)
+            return table[i].zoom;
+    e = getenv("RECOMP_MOVIE_ZOOM_GAUNTLET");
+    if (_stricmp(base, "gauntlet.sfd") == 0 && e && *e && *e != '0')
+        return 4.0f / 3.0f;
+    return 0.0f;
+}
+
+static void movie_zoom_start(void)
+{
+    char name[128];
+    uint32_t va, w, h;
+    size_t i;
+    float zoom;
+    /* The set-up's return address in 0x00128DE0, whose own arguments sit above its 4 saved
+     * registers and the 2 set-up arguments. */
+    if (GUEST_U32(g_esp) != 0x00128DF3u)
+        return;
+    va = GUEST_U32(g_esp + 0x20u);
+    w = GUEST_U32(g_esp + 0x24u);
+    h = GUEST_U32(g_esp + 0x28u);
+    for (i = 0; va && i < sizeof(name) - 1 && GUEST_U8(va + i); i++)
+        name[i] = (char)GUEST_U8(va + i);
+    name[i] = 0;
+    zoom = movie_zoom_for(name);
+    fprintf(stderr, "[MOVIE] %s %ux%u: zoom up to %.3f\n", name, w, h, zoom ? zoom : 1.0f);
+#ifdef MKSM_HAVE_GPU
+    mksm_gpu_set_movie_zoom(zoom);
+#endif
+}
+
 void sub_00142420_enter(void)
 {
     if (cine_log_on())
         fprintf(stderr, "[cine] movie start\n");
+    movie_zoom_start();
     wide_in_movie = 1;
     if (wide_aspect())
         wide_set_output(1);
@@ -391,6 +445,9 @@ void sub_00141F10_enter(void)
 {
     if (cine_log_on())
         fprintf(stderr, "[cine] movie end\n");
+#ifdef MKSM_HAVE_GPU
+    mksm_gpu_set_movie_zoom(0.0f);
+#endif
     wide_in_movie = 0;
     if (wide_aspect())
         wide_set_output(0);

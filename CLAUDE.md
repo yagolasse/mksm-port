@@ -250,7 +250,13 @@ for 640) is pillarboxed (B5b2): the game keeps seeing a 640-wide display, so its
 4:3 one; wrappers give the real W only to the 2D projections, viewports and full-screen
 quads, pixel-space rects move by (W-640)/2, full-width menu sprites and the bars widen to W, movies keep a 640x480 buffer (pillarboxed by the
 present), and in the menus (the game's front-end flag) the GPU glue blacks out the columns
-outside the centred 640 at each flip (`mksm_gpu_set_side_mask`): their backdrops have art there. `RECOMP_CINE_LOG=1` prints `[cine]` lines when the cutscene signals change (sequence
+outside the centred 640 at each flip (`mksm_gpu_set_side_mask`): their backdrops have art there.
+Movie zoom (plan B5c2, on by default, independent of `RECOMP_ASPECT`): letterboxed movies are zoomed
+by the window present as far as the window is wider than 4:3, up to the share the picture fills
+(a per-file table in `recomp_manual.c`, keyed by the name the movie player gets; `[MOVIE]` logs
+it), cropping only black rows; the others stay pillarboxed. `RECOMP_MOVIE_ZOOM=0` turns it off,
+`RECOMP_MOVIE_ZOOM_GAUNTLET=1` also zooms the Gauntlet trailer (cuts its full-frame shots). The
+dump shows the unzoomed frame. `RECOMP_CINE_LOG=1` prints `[cine]` lines when the cutscene signals change (sequence
 flag, cinematic camera, letterbox bars, fade) and at movie start/end.
 `RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
 changed on every use (default: once per pushbuffer kick, texture pages only when their content hash

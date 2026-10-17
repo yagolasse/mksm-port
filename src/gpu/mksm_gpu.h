@@ -64,6 +64,12 @@ void mksm_gpu_set_window(const MksmGpuWindow *window);
  * presented frame uses it. */
 void mksm_gpu_set_output_aspect(float aspect);
 
+/* Movie zoom (plan B5c2): with max_zoom > 1 the window present zooms the frame up to that
+ * factor around its centre, cropping rows, as far as the window is wider than the frame's
+ * aspect (a letterboxed movie fills a 16:9 window instead of being pillarboxed); 0 or 1 = off.
+ * Any thread; the next presented frame uses it. */
+void mksm_gpu_set_movie_zoom(float max_zoom);
+
 /* on = 1: a frame wider than 640 gets the columns outside its centred 640 cleared to black at
  * the flip, in the surface itself (plan 4.2, B5b2: the game's menus have art beyond the 640
  * they were made for, which a 4:3 screen never showed). Any thread; the next flip uses it. */

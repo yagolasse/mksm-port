@@ -550,6 +550,16 @@ void mksm_gpu_set_output_aspect(float aspect)
     InterlockedExchange(&s_output_aspect, aspect > 0.0f ? bits : 0);
 }
 
+/* The movie's largest zoom as float bits, 0 = off (mksm_gpu_set_movie_zoom). */
+static volatile LONG s_movie_zoom;
+
+void mksm_gpu_set_movie_zoom(float max_zoom)
+{
+    LONG bits;
+    memcpy(&bits, &max_zoom, sizeof(bits));
+    InterlockedExchange(&s_movie_zoom, max_zoom > 1.0f ? bits : 0);
+}
+
 static volatile LONG s_side_mask;
 
 void mksm_gpu_set_side_mask(int on)
@@ -619,15 +629,17 @@ static GLuint compile_shader(GLenum type, const char *src)
 }
 
 /* The present thread's program: a triangle covering the viewport, no vertex data. The
- * surface's first texture row is its top line, so t runs downwards. 0 on failure. */
+ * surface's first texture row is its top line, so t runs downwards; vscale < 1 shows only
+ * that share of the rows, centred (the movie zoom). 0 on failure. */
 static GLuint window_program(void)
 {
     static const char vs_src[] =
         "#version 400 core\n"
+        "uniform float vscale;\n"
         "out vec2 uv;\n"
         "void main() {\n"
         "    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n"
-        "    uv = vec2(p.x, 1.0 - p.y);\n"
+        "    uv = vec2(p.x, 0.5 + (0.5 - p.y) * vscale);\n"
         "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
         "}\n";
     static const char fs_src[] =
@@ -672,6 +684,8 @@ static DWORD WINAPI present_thread(LPVOID unused)
     }
     glUseProgram(prog);
     glUniform1i(glGetUniformLocation(prog, "tex"), 0);
+    GLint vscale_loc = glGetUniformLocation(prog, "vscale");
+    glUniform1f(vscale_loc, 1.0f);
     GLuint vao, sampler;
     glGenVertexArrays(1, &vao);    /* core profile draws need one bound */
     glBindVertexArray(vao);
@@ -720,6 +734,16 @@ static DWORD WINAPI present_thread(LPVOID unused)
         float out_aspect;
         memcpy(&out_aspect, &bits, sizeof(out_aspect));
         double aspect = bits ? out_aspect : (double)s_win.slot[i].aw / s_win.slot[i].ah;
+        /* Movie zoom: as far as the window is wider than the frame, up to the movie's limit. */
+        LONG zbits = s_movie_zoom;
+        float zmax, zoom = 1.0f;
+        memcpy(&zmax, &zbits, sizeof(zmax));
+        if (zbits) {
+            zoom = (float)((double)cw / ch / aspect);
+            zoom = zoom < 1.0f ? 1.0f : zoom > zmax ? zmax : zoom;
+            aspect *= zoom;
+        }
+        glUniform1f(vscale_loc, 1.0f / zoom);
         uint32_t w = cw, h = ch;
         if (cw > ch * aspect) {
             w = (uint32_t)(ch * aspect + 0.5);

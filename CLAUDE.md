@@ -247,8 +247,13 @@ B9b1: any controller SDL knows, ports in SDL's device order, an empty port resca
 so pads can be plugged in while running, read also in the background as XInput was); `main.c`
 calls `xbox_InputInit` on the main thread before the USB thread starts. `-DMKSM_SDL_WINDOW=OFF`
 keeps XInput. Log: `[PAD] port N: <name> (SDL game controller)` / `disconnected` / `Back+Start
-held` (the menu combo for B7a). The mouse+keyboard pad (`RECOMP_MKB`, F9) is still Win32 raw
-input (B9b2).
+held` (the menu combo for B7a). The mouse+keyboard pad (`RECOMP_MKB`, F9; toolkit `mkb_input.c`) reads the SDL
+window's events since B9b2 (patch 0025): the window thread hands each event to `mkb_sdl_event`
+after the menu hook and before the key table, and `mkb_sdl_tick` turns SDL's relative mouse mode
+on only while the window has keyboard focus, F9 hasn't released it and the menu is closed
+(`mkb_set_overlay`, called from `menu.cpp`'s `set_open`). Headless there is no window loop, so it
+never captures. `RECOMP_MKB_TRACE=1` logs each `relative mode on/off`. The GDI build keeps the
+Win32 raw-input thread.
 The keyboard is merged on top and read from the framebuffer window (`RECOMP_FB_WINDOW=1`, needs focus):
 arrows = d-pad, Enter = Start, Backspace = Back, Z/X/A/S = A/B/X/Y, Q/E = white/black,
 1/3 = triggers, numpad 8/2/4/6 = left stick, I/K/J/L = right stick, Shift/Ctrl = stick clicks.

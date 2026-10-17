@@ -49,6 +49,8 @@ void *xbox_FramebufferWindowSdl(void);
 void xbox_InputKeysClear(void);
 /* toolkit src/apu/apu.h */
 void mcpx_apu_set_host_paused(int on);
+/* toolkit src/input/mkb_input.h */
+void mkb_set_overlay(int open);
 }
 
 namespace {
@@ -73,6 +75,7 @@ void set_open(bool on)
     /* Freeze the game while open: the GPU holds at the next flip, the APU stops. */
     mksm_gpu_set_frozen(on);
     mcpx_apu_set_host_paused(on);
+    mkb_set_overlay(on ? 1 : 0);  /* the mouse pad lets go of the pointer while open */
     unsigned polls = g_polls.exchange(0);
     if (on) {
         fprintf(stderr, "[MENU] open\n");

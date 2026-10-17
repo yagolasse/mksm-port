@@ -126,7 +126,11 @@ its first argument (it then logs nothing: it's a GUI program).
   current settings and the variables that set them, and has a "Show FPS" counter. The game
   (and its sound, movies included) is paused while the menu is open and picks up where it was.
 - **Alt+Enter** toggles borderless fullscreen.
-- **F9** captures / releases the mouse when the mouse+keyboard pad is on (`RECOMP_MKB=1`).
+- **F9** captures / releases the mouse when the mouse+keyboard pad is on (`RECOMP_MKB=1`). The
+  mouse is captured only while the game window has focus and the settings menu is closed
+  (Alt-Tab or F1 gives the pointer back). Mouse: left/right button = right/left trigger, wheel or
+  middle button = Y, side buttons = white/black; keys: WASD = left stick, Space = A, E = B, R = X,
+  Q/F = white/black, Enter/Esc = Start, Tab = Back, Shift/Ctrl = stick clicks, arrows = d-pad.
 
 ### Options
 

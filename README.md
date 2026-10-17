@@ -110,30 +110,64 @@ binary, so you produce it yourself from your own copy (step 3 below).
 tools/run.sh            # Git Bash; tools/run.bat from cmd
 ```
 
-The scripts set the needed defaults, use `../game_files` as the game folder (`MKSM_GAME_DIR`
-overrides it) and write a log to `../logs/run_<timestamp>.log`.
+The scripts set the needed defaults, use `../game_files` as the game folder and write a log to
+`../logs/run_<timestamp>.log`. The exe can also be started directly with the game folder as
+its first argument (it then logs nothing: it's a GUI program).
 
-- Keyboard: arrows = d-pad, Enter = Start, Backspace = Back, Z/X/A/S = A/B/X/Y, Q/E =
-  white/black, 1/3 = triggers, numpad 8/2/4/6 = left stick, I/J/K/L = right stick. Controllers
-  (Xbox, PlayStation, Switch Pro and others SDL knows) work as pads 1-4 in the order they're
-  found, and can be plugged in while the game runs.
-- F1, or Back+Start pressed together on a controller, opens the settings menu (Esc, F1,
+### Keys and controllers
+
+- **Controllers** (Xbox, PlayStation, Switch Pro and others SDL knows) work as pads 1-4 in the
+  order they're found, and can be plugged in while the game runs.
+- **Keyboard** (pad 1, needs the game window focused): arrows = d-pad, Enter = Start,
+  Backspace = Back, Z/X/A/S = A/B/X/Y, Q/E = white/black, 1/3 = triggers, numpad 8/2/4/6 = left
+  stick, I/J/K/L = right stick, Shift/Ctrl = stick clicks.
+- **F1**, or **Back+Start** pressed together on a controller, opens the settings menu (Esc, F1,
   Back+Start or B closes it; arrows/Enter or the d-pad/A move around it). For now it shows the
   current settings and the variables that set them, and has a "Show FPS" counter. The game
   (and its sound, movies included) is paused while the menu is open and picks up where it was.
-- Alt+Enter toggles borderless fullscreen (`RECOMP_FB_FULLSCREEN=1` starts in it).
-  `RECOMP_WINDOW_SCALE=2` (up to 8) opens the window at twice 640x480.
-- `RECOMP_PB_GPU_SCALE=2` (or 3, 4) renders at a higher internal resolution.
-- `RECOMP_ASPECT=16:9 RECOMP_ASPECT_WIDE=1` (experimental; also `16:10`, `21:9`) renders a
-  wide view: menus and text stay pillarboxed at 4:3, the in-game HUD moves to the screen edges
-  (`RECOMP_HUD_EDGES=0` keeps it at its 4:3 place). `RECOMP_ASPECT` alone stretches the 4:3
-  frame instead.
-- With `RECOMP_ASPECT` set, letterboxed movies are zoomed to fill the width, cropping only
-  their black bars (`RECOMP_MOVIE_ZOOM=0` turns this off; `RECOMP_MOVIE_ZOOM_GAUNTLET=1` also
-  zooms the Gauntlet trailer, which cuts the top and bottom of its full-frame shots). Without
-  it movies look as on the Xbox.
+- **Alt+Enter** toggles borderless fullscreen.
+- **F9** captures / releases the mouse when the mouse+keyboard pad is on (`RECOMP_MKB=1`).
 
-`CLAUDE.md` documents every option, the pipeline and the debugging switches in detail.
+### Options
+
+Options are environment variables for now (a settings file is planned). Set them in front of
+the run script in Git Bash, or with `set` before `tools\run.bat` in cmd:
+
+```bash
+RECOMP_PB_GPU_SCALE=2 RECOMP_ASPECT=16:9 RECOMP_ASPECT_WIDE=1 tools/run.sh
+```
+```bat
+set RECOMP_PB_GPU_SCALE=2
+tools\run.bat
+```
+
+| Variable | Default | What it does |
+|---|---|---|
+| **Display** | | |
+| `RECOMP_FB_FULLSCREEN=1` | off | start in borderless fullscreen (Alt+Enter toggles it) |
+| `RECOMP_WINDOW_SCALE=<n>` | 1 | open the window at n x 640x480 (up to 8; times the monitor's DPI scale) |
+| `RECOMP_PB_GPU_SCALE=<n>` | 1 | internal resolution 1x-4x (sharper 3D; the 2D layer stays aligned as at 1x); read at start |
+| `RECOMP_PB_GPU_FILTER=nearest` | `linear` | how the frame is scaled to the window: bilinear, or sharp pixels |
+| **Widescreen** (experimental) | | |
+| `RECOMP_ASPECT=16:9` | off (4:3) | wide 3D view; also `16:10`, `21:9`, `W/H`. Alone it stretches the 4:3 frame to that shape |
+| `RECOMP_ASPECT_WIDE=1` | off | with `RECOMP_ASPECT`: render a really wider frame (square pixels); menus and text stay 4:3 in the middle |
+| `RECOMP_HUD_EDGES=0` | on | with the wide frame: keep the in-game HUD at its 4:3 place instead of the screen edges |
+| `RECOMP_MOVIE_ZOOM=0` | on | with `RECOMP_ASPECT`: don't zoom letterboxed movies to fill the width (zoom crops only their black bars). Without `RECOMP_ASPECT` movies look as on the Xbox |
+| `RECOMP_MOVIE_ZOOM_GAUNTLET=1` | off | also zoom the Gauntlet trailer (cuts the top and bottom of its full-frame shots) |
+| **Sound** | | |
+| `RECOMP_APU_VOLUME=<0..1>` | 1 | output volume (0 = silent) |
+| `RECOMP_AUDIO_BUF_COUNT=<n>` | 8 (run scripts) | audio buffers of ~10.7 ms; raise it if the sound crackles |
+| **Input** | | |
+| `RECOMP_KEYBOARD=0` | on (run scripts) | turn the keyboard pad off |
+| `RECOMP_MKB=1` | off | mouse+keyboard pad on pad 1 (mouse = right stick); F9 captures the mouse |
+| `RECOMP_MKB_SENS`, `_DZ`, `_ACC`, `_FULL`, `_INVERT_Y=1`, `_SWAP_STICKS=1` | | mouse sensitivity, dead-zone floor, acceleration, full-throw speed, inverted Y, mouse on the left stick. Also read from `mkb.ini` next to the exe (`sens=`, `dz=`, ...; `RECOMP_MKB_INI` names another file) |
+| **Files** | | |
+| `MKSM_GAME_DIR=<dir>` | `../game_files` | the extracted disc (the folder with `default.xbe`) |
+| `MKSM_SAVE_DIR=<dir>` | `%LOCALAPPDATA%\mksm_recomp` | where saves and the emulated hard disk go |
+| `MKSM_EXE`, `MKSM_LOG` | `build/Release/mksm_recomp.exe`, `../logs/run_<timestamp>.log` | run scripts only: which exe to run, where to log |
+
+The run scripts also set switches the game needs to run (GPU path, game window, USB pads,
+audio); leave those alone. `CLAUDE.md` documents them, the pipeline and the debugging switches.
 
 ## Repository map
 
@@ -162,7 +196,8 @@ overrides it) and write a log to `../logs/run_<timestamp>.log`.
 - The port's own code is licensed under the **GNU General Public License v3.0** (`LICENSE`).
   It includes third-party code under its own licenses (xemu's NV2A renderer and QEMU headers:
   LGPL-2.1-or-later, GPL-2.0-or-later, MIT, BSD-3-Clause; nv2a_vsh_cpu: Unlicense; xxHash:
-  BSD-2-Clause; glad: generated code under WTFPL or CC0-1.0, Khronos definitions Apache-2.0);
+  BSD-2-Clause; glad: generated code under WTFPL or CC0-1.0, Khronos definitions Apache-2.0;
+  SDL2: zlib; Dear ImGui: MIT);
   `NOTICE` lists each component, its source and license, and GPL-3.0 is compatible with all of
   them for the combined work. The xboxrecomp toolkit is MIT-licensed, with its own notices in
   `external/xboxrecomp/`.

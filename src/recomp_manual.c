@@ -165,9 +165,10 @@ static int audio_tick_stats(void)
  *
  * RECOMP_ASPECT_WIDE=1 (B5b1) renders into a W x 480 back buffer instead (854 at 16:9): the
  * display init, the device reset and D3D's mode lookup are hooked below, and the present shows
- * the frame at its own size. The 2D layer is authored for 640 (B5b2): the paths that place it
- * in 640-wide pixel space are moved by (W - 640) / 2 so it sits centred (pillarboxed); the ones
- * that already work from W are left alone. Movies keep a 640x480 buffer.
+ * the frame at its own size. The game itself keeps seeing a 640-wide display, so its 2D layout
+ * (authored for 640) stays as on 4:3; only the code that has to cover the real frame (2D
+ * projection, viewports, full-screen quads) sees W, and pixel-space 2D is moved by (W - 640) / 2:
+ * the 2D sits centred (pillarboxed, B5b2). Movies keep a 640x480 buffer.
  *
  * The hooks are entry hooks (`sub_X_enter`): the lift has to be made with
  * `--exclude-manual src/recomp_manual.c` so the generated function calls them first. Direct
@@ -245,8 +246,11 @@ static void wide_set_output(int movie)
  * parameters at +0xC (BackBufferWidth +0xC, BackBufferHeight +0x10) with 640x480, the float
  * size +0xC0/+0xC4 and the globals 0x0050E59C/0x0050E5A0, then resets the device (when one
  * exists) or returns to 0x0011B7C0, which creates it from the same parameters. It runs again
- * after every movie. The wide size goes into all of them; the reset inside sees it through the
- * hook on 0x003C99E0. Not while a movie is set up (0x00142420 resets to 640x480 itself). */
+ * after every movie. The wide size goes into the back buffer width only; the reset inside sees
+ * it through the hook on 0x003C99E0. The float size and the globals stay 640: the game lays its
+ * 2D out from them (W/2 for centred text, W - 104 for right-side prompts, B5b2 hand check), and
+ * the few readers that must cover the real frame get W from wide_real_width_call. Not while a
+ * movie is set up (0x00142420 resets to 640x480 itself). */
 extern void sub_0011B290_gen(void);
 
 static int wide_in_movie;
@@ -257,8 +261,6 @@ static void wide_patch_display(uint32_t disp)
     if (!w || !disp || wide_in_movie)
         return;
     GUEST_U32(disp + 0xCu) = w;
-    GUEST_F32(disp + 0xC0u) = (float)w;
-    GUEST_F32(0x0050E59Cu) = (float)w;
 }
 
 /* How far 640-authored 2D moves to sit centred in the wide frame (0 = not wide). */
@@ -331,7 +333,6 @@ void sub_00124150_enter(void)
     static uint32_t last_cam;
     static float base, written;
     float aspect = wide_aspect(), now;
-    int keep;
     uint32_t cam = g_ecx, renderer;
     if (!aspect)
         return;
@@ -346,21 +347,15 @@ void sub_00124150_enter(void)
     now = GUEST_F32(cam + 0x20u);
     if (cam == last_cam && now == written)
         return;
-    /* With the wide back buffer the game derives the aspect from the wider display itself (it
-     * writes 0.9 * W/H: 1.2 at 640, 1.6012 at 854, B5b1 run); only a 4:3-based value is widened.
-     * The camera's first update still sees the 640-based 1.2. */
-    keep = wide_buffer_width() && now > 1.4f;
+    /* The game's value is 0.9 * W/H of the display it sees (1.2 at 640; B5b1 found 1.6012 when
+     * it saw 854). It sees 640 in both modes, so it's always the 4:3 base. */
     if (now != base && logged < 8) {
         logged++;
         fprintf(stderr, "[WIDE] camera 0x%08X game aspect %.4f -> %.4f (from 0x%08X)\n", cam,
-                now, keep ? now : now * aspect * 0.75f, GUEST_U32(g_esp));
+                now, now * aspect * 0.75f, GUEST_U32(g_esp));
     }
     last_cam = cam;
     base = now;
-    if (keep) {
-        written = now;
-        return;
-    }
     written = now * aspect * 0.75f;
     GUEST_F32(cam + 0x20u) = written;
 }
@@ -391,20 +386,20 @@ void sub_00141F10_enter(void)
 
 /* ── Widescreen 2D (plan B5b2) ─────────────────────────────────────────────
  *
- * How the 2D paths place things with the wide buffer (../docs/widescreen.md § 13):
- * - sprites (flush 0x0011D140): the sprite builder 0x0011BE80 turns 640-space positions into
- *   centre-origin ones (minus the constants 320/240), drawn through an ortho projection of the
- *   display's W x H: centred by themselves;
- * - text (0x001EF210): glyph x = 0x0071AF48 + x with 0x0071AF48 = -320 from .data: centred the
- *   same way as long as nothing changes it (B5b1 set it to -W/2: text at the left edge);
- * - the quad batch 0x0063F5E0 and the rect list 0x00639760 draw pre-transformed vertices in
- *   pixels, so 640-space producers need the shift: the rect quads 0x00125E10 / 0x001B3B10 (menu
- *   frames, message boxes) below; the loading bar 0x00125B30 and the full-screen 0x0010E530 work
- *   from W already; 0x0013FFB0 centres only when the display's widescreen byte +0xA is set;
- * - the letterbox bars are W wide at x = W/2 in 640 space: re-centred to 320. */
+ * With the wide buffer the game still sees a 640x480 display (display +0xC0, 0x0050E59C), so
+ * its 2D layout is the 4:3 one (../docs/widescreen.md § 13):
+ * - sprites (flush 0x0011D140) and text (0x001EF210, origin 0x0071AF48 = -320) are placed in
+ *   640 space and drawn through an ortho projection of the display's size: with that
+ *   projection built from W (below) they come out centred;
+ * - the quad batch 0x0063F5E0 and the rect list 0x00639760 take pre-transformed pixels: the
+ *   640-space rect quads 0x00125E10 / 0x001B3B10 (menu frames, message boxes) are moved by
+ *   (W - 640) / 2, full-width ones stretched to W;
+ * - code that covers the real frame gets W for the length of the call: the two 2D projections,
+ *   the viewports, full-screen rects and quads, the loading bar, the blur targets;
+ * - full-screen sprites (menu backgrounds) and the letterbox bars are widened to W. */
 
-/* Rect quad (cdecl x0, y0, x1, y1, colours, flag): 640-space unless it spans the whole width
- * (the message-box dim passes 0..W). */
+/* Rect quad (cdecl x0, y0, x1, y1, colours, flag), 640 space: moved to the centre, or stretched
+ * to the whole frame when it spans the 640 (the message-box dim). */
 static void wide_shift_rect_args(void)
 {
     int dx = wide_2d_shift();
@@ -413,35 +408,102 @@ static void wide_shift_rect_args(void)
         return;
     x0 = (int32_t)GUEST_U32(g_esp + 4u);
     x1 = (int32_t)GUEST_U32(g_esp + 12u);
-    if (x0 <= 0 && x1 >= (int32_t)wide_buffer_width())
-        return;
-    GUEST_U32(g_esp + 4u) = (uint32_t)(x0 + dx);
-    GUEST_U32(g_esp + 12u) = (uint32_t)(x1 + dx);
+    if (x0 <= 0 && x1 >= 640)
+        x1 += 2 * dx;
+    else
+        x0 += dx, x1 += dx;
+    GUEST_U32(g_esp + 4u) = (uint32_t)x0;
+    GUEST_U32(g_esp + 12u) = (uint32_t)x1;
 }
 
 void sub_00125E10_enter(void) { wide_shift_rect_args(); }
 void sub_001B3B10_enter(void) { wide_shift_rect_args(); }
 
+/* Runs fn with the display's real width in display +0xC0 and 0x0050E59C. */
+static void wide_real_width_call(void (*fn)(void))
+{
+    uint32_t disp = GUEST_U32(0x00638988u);
+    float d, g;
+    if (!wide_2d_shift() || !disp) {
+        fn();
+        return;
+    }
+    d = GUEST_F32(disp + 0xC0u);
+    g = GUEST_F32(0x0050E59Cu);
+    GUEST_F32(disp + 0xC0u) = (float)wide_buffer_width();
+    GUEST_F32(0x0050E59Cu) = (float)wide_buffer_width();
+    fn();
+    GUEST_F32(disp + 0xC0u) = d;
+    GUEST_F32(0x0050E59Cu) = g;
+}
+
+/* sprite pass set-up: ortho W x H into vertex constant 0x66 */
+extern void sub_0011C730_gen(void);
+void sub_0011C730(void) { wide_real_width_call(sub_0011C730_gen); }
+
+/* the other 2D ortho (0x0050E59C) */
+extern void sub_0012F800_gen(void);
+void sub_0012F800(void) { wide_real_width_call(sub_0012F800_gen); }
+
+/* render pass viewport W x H */
+extern void sub_00136E80_gen(void);
+void sub_00136E80(void) { wide_real_width_call(sub_00136E80_gen); }
+
+/* fade/transition loop: viewport + full-screen rect 0x00130680 */
+extern void sub_00130770_gen(void);
+void sub_00130770(void) { wide_real_width_call(sub_00130770_gen); }
+
+/* full-screen rect */
+extern void sub_0010E530_gen(void);
+void sub_0010E530(void) { wide_real_width_call(sub_0010E530_gen); }
+
+/* full-screen quad, built once */
+extern void sub_00119740_gen(void);
+void sub_00119740(void) { wide_real_width_call(sub_00119740_gen); }
+
+/* loading bar: x = (W - 640) / 2 + x */
+extern void sub_00125B30_gen(void);
+void sub_00125B30(void) { wide_real_width_call(sub_00125B30_gen); }
+
+/* blur targets W/2 x H/2, W/4 x H/4 */
+extern void sub_00137E10_gen(void);
+void sub_00137E10(void) { wide_real_width_call(sub_00137E10_gen); }
+
+
 /* 0x0013FFB0 (quads from a 640-space layout into the quad batch) has its own centring by
  * (W - 640) / 2, gated on display +0xA, which retail never sets. */
 extern void sub_0013FFB0_gen(void);
 
-void sub_0013FFB0(void)
+static void sub_0013FFB0_centred(void)
 {
     uint32_t disp = GUEST_U32(0x00638988u);
-    uint8_t was;
-    if (!wide_2d_shift() || !disp) {
-        sub_0013FFB0_gen();
-        return;
-    }
-    was = GUEST_U8(disp + 0xAu);
+    uint8_t was = GUEST_U8(disp + 0xAu);
     GUEST_U8(disp + 0xAu) = 1;
     sub_0013FFB0_gen();
     GUEST_U8(disp + 0xAu) = was;
 }
 
-/* Letterbox bars create 0x001CF380: two sprites W wide (display +0xC0) at x = W/2, which the
- * sprite builder reads as 640 space. x = 320 centres them; the width stays W, the whole frame. */
+void sub_0013FFB0(void)
+{
+    if (!wide_2d_shift() || !GUEST_U32(0x00638988u))
+        sub_0013FFB0_gen();
+    else
+        wide_real_width_call(sub_0013FFB0_centred);
+}
+
+/* Menu sprite 0x00094710 (thiscall; x, y, w, h at +0x14..+0x20): a full-width one (x 0,
+ * w 640: the menu backgrounds of 0x00097180 / 0x00097260) covers the whole frame. */
+void sub_00094710_enter(void)
+{
+    int dx = wide_2d_shift();
+    if (dx && GUEST_U32(g_esp + 0x14u) == 0 && GUEST_U32(g_esp + 0x1Cu) == 640u) {
+        GUEST_U32(g_esp + 0x14u) = (uint32_t)-dx;
+        GUEST_U32(g_esp + 0x1Cu) = wide_buffer_width();
+    }
+}
+
+/* Letterbox bars create 0x001CF380: two sprites centred at x = 320, as wide as the display it
+ * sees (640): widened to W. */
 extern void sub_001CF380_gen(void);
 
 void sub_001CF380(void)
@@ -452,8 +514,9 @@ void sub_001CF380(void)
         return;
     for (i = 0; i < 2; i++) {
         bar = GUEST_U32(0x006CE8A0u + 4u * i);
-        if (bar)
-            GUEST_F32(bar + 0xC0u) = 320.0f;
+        if (bar && GUEST_U32(bar + 0x1D8u))
+            *(volatile int16_t *)((uintptr_t)GUEST_U32(bar + 0x1D8u) + 4u + g_xbox_mem_offset) =
+                (int16_t)wide_buffer_width();
     }
 }
 

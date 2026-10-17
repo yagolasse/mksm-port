@@ -42,8 +42,8 @@ statically recompiling the retail `default.xbe` to C with
 - `tools/run.sh`, `tools/run.bat`: run the exe with the needed env defaults, log to `../logs/`
 - `tools/smoke_test.py`: boot smoke test (also CTest `smoke`), see Testing
 - `tools/xiso.py`: list/extract files from an Xbox disc image
-- `tools/ghidra/`: `run_ghidra.sh` (headless import + name export, see Pipeline) and
-  `DecompAt.java` (decompile the functions at given addresses into a file, read-only:
+- `tools/ghidra/`: `run_ghidra.sh` (headless import + name export, see Pipeline),
+  `RefsTo.java` (the functions that reference given addresses) and `DecompAt.java` (decompile the functions at given addresses into a file, read-only:
   `analyzeHeadless.bat <ghidra/project> mksm -process xbe_flat.bin -noanalysis -readOnly
   -scriptPath <dir> -postScript DecompAt.java <out.c> 0x0011D140 ...`; copy it next to the other
   scripts in `../ghidra/scripts` first). Output is game-derived: it goes to `../docs/raw/`
@@ -245,8 +245,9 @@ frame. `RECOMP_ASPECT_WIDE=1` (B5b1, with `RECOMP_ASPECT`) renders into a wider 
 instead (W x 480, 854 at 16:9; hooks on the display init `0x0011B290` (a `_gen` wrapper), the
 device reset and D3D's display-mode lookup, which only knows 640/720-wide modes and is handed
 640): square pixels, the present and the dump show the W-wide frame. The 2D layer (authored
-for 640) is pillarboxed (B5b2): hooks on the 2D paths that work in 640-wide pixels move them by
-(W-640)/2, the letterbox bars are re-centred, movies keep a 640x480 buffer (pillarboxed by the
+for 640) is pillarboxed (B5b2): the game keeps seeing a 640-wide display, so its layout is the
+4:3 one; wrappers give the real W only to the 2D projections, viewports and full-screen
+quads, pixel-space rects move by (W-640)/2, full-width menu sprites and the bars widen to W, movies keep a 640x480 buffer (pillarboxed by the
 present), and in the menus (the game's front-end flag) the GPU glue blacks out the columns
 outside the centred 640 at each flip (`mksm_gpu_set_side_mask`): their backdrops have art there. `RECOMP_CINE_LOG=1` prints `[cine]` lines when the cutscene signals change (sequence
 flag, cinematic camera, letterbox bars, fade) and at movie start/end.

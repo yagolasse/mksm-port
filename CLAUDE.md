@@ -31,8 +31,9 @@ statically recompiling the retail `default.xbe` to C with
   (`qemu/lru.h`, `queue.h`, `mstring.h`, `fast-hash`), also unmodified;
   `xemu/shim/` = stand-ins for the QEMU/glib/xemu headers they include (incl. `epoxy/gl.h` → glad);
   `nv2a_vsh_cpu/`, `xxhash/` = vendored libraries; `glad/` = generated GL 4.6 core/WGL loader;
-  `gloffscreen_wgl.c` = xemu's GL context layer on WGL (hidden windows, newest 4.x core, shared contexts;
-  plus `gloffscreen_wgl.h`: a context on the game window for the present);
+  `gloffscreen_sdl.c` = xemu's GL context layer on SDL2 (hidden SDL GL windows, newest 4.x core, shared
+  contexts; plan B9a2, the default), `gloffscreen_wgl.c` = the same on WGL (only with
+  `-DMKSM_SDL_WINDOW=OFF`); `gloffscreen_window.h`: their context on the game window for the present;
   `xemu_stubs.c` = externals from unported xemu files; `shader_patch.c` = edits to xemu's generated GLSL
   (hooked at `glShaderSource`); `mksm_gpu.c` = stands in for xemu's PFIFO
   (RAMHT lookup, acks the NOP-notify and flip-stall waits, presents the last-drawn surface at the
@@ -148,12 +149,13 @@ RECOMP_WATCHDOG_SECS=10 timeout 60 tools/run.sh
 ```
 The window is SDL2's since plan B9a1 (toolkit `fb_present_sdl.c` with `XBOX_SDL_WINDOW`, on its
 own `fb window` thread; SDL 2.32.10 fetched by CMake and linked static, `build/_deps/`); CMake
-`-DMKSM_SDL_WINDOW=OFF` builds the older GDI window (`fb_present.c`, patch 0014) for A/B runs.
+`-DMKSM_SDL_WINDOW=OFF` builds the older GDI window (`fb_present.c`, patch 0014) with WGL contexts for A/B runs.
 Both scale the frame to fit with black bars and can be resized; Alt+Enter toggles borderless
 fullscreen (not seen by the game as Start), `RECOMP_FB_FULLSCREEN=1` starts fullscreen,
 `RECOMP_WINDOW_SCALE=<n>` (SDL window) opens it at n x 640x480 (default 1, times the monitor's
 DPI scale). On the GPU path `main.c` puts the SDL window in external-present mode
-(`xbox_FramebufferWindowExternalPresent`): no SDL_Renderer on it, so the WGL present owns it, and
+(`xbox_FramebufferWindowExternalPresent`): no SDL_Renderer on it, made with `SDL_WINDOW_OPENGL`
+(patch 0021), so the GPU present's SDL GL context owns it (B9a2; `xbox_FramebufferWindowSdl`), and
 the CPU frames before the present thread is up are dropped (black for a moment at boot). Keys
 come from SDL events (`keyboard_sdl.c`); pads are still XInput (B9b). The GDI window only:
 `RECOMP_FB_DUMP` (the SDL window has none) needs an absolute path (the run

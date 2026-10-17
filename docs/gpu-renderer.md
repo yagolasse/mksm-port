@@ -267,8 +267,22 @@ The OpenGL renderer (`pgraph/gl/*`, 11 files) and the GLSL generators (`pgraph/g
   `EXT_swap_control`). 4.6, not 4.0: xemu requests a 4.0 core context but calls later entry points
   (`glProgramUniform*`, 4.1) that libepoxy resolves on demand. The driver returns a context that has
   them; glad leaves absent ones NULL. `xemu/shim/epoxy/gl.h` maps `<epoxy/gl.h>` to glad and declares
-  `epoxy_has_gl_extension` (in `gloffscreen_wgl.c`, via `glGetStringi`).
-- **Contexts** (`gloffscreen_wgl.c`, replaces xemu's `gloffscreen/sdl.c`): one hidden window per context
+  `epoxy_has_gl_extension` (in `xemu_stubs.c`, via `glGetStringi`). With SDL contexts (plan B9a2)
+  glad loads through `SDL_GL_GetProcAddress` and its WGL part isn't built.
+- **Contexts through SDL2** (`gloffscreen_sdl.c`, the default since plan B9a2; built when the top-level
+  `MKSM_SDL_WINDOW` is on, which passes SDL's include dirs as `MKSM_GL_SDL_INCLUDE`; the game links the
+  static SDL): as xemu's own `gloffscreen/sdl.c` (SDL3) does, a hidden `SDL_WINDOW_OPENGL` window per
+  context, `SDL_GL_SHARE_WITH_CURRENT_CONTEXT`, the same RGBA8/D24S8 attributes and the same 4.6 → 4.0
+  core retry as WGL. The first context brings up SDL's video subsystem (main thread, at
+  `mksm_gpu_init`, per-monitor DPI aware for that call so SDL's display list matches the window
+  thread's); the window thread's own `SDL_Init` just counts up. The game window is made with
+  `SDL_WINDOW_OPENGL` in external-present mode (toolkit patch 0021) and handed over as an
+  `SDL_Window *` (`xbox_FramebufferWindowSdl`); the present context on it is
+  `SDL_GL_CreateContext` + `SDL_GL_SetSwapInterval(0)`, the swap `SDL_GL_SwapWindow`. All context
+  switches go through `SDL_GL_MakeCurrent` (SDL tracks the current context per thread and shares
+  with it). This is the part Linux needs.
+- **Contexts on WGL** (`-DMKSM_SDL_WINDOW=OFF` only, with the GDI window; the description below is this path)
+  (`gloffscreen_wgl.c`, replaces xemu's `gloffscreen/sdl.c`): one hidden window per context
   (a pixel format is set once per window), RGBA8/D24S8 double-buffered, 4.0 core, sharing with the
   context current on the calling thread (SDL's `SHARE_WITH_CURRENT_CONTEXT`). The WGL extension entry
   points are loaded once through a throwaway legacy context; GL entry points when the first real context
@@ -349,7 +363,8 @@ core, NVIDIA RTX 2060 / driver 596.49 on the dev machine, no GL error after init
   (window thread skips its blit and WM_PAINT draws nothing) and `xbox_FramebufferWindowClientSize`
   (physical pixels from WM_SIZE; GetClientRect from the DPI-unaware method thread may be scaled).
   Never `SendMessage` the window from the method thread (it holds `pgraph.lock`).
-- **Window present (plan 2.6b, the default)**: once `xbox_FramebufferWindowHwnd()` is non-NULL (handed
+- **Window present (plan 2.6b, the default)**: once the window accessor (`xbox_FramebufferWindowSdl()`,
+  or `xbox_FramebufferWindowHwnd()` on the WGL build) is non-NULL (handed
   in through `mksm_gpu_set_window`, so the lib itself never calls the toolkit and `gpu_link` still
   links), the method thread creates a second context on the window's DC while the render context is
   current (`glo_context_create_for_window` in `gloffscreen_wgl.c`: same pixel format as the hidden

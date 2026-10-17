@@ -15,6 +15,7 @@
 #include "ui/xemu-settings.h"
 #include "xemu_stubs.h"
 #include "xxhash.h"
+#include <epoxy/gl.h>
 
 #include <direct.h>
 
@@ -27,6 +28,20 @@ struct config g_config = {
 
 /* epoxy/gl.h shim: glGetError reads the driver only when set (RECOMP_PB_GPU_GLCHECK=1). */
 int mksm_gl_check_errors;
+
+/* epoxy/gl.h shim: libepoxy's extension check, on the current context. */
+bool epoxy_has_gl_extension(const char *ext_name)
+{
+    GLint n = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+    for (GLint i = 0; i < n; i++) {
+        const char *ext = (const char *)glGetStringi(GL_EXTENSIONS, (GLuint)i);
+        if (ext && strcmp(ext, ext_name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
 
 /* xemu-version.h: the GL shader cache keys its files on it. */
 const char *xemu_version = "mksm-pc";

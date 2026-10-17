@@ -6,6 +6,7 @@ game_files/
 # Recompiled output is derived from the game binary: keep it out of the repo
 src/recomp/gen/
 build/
+build-*/
 
 # Python
 __pycache__/

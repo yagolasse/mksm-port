@@ -46,10 +46,12 @@ typedef void (*MksmGpuPresentFn)(const uint32_t *xrgb, unsigned width, unsigned 
 void mksm_gpu_set_present(MksmGpuPresentFn fn);
 
 /* The game window, for presenting into it with OpenGL from the method thread (the toolkit's
- * fb_present.c; plan 2.6b). Called on the method thread; none of them may block on the window
+ * fb_present_sdl.c, or fb_present.c with MKSM_SDL_WINDOW=OFF; plans 2.6b, B9a2). Called on the method thread; none of them may block on the window
  * thread (the method thread holds pgraph.lock). */
 typedef struct MksmGpuWindow {
-    void *(*hwnd)(void);                  /* the HWND once the window exists, else NULL */
+    /* Once the window exists, else NULL: its SDL_Window * (made with SDL_WINDOW_OPENGL), or
+     * the HWND when the lib is built with WGL contexts (MKSM_GL_WGL). */
+    void *(*window)(void);
     void (*gpu_present)(int on);          /* 1: the window stops drawing frames itself */
     int (*client_size)(uint32_t *width, uint32_t *height); /* physical pixels; 0 = not known */
 } MksmGpuWindow;

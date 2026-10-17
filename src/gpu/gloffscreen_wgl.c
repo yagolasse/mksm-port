@@ -9,7 +9,7 @@
  * current context to be queried, so the first call creates a throwaway legacy context once.
  * GL entry points are loaded with glad when the first real context is current.
  *
- * Also (gloffscreen_wgl.h, not part of xemu's interface): a context on an existing window, the
+ * Also (gloffscreen_window.h, not part of xemu's interface): a context on an existing window, the
  * game window the method thread presents into, and its SwapBuffers.
  *
  * SPDX-License-Identifier: MIT
@@ -22,7 +22,7 @@
 #include <string.h>
 
 #include <glad/wgl.h>
-#include "gloffscreen_wgl.h"
+#include "gloffscreen_window.h"
 
 struct _GloContext {
     HWND hwnd;
@@ -258,17 +258,4 @@ void glo_context_destroy(GloContext *context)
         DestroyWindow(context->hwnd);
     }
     free(context);
-}
-
-bool epoxy_has_gl_extension(const char *ext_name)
-{
-    GLint n = 0;
-    glGetIntegerv(GL_NUM_EXTENSIONS, &n);
-    for (GLint i = 0; i < n; i++) {
-        const char *ext = (const char *)glGetStringi(GL_EXTENSIONS, (GLuint)i);
-        if (ext && strcmp(ext, ext_name) == 0) {
-            return true;
-        }
-    }
-    return false;
 }

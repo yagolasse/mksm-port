@@ -152,6 +152,16 @@ if(MKSM_CLANG_CL AND EXISTS "${MKSM_CLANG_CL}" AND MKSM_NINJA)
     include(ExternalProject)
     set(MKSM_GPU_BIN "${CMAKE_BINARY_DIR}/mksm_gpu")
     set(MKSM_GPU_LIB "${MKSM_GPU_BIN}/mksm_gpu.lib")
+    # GL contexts: through SDL2 with the SDL window (plan B9a2; the lib compiles against SDL's
+    # headers, the game links the static SDL), WGL with the GDI window.
+    if(MKSM_SDL_WINDOW)
+        set(MKSM_GPU_GL_ARGS
+            "-DMKSM_GL_SDL_INCLUDE=${sdl2_BINARY_DIR}/include/SDL2|${sdl2_BINARY_DIR}/include-config-release/SDL2")
+        set(MKSM_GPU_GL_LIBS "SDL2::SDL2;opengl32")
+    else()
+        set(MKSM_GPU_GL_ARGS "-DMKSM_GL_SDL_INCLUDE=")
+        set(MKSM_GPU_GL_LIBS "opengl32;gdi32;user32")
+    endif()
     # Always Release with /MD: only the game's Release build will link it.
     ExternalProject_Add(mksm_gpu_build
         SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu"
@@ -161,6 +171,8 @@ if(MKSM_CLANG_CL AND EXISTS "${MKSM_CLANG_CL}" AND MKSM_NINJA)
             -DCMAKE_BUILD_TYPE=Release
             "-DCMAKE_C_COMPILER=${MKSM_CLANG_CL}"
             "-DCMAKE_MAKE_PROGRAM=${MKSM_NINJA}"
+            ${MKSM_GPU_GL_ARGS}
+        LIST_SEPARATOR |
         BUILD_ALWAYS ON
         INSTALL_COMMAND ""
         BUILD_BYPRODUCTS "${MKSM_GPU_LIB}"
@@ -169,9 +181,13 @@ if(MKSM_CLANG_CL AND EXISTS "${MKSM_CLANG_CL}" AND MKSM_NINJA)
     set_target_properties(mksm_gpu PROPERTIES
         IMPORTED_LOCATION "${MKSM_GPU_LIB}"
         INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu"
-        # The OpenGL renderer: WGL contexts on hidden windows (gloffscreen_wgl.c).
-        INTERFACE_LINK_LIBRARIES "opengl32;gdi32;user32")
+        # The OpenGL renderer's contexts: SDL (gloffscreen_sdl.c) or WGL (gloffscreen_wgl.c).
+        INTERFACE_LINK_LIBRARIES "${MKSM_GPU_GL_LIBS}")
     add_dependencies(mksm_gpu mksm_gpu_build)
+    if(MKSM_SDL_WINDOW)
+        # SDL's generated headers (SDL_config.h per config) exist once its Release build ran.
+        add_dependencies(mksm_gpu_build SDL2-static)
+    endif()
 
     add_executable(gpu_link src/gpu/gpu_link.c)
     target_link_libraries(gpu_link PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,mksm_gpu>")
@@ -181,6 +197,9 @@ if(MKSM_CLANG_CL AND EXISTS "${MKSM_CLANG_CL}" AND MKSM_NINJA)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         "$<$<NOT:$<CONFIG:Debug>>:$<LINK_LIBRARY:WHOLE_ARCHIVE,mksm_gpu>>")
     target_compile_definitions(${PROJECT_NAME} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:MKSM_HAVE_GPU=1>")
+    if(NOT MKSM_SDL_WINDOW)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE MKSM_GL_WGL=1)
+    endif()
 else()
     message(STATUS "mksm_gpu skipped: set MKSM_CLANG_CL to clang-cl.exe and put ninja on PATH")
 endif()

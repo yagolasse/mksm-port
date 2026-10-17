@@ -1,0 +1,94 @@
+From 024ef57fb7a3d12c8e054b003e1fe9bb987aacfc Mon Sep 17 00:00:00 2001
+From: The FBC Agent <thefbcspecialagent@gmail.com>
+Date: Sat, 17 Oct 2026 17:14:31 -0300
+Subject: [PATCH] video: SDL window made for OpenGL in external-present mode
+
+A renderer drawing into the SDL framebuffer window with its own GL context
+(SDL_GL_CreateContext on the window) needs it created with SDL_WINDOW_OPENGL.
+In external-present mode the window now is, and xbox_FramebufferWindowSdl()
+hands that renderer the SDL_Window once the window is up (NULL before, and
+outside external mode). The GDI window and the SDL_Renderer path are
+unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016ahYm8JBvCH5KhgtSu9Yoy
+---
+ src/video/fb_present_sdl.c | 19 +++++++++++++------
+ src/video/video_player.h   |  3 +++
+ 2 files changed, 16 insertions(+), 6 deletions(-)
+
+diff --git a/src/video/fb_present_sdl.c b/src/video/fb_present_sdl.c
+index 1f2e8b1..cc48076 100644
+--- a/src/video/fb_present_sdl.c
++++ b/src/video/fb_present_sdl.c
+@@ -33,11 +33,12 @@
+  * 4 = X8R8G8B8. Before the first flip the window reads the AvSetDisplayMode
+  * surface directly, as the GDI window does, for a title that never flips.
+  *
+- * A renderer that draws into the window itself (a GL context on its HWND)
+- * calls xbox_FramebufferWindowExternalPresent(1) before the window opens:
+- * the window then gets no SDL_Renderer (whose swap chain would fight the
+- * GL context for it) and shows nothing of its own; Hwnd / ClientSize give
+- * that renderer what it needs, as the GDI window does.
++ * A renderer that draws into the window itself (a GL context on it) calls
++ * xbox_FramebufferWindowExternalPresent(1) before the window opens: the
++ * window then gets no SDL_Renderer (whose swap chain would fight the GL
++ * context for it), is made with SDL_WINDOW_OPENGL (so SDL_GL_CreateContext
++ * works on it) and shows nothing of its own; Sdl (the SDL_Window) or Hwnd,
++ * and ClientSize give that renderer what it needs, as the GDI window does.
+  *
+  * Closing the window ends the process: lifted code cannot be stopped
+  * mid-flight. On POSIX atexit handlers still run; on Windows the process is
+@@ -112,6 +113,7 @@ static volatile uint32_t s_fb_va, s_fb_pitch; /* AvSetDisplayMode surface */
+ /* External present (a renderer drawing into the window itself). */
+ static int             s_external;           /* set before the window opens */
+ static void *volatile  s_hwnd;               /* NULL until the window exists */
++static SDL_Window *volatile s_sdl_win;       /* same, for the external renderer */
+ static SDL_atomic_t    s_client_wh;          /* w << 16 | h, physical px; 0 = none */
+ 
+ /* Counted at the flip, read once a second for the title bar. */
+@@ -239,6 +241,8 @@ void xbox_FramebufferWindowExternalPresent(int on)
+ 
+ void *xbox_FramebufferWindowHwnd(void) { return s_hwnd; }
+ 
++void *xbox_FramebufferWindowSdl(void) { return s_sdl_win; }
++
+ /* Nothing to stop: in external mode the window draws nothing of its own. */
+ void xbox_FramebufferWindowGpuPresent(int on) { (void)on; }
+ 
+@@ -388,7 +392,8 @@ static int window_open(void)
+     s_win = SDL_CreateWindow(s_title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                              (int)FB_W * scale, (int)FB_H * scale,
+                              SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI
+-                             | SDL_WINDOW_HIDDEN);
++                             | SDL_WINDOW_HIDDEN
++                             | (s_external ? SDL_WINDOW_OPENGL : 0));
+     s_ren = s_win && !s_external
+           ? SDL_CreateRenderer(s_win, -1, vsync ? SDL_RENDERER_PRESENTVSYNC : 0)
+           : NULL;
+@@ -432,6 +437,8 @@ static int window_open(void)
+     if (env_on("RECOMP_FB_FULLSCREEN"))
+         set_fullscreen(1);
+     update_client_size();
++    if (s_external)
++        s_sdl_win = s_win;
+ 
+     {
+         SDL_RendererInfo ri;
+diff --git a/src/video/video_player.h b/src/video/video_player.h
+index 62ae48c..43ab862 100644
+--- a/src/video/video_player.h
++++ b/src/video/video_player.h
+@@ -79,6 +79,9 @@ void xbox_FramebufferWindowPresentPixels(const uint32_t *xrgb, uint32_t width,
+  * context) and drops CPU frames; the GDI window ignores it. */
+ void xbox_FramebufferWindowExternalPresent(int on);
+ void *xbox_FramebufferWindowHwnd(void);
++/* SDL window only (fb_present_sdl.c): the SDL_Window * once the window is up
++ * in external-present mode (made with SDL_WINDOW_OPENGL), else NULL. */
++void *xbox_FramebufferWindowSdl(void);
+ void xbox_FramebufferWindowGpuPresent(int on);
+ int  xbox_FramebufferWindowClientSize(uint32_t *width, uint32_t *height);
+ int  xbox_FramebufferDumpBmp(const char *path);
+-- 
+2.53.0.windows.2
+

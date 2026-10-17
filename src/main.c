@@ -255,6 +255,7 @@ extern void xbox_FramebufferWindowPresentPixels(const uint32_t *xrgb, uint32_t w
 extern void xbox_FramebufferWindowFrameStats(uint32_t draws);
 extern void xbox_FramebufferWindowExternalPresent(int on);
 extern void *xbox_FramebufferWindowHwnd(void);
+extern void *xbox_FramebufferWindowSdl(void);
 extern void xbox_FramebufferWindowGpuPresent(int on);
 extern int xbox_FramebufferWindowClientSize(uint32_t *width, uint32_t *height);
 
@@ -311,7 +312,11 @@ static bool gpu_init_from_env(void)
     mksm_gpu_set_present(gpu_present);
     {
         const MksmGpuWindow window = {
-            .hwnd = xbox_FramebufferWindowHwnd,
+#ifdef MKSM_GL_WGL
+            .window = xbox_FramebufferWindowHwnd,   /* GDI window, WGL contexts */
+#else
+            .window = xbox_FramebufferWindowSdl,    /* SDL window, SDL GL contexts (B9a2) */
+#endif
             .gpu_present = xbox_FramebufferWindowGpuPresent,
             .client_size = xbox_FramebufferWindowClientSize,
         };

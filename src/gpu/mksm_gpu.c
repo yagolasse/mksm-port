@@ -36,7 +36,7 @@
 #include "hw/xbox/nv2a/pgraph/gl/renderer.h"
 #include "mksm_gpu.h"
 #include "xemu_stubs.h"
-#include "gloffscreen_wgl.h"
+#include "gloffscreen_window.h"
 #include "ui/xemu-settings.h"
 
 /* shader_patch.c */
@@ -765,12 +765,12 @@ static bool present_window(NV2AState *d, SurfaceBinding *surface)
         return false;
     }
     if (!s_win.ctx) {
-        void *hwnd = s_win.have_fns ? s_win.fns.hwnd() : NULL;
-        if (!hwnd) {
+        void *window = s_win.have_fns ? s_win.fns.window() : NULL;
+        if (!window) {
             return false;
         }
         /* Created here, where the render context is current, so the two share objects. */
-        s_win.ctx = glo_context_create_for_window(hwnd);
+        s_win.ctx = glo_context_create_for_window(window);
         InitializeCriticalSection(&s_win.lock);
         s_win.wake = CreateEventW(NULL, FALSE, FALSE, NULL);
         s_win.ready = s_win.showing = -1;

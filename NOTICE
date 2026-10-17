@@ -31,9 +31,10 @@ xemu NV2A PGRAPH renderer
   | files without a header; LICENSES/GPL-2.0) | include/qemu/mstring.h, util/fast-hash.c     |
 
   src/gpu/xemu/shim/ holds stand-ins for the QEMU/glib/xemu headers those files include (written
-  for this port, mirroring QEMU's interfaces; LGPL-2.1-or-later). src/gpu/gloffscreen_wgl.c is
-  this port's WGL implementation of the gloffscreen interface (MIT), in place of xemu's SDL one;
-  src/gpu/gloffscreen_wgl.h (MIT) declares its additions.
+  for this port, mirroring QEMU's interfaces; LGPL-2.1-or-later). src/gpu/gloffscreen_sdl.c
+  (SDL2, the default) and src/gpu/gloffscreen_wgl.c (WGL, with the GDI window) are this port's
+  implementations of the gloffscreen interface (MIT), in place of xemu's SDL3 one;
+  src/gpu/gloffscreen_window.h (MIT) declares their additions.
   src/gpu/shader_patch.c (LGPL-2.1-or-later, written for this port) matches and extends the
   GLSL text xemu's shader generator emits.
 

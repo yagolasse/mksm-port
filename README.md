@@ -114,8 +114,14 @@ overrides it) and write a log to `../logs/run_<timestamp>.log`.
   controller works as pad 1.
 - Alt+Enter toggles borderless fullscreen (`RECOMP_FB_FULLSCREEN=1` starts in it).
 - `RECOMP_PB_GPU_SCALE=2` (or 3, 4) renders at a higher internal resolution.
-- `RECOMP_ASPECT=16:9 RECOMP_ASPECT_WIDE=1` (experimental) renders a 16:9 view with the 2D
-  layer pillarboxed; movies stay 4:3.
+- `RECOMP_ASPECT=16:9 RECOMP_ASPECT_WIDE=1` (experimental; also `16:10`, `21:9`) renders a
+  wide view: menus and text stay pillarboxed at 4:3, the in-game HUD moves to the screen edges
+  (`RECOMP_HUD_EDGES=0` keeps it at its 4:3 place). `RECOMP_ASPECT` alone stretches the 4:3
+  frame instead.
+- With `RECOMP_ASPECT` set, letterboxed movies are zoomed to fill the width, cropping only
+  their black bars (`RECOMP_MOVIE_ZOOM=0` turns this off; `RECOMP_MOVIE_ZOOM_GAUNTLET=1` also
+  zooms the Gauntlet trailer, which cuts the top and bottom of its full-frame shots). Without
+  it movies look as on the Xbox.
 
 `CLAUDE.md` documents every option, the pipeline and the debugging switches in detail.
 

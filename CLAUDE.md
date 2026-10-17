@@ -12,6 +12,10 @@ statically recompiling the retail `default.xbe` to C with
 - Don't paste disassembly or decompiled game code into this repo. Hand-written reimplementations
   and overrides in `src/` are fine.
 - Private research notes belong in the separate `../docs` repo, not here.
+- `README.md` is the user-facing doc: whenever a change adds or changes something a user can set
+  (an env var, a flag, a key, a run-script option, later a settings-menu entry), update its
+  Run section (and the Status table if a feature's state changed) in the same commit.
+  Debug-only switches (logs, A/B toggles) stay in this file only.
 
 ## Layout
 - `CMakeLists.txt`: game executable `mksm_recomp`; pulls in the toolkit via `add_subdirectory`

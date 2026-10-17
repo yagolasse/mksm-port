@@ -258,6 +258,8 @@ it), cropping only black rows; the others stay pillarboxed. `RECOMP_MOVIE_ZOOM=0
 `RECOMP_MOVIE_ZOOM_GAUNTLET=1` also zooms the Gauntlet trailer (cuts its full-frame shots). The
 dump shows the unzoomed frame. `RECOMP_CINE_LOG=1` prints `[cine]` lines when the cutscene signals change (sequence
 flag, cinematic camera, letterbox bars, fade) and at movie start/end.
+`RECOMP_HUD_LOG=1` (plan B5d1) logs every 300th sprite flush: the drawn sprites (position, size,
+anchor flags) and the next frame's queued text and rect quads with their callers (`[HUD]` lines).
 `RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
 changed on every use (default: once per pushbuffer kick, texture pages only when their content hash
 changed, see `docs/gpu-renderer.md`; for A/B runs); `=kick` drops the texture-page hash.

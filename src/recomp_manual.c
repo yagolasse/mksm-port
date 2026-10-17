@@ -485,7 +485,166 @@ static void wide_shift_rect_args(void)
     GUEST_U32(g_esp + 12u) = (uint32_t)x1;
 }
 
-void sub_00125E10_enter(void) { wide_shift_rect_args(); }
+/* ── HUD survey (plan B5d1) ────────────────────────────────────────────────
+ *
+ * RECOMP_HUD_LOG=1: which 2D pieces the HUD draws, for anchoring it to the screen edges.
+ * The HUD update 0x00091150 runs the HUD element updates; one of them, 0x00084C70, calls
+ * 0x00084A50 once per player HUD (player 1, then 2). Sprites the HUD code shows or hides
+ * (0x0015DAE0, thiscall ecx = sprite) inside those calls are tagged with the context; every
+ * 600th sprite flush (0x0011D140) logs the drawn sprites (0x0011D000, entry: rect at +0,
+ * sprite at +8; sprite x/y floats +0xC0/+0xC4, anchor flags +0x78), and the text
+ * (0x001EEF90, thiscall x, y, colour, string, align) and rect quads (0x00125E10) queued
+ * during the frame before it, with their callers. */
+static int hud_log_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("RECOMP_HUD_LOG");
+        on = e && *e && *e != '0';
+    }
+    return on;
+}
+
+/* 0 = not in HUD code, 1 = HUD update, 2 / 3 = player 1 / 2 HUD */
+static int hud_ctx, hud_player_seq;
+static unsigned hud_frame;
+
+#define HUD_TAGS 1024
+static struct { uint32_t sprite, ra; int ctx; } hud_tags[HUD_TAGS];
+static int hud_ntags;
+
+static int hud_tag_find(uint32_t sprite)
+{
+    for (int i = 0; i < hud_ntags; i++)
+        if (hud_tags[i].sprite == sprite)
+            return i;
+    return -1;
+}
+
+static int hud_log_frame(void)
+{
+    return hud_log_on() && hud_frame % 300u == 299u;
+}
+
+/* logged on the frame after a sprite log, so a whole frame's queue shows */
+static int hud_log_queue_frame(void)
+{
+    return hud_log_on() && hud_frame % 300u == 0u && hud_frame;
+}
+
+extern void sub_00091150_gen(void);
+void sub_00091150(void)
+{
+    int was = hud_ctx;
+    if (!hud_ctx)
+        hud_ctx = 1;
+    sub_00091150_gen();
+    hud_ctx = was;
+}
+
+void sub_00084C70_enter(void) { hud_player_seq = 0; }
+
+extern void sub_00084A50_gen(void);
+void sub_00084A50(void)
+{
+    int was = hud_ctx;
+    hud_ctx = hud_player_seq++ ? 3 : 2;
+    sub_00084A50_gen();
+    hud_ctx = was;
+}
+
+void sub_0015DAE0_enter(void)
+{
+    int i;
+    if (!hud_log_on() || !hud_ctx)
+        return;
+    i = hud_tag_find(g_ecx);
+    if (i < 0 && hud_ntags < HUD_TAGS)
+        i = hud_ntags++;
+    if (i >= 0) {
+        hud_tags[i].sprite = g_ecx;
+        hud_tags[i].ra = GUEST_U32(g_esp);
+        hud_tags[i].ctx = hud_ctx;
+    }
+}
+
+void sub_0011D140_enter(void)
+{
+    hud_frame++;
+    if (hud_log_frame())
+        fprintf(stderr, "[HUD] ---- frame %u (sprites, then the next frame's text/rects)\n",
+                hud_frame);
+}
+
+void sub_0011D000_enter(void)
+{
+    uint32_t e, rect, s;
+    int i;
+    if (!hud_log_frame())
+        return;
+    e = GUEST_U32(g_esp + 4u);
+    rect = e ? GUEST_U32(e) : 0;
+    s = e ? GUEST_U32(e + 8u) : 0;
+    if (!rect || !s || GUEST_U8(s + 0x70u) || !GUEST_U32(s + 0x128u))
+        return;
+    i = hud_tag_find(s);
+    fprintf(stderr, "[HUD] sprite 0x%08X ctx=%d ra=0x%08X x=%.1f y=%.1f flags=0x%02X w=%d h=%d "
+            "tex=0x%08X refs", s, i < 0 ? 0 : hud_tags[i].ctx, i < 0 ? 0 : hud_tags[i].ra,
+            GUEST_F32(s + 0xC0u), GUEST_F32(s + 0xC4u), GUEST_U32(s + 0x78u) & 0xFFu,
+            *(volatile int16_t *)((uintptr_t)rect + 4u + g_xbox_mem_offset),
+            *(volatile int16_t *)((uintptr_t)rect + 6u + g_xbox_mem_offset),
+            GUEST_U32(s + 0x128u));
+    /* who holds a pointer to it in the game's data/bss (the HUD's own struct, if any) */
+    {
+        int n = 0;
+        for (uint32_t va = 0x004E0000u; va < 0x00700000u && n < 6; va += 4)
+            if (GUEST_U32(va) == s) {
+                fprintf(stderr, " 0x%08X", va);
+                n++;
+            }
+    }
+    fprintf(stderr, "\n");
+}
+
+/* the UI text helper the HUD code calls (cdecl; args logged raw) */
+void sub_00152AE0_enter(void)
+{
+    if (!hud_log_queue_frame())
+        return;
+    fprintf(stderr, "[HUD] text2 ctx=%d ra=0x%08X args %08X %08X %08X %08X %08X %08X\n",
+            hud_ctx, GUEST_U32(g_esp), GUEST_U32(g_esp + 4u), GUEST_U32(g_esp + 8u),
+            GUEST_U32(g_esp + 12u), GUEST_U32(g_esp + 16u), GUEST_U32(g_esp + 20u),
+            GUEST_U32(g_esp + 24u));
+}
+
+void sub_001EEF90_enter(void)
+{
+    char str[48];
+    uint32_t va;
+    size_t i;
+    if (!hud_log_queue_frame())
+        return;
+    va = GUEST_U32(g_esp + 0x10u);
+    for (i = 0; va && i < sizeof(str) - 1 && GUEST_U8(va + i); i++) {
+        uint8_t c = GUEST_U8(va + i);
+        str[i] = c >= 0x20 && c < 0x7F ? (char)c : '.';
+    }
+    str[i] = 0;
+    fprintf(stderr, "[HUD] text ctx=%d ra=0x%08X x=%.1f y=%.1f align=%d \"%s\"\n", hud_ctx,
+            GUEST_U32(g_esp), GUEST_F32(g_esp + 4u), GUEST_F32(g_esp + 8u),
+            (int)GUEST_U32(g_esp + 0x14u), str);
+}
+
+static void hud_log_rect(void)
+{
+    if (!hud_log_queue_frame())
+        return;
+    fprintf(stderr, "[HUD] rect ctx=%d ra=0x%08X %d,%d .. %d,%d\n", hud_ctx, GUEST_U32(g_esp),
+            (int)GUEST_U32(g_esp + 4u), (int)GUEST_U32(g_esp + 8u),
+            (int)GUEST_U32(g_esp + 12u), (int)GUEST_U32(g_esp + 16u));
+}
+
+void sub_00125E10_enter(void) { hud_log_rect(); wide_shift_rect_args(); }
 void sub_001B3B10_enter(void) { wide_shift_rect_args(); }
 
 /* Runs fn with the display's real width in display +0xC0 and 0x0050E59C. */

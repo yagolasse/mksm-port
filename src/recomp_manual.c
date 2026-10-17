@@ -165,7 +165,9 @@ static int audio_tick_stats(void)
  *
  * RECOMP_ASPECT_WIDE=1 (B5b1) renders into a W x 480 back buffer instead (854 at 16:9): the
  * display init, the device reset and D3D's mode lookup are hooked below, and the present shows
- * the frame at its own size. The 2D layer is not re-anchored yet (B5b2): it stays at x 0..640.
+ * the frame at its own size. The 2D layer is authored for 640 (B5b2): the paths that place it
+ * in 640-wide pixel space are moved by (W - 640) / 2 so it sits centred (pillarboxed); the ones
+ * that already work from W are left alone. Movies keep a 640x480 buffer.
  *
  * The hooks are entry hooks (`sub_X_enter`): the lift has to be made with
  * `--exclude-manual src/recomp_manual.c` so the generated function calls them first. Direct
@@ -244,19 +246,26 @@ static void wide_set_output(int movie)
  * size +0xC0/+0xC4 and the globals 0x0050E59C/0x0050E5A0, then resets the device (when one
  * exists) or returns to 0x0011B7C0, which creates it from the same parameters. It runs again
  * after every movie. The wide size goes into all of them; the reset inside sees it through the
- * hook on 0x003C99E0. Also the 2D origin 0x0071AF48 (-W/2), set once from .data at start-up
- * (widescreen.md § 3). */
+ * hook on 0x003C99E0. Not while a movie is set up (0x00142420 resets to 640x480 itself). */
 extern void sub_0011B290_gen(void);
+
+static int wide_in_movie;
 
 static void wide_patch_display(uint32_t disp)
 {
     uint32_t w = wide_buffer_width();
-    if (!w || !disp)
+    if (!w || !disp || wide_in_movie)
         return;
     GUEST_U32(disp + 0xCu) = w;
     GUEST_F32(disp + 0xC0u) = (float)w;
     GUEST_F32(0x0050E59Cu) = (float)w;
-    GUEST_F32(0x0071AF48u) = -0.5f * (float)w;
+}
+
+/* How far 640-authored 2D moves to sit centred in the wide frame (0 = not wide). */
+static int wide_2d_shift(void)
+{
+    uint32_t w = wide_buffer_width();
+    return w && !wide_in_movie ? (int)(w - 640u) / 2 : 0;
 }
 
 void sub_0011B290(void)
@@ -267,8 +276,9 @@ void sub_0011B290(void)
     if (wide_buffer_width()) {
         wide_patch_display(disp);
         if (logged++ < 8)
-            fprintf(stderr, "[WIDE] display 0x%08X init: %ux%u, 2D origin %.1f\n", disp,
-                    GUEST_U32(disp + 0xCu), GUEST_U32(disp + 0x10u), GUEST_F32(0x0071AF48u));
+            fprintf(stderr, "[WIDE] display 0x%08X init: %ux%u%s\n", disp,
+                    GUEST_U32(disp + 0xCu), GUEST_U32(disp + 0x10u),
+                    wide_in_movie ? " (movie, left at 640)" : "");
     }
 }
 
@@ -358,10 +368,14 @@ void sub_00124150_enter(void)
 static int cine_log_on(void);
 
 /* Movie set-up / tear-down (the blocking movie loop 0x00128DE0 calls both). */
+/* With the wide buffer a movie keeps 640x480: the set-up resets the device to the movie's size
+ * (0x0011B200, same present parameters) and draws a 640-space quad; the present pillarboxes
+ * it. The tear-down ends with the display init 0x0011B290, which widens the buffer again. */
 void sub_00142420_enter(void)
 {
     if (cine_log_on())
         fprintf(stderr, "[cine] movie start\n");
+    wide_in_movie = 1;
     if (wide_aspect())
         wide_set_output(1);
 }
@@ -370,8 +384,93 @@ void sub_00141F10_enter(void)
 {
     if (cine_log_on())
         fprintf(stderr, "[cine] movie end\n");
+    wide_in_movie = 0;
     if (wide_aspect())
         wide_set_output(0);
+}
+
+/* ── Widescreen 2D (plan B5b2) ─────────────────────────────────────────────
+ *
+ * How the 2D paths place things with the wide buffer (../docs/widescreen.md § 13):
+ * - sprites (flush 0x0011D140): the sprite builder 0x0011BE80 turns 640-space positions into
+ *   centre-origin ones (minus the constants 320/240), drawn through an ortho projection of the
+ *   display's W x H: centred by themselves;
+ * - text (0x001EF210): glyph x = 0x0071AF48 + x with 0x0071AF48 = -320 from .data: centred the
+ *   same way as long as nothing changes it (B5b1 set it to -W/2: text at the left edge);
+ * - the quad batch 0x0063F5E0 and the rect list 0x00639760 draw pre-transformed vertices in
+ *   pixels, so 640-space producers need the shift: the rect quads 0x00125E10 / 0x001B3B10 (menu
+ *   frames, message boxes) below; the loading bar 0x00125B30 and the full-screen 0x0010E530 work
+ *   from W already; 0x0013FFB0 centres only when the display's widescreen byte +0xA is set;
+ * - the letterbox bars are W wide at x = W/2 in 640 space: re-centred to 320. */
+
+/* Rect quad (cdecl x0, y0, x1, y1, colours, flag): 640-space unless it spans the whole width
+ * (the message-box dim passes 0..W). */
+static void wide_shift_rect_args(void)
+{
+    int dx = wide_2d_shift();
+    int32_t x0, x1;
+    if (!dx)
+        return;
+    x0 = (int32_t)GUEST_U32(g_esp + 4u);
+    x1 = (int32_t)GUEST_U32(g_esp + 12u);
+    if (x0 <= 0 && x1 >= (int32_t)wide_buffer_width())
+        return;
+    GUEST_U32(g_esp + 4u) = (uint32_t)(x0 + dx);
+    GUEST_U32(g_esp + 12u) = (uint32_t)(x1 + dx);
+}
+
+void sub_00125E10_enter(void) { wide_shift_rect_args(); }
+void sub_001B3B10_enter(void) { wide_shift_rect_args(); }
+
+/* 0x0013FFB0 (quads from a 640-space layout into the quad batch) has its own centring by
+ * (W - 640) / 2, gated on display +0xA, which retail never sets. */
+extern void sub_0013FFB0_gen(void);
+
+void sub_0013FFB0(void)
+{
+    uint32_t disp = GUEST_U32(0x00638988u);
+    uint8_t was;
+    if (!wide_2d_shift() || !disp) {
+        sub_0013FFB0_gen();
+        return;
+    }
+    was = GUEST_U8(disp + 0xAu);
+    GUEST_U8(disp + 0xAu) = 1;
+    sub_0013FFB0_gen();
+    GUEST_U8(disp + 0xAu) = was;
+}
+
+/* Letterbox bars create 0x001CF380: two sprites W wide (display +0xC0) at x = W/2, which the
+ * sprite builder reads as 640 space. x = 320 centres them; the width stays W, the whole frame. */
+extern void sub_001CF380_gen(void);
+
+void sub_001CF380(void)
+{
+    uint32_t bar, i;
+    sub_001CF380_gen();
+    if (!wide_2d_shift())
+        return;
+    for (i = 0; i < 2; i++) {
+        bar = GUEST_U32(0x006CE8A0u + 4u * i);
+        if (bar)
+            GUEST_F32(bar + 0xC0u) = 320.0f;
+    }
+}
+
+/* Per-frame render dispatch 0x00114CD0: the in-game pass, or the front end's while 0x006C92F8
+ * (front-end mode) is set. The front end's backdrops have art outside the 640 columns (a 4:3
+ * screen hid it; the game's own dead 720-wide mode masked it too, in 0x0013FD70), so while
+ * it's up the GPU glue blacks out the sides. In game the sides are the wider 3D view. */
+void sub_00114CD0_enter(void)
+{
+#ifdef MKSM_HAVE_GPU
+    static int last = -1;
+    int on = wide_2d_shift() && GUEST_U32(0x006C92F8u) != 0;
+    if (on != last) {
+        mksm_gpu_set_side_mask(on);
+        last = on;
+    }
+#endif
 }
 
 /* RECOMP_CINE_LOG=1 (plan B5a): the cutscene signals, sampled at the start of each game

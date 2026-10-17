@@ -550,6 +550,57 @@ void mksm_gpu_set_output_aspect(float aspect)
     InterlockedExchange(&s_output_aspect, aspect > 0.0f ? bits : 0);
 }
 
+static volatile LONG s_side_mask;
+
+void mksm_gpu_set_side_mask(int on)
+{
+    InterlockedExchange(&s_side_mask, on != 0);
+}
+
+/* mksm_gpu_set_side_mask: clears the columns of a wider-than-640 surface outside its centred
+ * 640 to black, through a framebuffer of our own; xemu's GL state is put back. */
+static void mask_sides(NV2AState *d, SurfaceBinding *surface)
+{
+    static GLuint fbo;
+    if (!s_side_mask || surface->width <= 640) {
+        return;
+    }
+    if (surface->upload_pending) {
+        pgraph_gl_upload_surface_data(d, surface, !tcg_enabled());
+    }
+    unsigned scale = d->pgraph.surface_scale_factor ? d->pgraph.surface_scale_factor : 1;
+    GLint side = (GLint)((surface->width - 640) / 2 * scale);
+    GLint w = (GLint)(surface->width * scale), h = (GLint)(surface->height * scale);
+    GLint old_fbo, box[4];
+    GLfloat color[4];
+    GLboolean mask[4], scissor = glIsEnabled(GL_SCISSOR_TEST);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &old_fbo);
+    glGetIntegerv(GL_SCISSOR_BOX, box);
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, color);
+    glGetBooleanv(GL_COLOR_WRITEMASK, mask);
+    if (!fbo) {
+        glGenFramebuffers(1, &fbo);
+    }
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           surface->gl_buffer, 0);
+    glEnable(GL_SCISSOR_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glScissor(0, 0, side, h);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glScissor(w - side, 0, side, h);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)old_fbo);
+    glScissor(box[0], box[1], box[2], box[3]);
+    glClearColor(color[0], color[1], color[2], color[3]);
+    glColorMask(mask[0], mask[1], mask[2], mask[3]);
+    if (!scissor) {
+        glDisable(GL_SCISSOR_TEST);
+    }
+}
+
 static GLuint compile_shader(GLenum type, const char *src)
 {
     GLuint sh = glCreateShader(type);
@@ -781,6 +832,7 @@ static void present_scanout(NV2AState *d)
         s_stats.no_surface++;
         return;
     }
+    mask_sides(d, surface);
     if (mode == MODE_SYNC) {
         present_sync(d, surface);
     } else if (mode == MODE_PBO || !present_window(d, surface)) {

@@ -64,6 +64,11 @@ void mksm_gpu_set_window(const MksmGpuWindow *window);
  * presented frame uses it. */
 void mksm_gpu_set_output_aspect(float aspect);
 
+/* on = 1: a frame wider than 640 gets the columns outside its centred 640 cleared to black at
+ * the flip, in the surface itself (plan 4.2, B5b2: the game's menus have art beyond the 640
+ * they were made for, which a 4:3 screen never showed). Any thread; the next flip uses it. */
+void mksm_gpu_set_side_mask(int on);
+
 /* Receives the parameter of each software notify (NO_OPERATION with a non-zero parameter),
  * which on hardware interrupts the title's GPU handler. Runs on the method thread. */
 typedef void (*MksmGpuNotifyFn)(uint32_t param);

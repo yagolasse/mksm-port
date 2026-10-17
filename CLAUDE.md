@@ -42,6 +42,11 @@ statically recompiling the retail `default.xbe` to C with
 - `tools/run.sh`, `tools/run.bat`: run the exe with the needed env defaults, log to `../logs/`
 - `tools/smoke_test.py`: boot smoke test (also CTest `smoke`), see Testing
 - `tools/xiso.py`: list/extract files from an Xbox disc image
+- `tools/ghidra/`: `run_ghidra.sh` (headless import + name export, see Pipeline) and
+  `DecompAt.java` (decompile the functions at given addresses into a file, read-only:
+  `analyzeHeadless.bat <ghidra/project> mksm -process xbe_flat.bin -noanalysis -readOnly
+  -scriptPath <dir> -postScript DecompAt.java <out.c> 0x0011D140 ...`; copy it next to the other
+  scripts in `../ghidra/scripts` first). Output is game-derived: it goes to `../docs/raw/`
 - `tools/padding_seeds.py`: finds undetected functions after int3 padding (writes `seeds/padding.json`)
 - `tools/seh_seeds.py`: the filter/handler blocks of the XBE's SEH scope tables (writes `seeds/seh.json`)
 - `tools/wavscan.py`: scans a `RECOMP_AUDIO_WAV` recording (older logs: `RECOMP_APU_WAV`) for noise bursts, clicks, repeated/dropped blocks, clipping; `--excerpt START,DUR out.wav` cuts a clip
@@ -239,8 +244,11 @@ HUD/menus stretch until B5b), except during movies (kept 4:3). The dump shows th
 frame. `RECOMP_ASPECT_WIDE=1` (B5b1, with `RECOMP_ASPECT`) renders into a wider back buffer
 instead (W x 480, 854 at 16:9; hooks on the display init `0x0011B290` (a `_gen` wrapper), the
 device reset and D3D's display-mode lookup, which only knows 640/720-wide modes and is handed
-640): square pixels, the present and the dump show the W-wide frame; the 2D layer stays at
-x 0..640 (left-anchored) until B5b2. `RECOMP_CINE_LOG=1` prints `[cine]` lines when the cutscene signals change (sequence
+640): square pixels, the present and the dump show the W-wide frame. The 2D layer (authored
+for 640) is pillarboxed (B5b2): hooks on the 2D paths that work in 640-wide pixels move them by
+(W-640)/2, the letterbox bars are re-centred, movies keep a 640x480 buffer (pillarboxed by the
+present), and in the menus (the game's front-end flag) the GPU glue blacks out the columns
+outside the centred 640 at each flip (`mksm_gpu_set_side_mask`): their backdrops have art there. `RECOMP_CINE_LOG=1` prints `[cine]` lines when the cutscene signals change (sequence
 flag, cinematic camera, letterbox bars, fade) and at movie start/end.
 `RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
 changed on every use (default: once per pushbuffer kick, texture pages only when their content hash

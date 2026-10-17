@@ -167,7 +167,13 @@ toggles it, Esc / B closes; `[MENU] open`/`closed` in the log. Toolkit hooks it 
 from the keyboard pad) and `xbox_InputSetFilter` (each pad state on the polling thread; the menu
 reads Back+Start there and zeroes the state while open and until the pad is let go). Events are
 queued to the present thread, which redraws the last frame every 16 ms while open; closed it
-costs one pointer check per present. The game still runs while open (freeze = B7a2). 
+costs one pointer check per present. While open the game is frozen (B7a2): `mksm_gpu_set_frozen`
+holds the method thread at the next flip after presenting it (`[XGPU] frozen at flip N` /
+`resumed after N ms`), so the title blocks on the GPU and its tick-per-pass loop stops (no time
+jump: frames after a 5 s freeze in a movie match a no-freeze run byte for byte), and the toolkit's
+`mcpx_apu_set_host_paused` (patch 0024) stops APU frames and the audio device in place (`[APU]
+host paused`/`resumed`). Pads are still polled while frozen (the USB thread keeps answering the
+title's transfers), so Back+Start and pad nav work; `[MENU] closed (N pad polls while open)`.
 Keys
 come from SDL events (`keyboard_sdl.c`), pads from SDL's game controllers (B9b1, below). The GDI window only:
 `RECOMP_FB_DUMP` (the SDL window has none) needs an absolute path (the run

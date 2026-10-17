@@ -1,0 +1,175 @@
+From 0f8b458e784558efc24297f147c1cf8625aab9a7 Mon Sep 17 00:00:00 2001
+From: The FBC Agent <thefbcspecialagent@gmail.com>
+Date: Sat, 17 Oct 2026 19:15:34 -0300
+Subject: [PATCH] apu: host pause (mcpx_apu_set_host_paused) for a title's
+ overlay
+
+A host menu that freezes the game needs the APU to stop with it: no frames
+(voices, DSP, interrupts, sample counter stand still) and the audio device
+stopped where it is (xa2_set_paused: XAudio2 Stop/Start, SDL pause), so
+playback picks up from the same sample. The DSP doorbell is still acked
+while paused. The pacing drain time is reset on resume so the held queue
+isn't taken for a stalled device.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016ahYm8JBvCH5KhgtSu9Yoy
+---
+ src/apu/apu.h         |  8 ++++++++
+ src/apu/apu_core.c    | 39 ++++++++++++++++++++++++++++++++++++++-
+ src/apu/apu_sdl2.c    |  6 ++++++
+ src/apu/apu_xaudio2.c |  9 +++++++++
+ src/apu/apu_xaudio2.h |  4 ++++
+ 5 files changed, 65 insertions(+), 1 deletion(-)
+
+diff --git a/src/apu/apu.h b/src/apu/apu.h
+index ef3c813..89ae7a4 100644
+--- a/src/apu/apu.h
++++ b/src/apu/apu.h
+@@ -31,6 +31,14 @@ void mcpx_apu_mmio_write(MCPXAPUState *d, uint64_t addr, uint64_t val, unsigned
+  * set, non-empty and not starting with '0'. */
+ int apu_env_on(const char *name);
+ 
++/* Host pause (a title's in-game menu freezing the game): on = no more APU
++ * frames (voices, DSP, interrupts and the sample counter stand still, so the
++ * title sees no time pass in its sound) and the audio device stops where it
++ * is; off = both resume. The DSP doorbell is still acked meanwhile, so a
++ * DirectSound call made while paused does not hang. Any thread, any time
++ * (before init it only sets the flag). */
++void mcpx_apu_set_host_paused(int on);
++
+ /* Play a 440Hz test tone through the APU pipeline to verify audio output.
+  * Directly programs a voice without going through DirectSound. */
+ void mcpx_apu_play_test_tone(MCPXAPUState *d);
+diff --git a/src/apu/apu_core.c b/src/apu/apu_core.c
+index 138be2d..79c7e9b 100644
+--- a/src/apu/apu_core.c
++++ b/src/apu/apu_core.c
+@@ -34,6 +34,9 @@ uint8_t *g_apu_ram_ptr = NULL;
+ 
+ MCPXAPUState *g_state = NULL;
+ 
++/* mcpx_apu_set_host_paused */
++static int g_host_paused;
++
+ /* Forward declarations for software mixer */
+ static void mixer_init(void);
+ static void mixer_render(int16_t frame_buf[][2], int num_samples);
+@@ -978,7 +981,7 @@ static void throttle(MCPXAPUState *d)
+ {
+     int64_t start_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+ 
+-    while (!d->pause_requested) {
++    while (!d->pause_requested && !qatomic_read(&g_host_paused)) {
+         int64_t wait_us = mcpx_apu_pace_step(
+             d, qemu_clock_get_us(QEMU_CLOCK_REALTIME));
+         if (wait_us <= 0)
+@@ -1064,6 +1067,14 @@ static void *mcpx_apu_frame_thread(void *arg)
+     qemu_mutex_lock(&d->lock);
+ 
+     while (!qatomic_read(&d->exiting)) {
++        if (qatomic_read(&g_host_paused)) {
++            /* No frames, so nothing the title can see moves; the doorbell
++             * is still acked (cheap, stateless) in case it posts a command. */
++            hs_rebase();
++            mcpx_apu_dsp_ack_poll(d);
++            qemu_cond_timedwait(&d->cond, &d->lock, 1);
++            continue;
++        }
+         if (d->pause_requested && !g_test_tone.active && !g_mixer_active_count) {
+             d->is_idle = true;
+             if (xa2_is_active())
+@@ -1079,6 +1090,8 @@ static void *mcpx_apu_frame_thread(void *arg)
+          * need continuous frame delivery regardless of APU register state.
+          * The VP/DSP pipeline (se_frame) only runs when registers allow it. */
+         throttle(d);
++        if (qatomic_read(&g_host_paused))
++            continue;
+         int div0 = d->ep_frame_div;
+ 
+         /* The doorbell ack stands in for the GP DSP, which on hardware runs
+@@ -1203,6 +1216,30 @@ static void mcpx_apu_wait_for_idle(MCPXAPUState *d)
+     }
+ }
+ 
++void mcpx_apu_set_host_paused(int on)
++{
++    MCPXAPUState *d = g_state;
++
++    on = on ? 1 : 0;
++    if (!d) {
++        qatomic_set(&g_host_paused, on);
++        return;
++    }
++    qemu_mutex_lock(&d->lock);
++    if (qatomic_read(&g_host_paused) != on) {
++        qatomic_set(&g_host_paused, on);
++        /* The device queue stood still with the pause: without this the
++         * first pacing step after it would read the stale drain time as a
++         * stalled device and drop periods. */
++        d->pace_drain_us = 0;
++        if (xa2_is_active())
++            xa2_set_paused(on);
++        fprintf(stderr, "[APU] host %s\n", on ? "paused" : "resumed");
++    }
++    qemu_cond_broadcast(&d->cond);
++    qemu_mutex_unlock(&d->lock);
++}
++
+ static void mcpx_apu_resume(MCPXAPUState *d)
+ {
+     d->pause_requested = false;
+diff --git a/src/apu/apu_sdl2.c b/src/apu/apu_sdl2.c
+index 7eca83d..5de6b8a 100644
+--- a/src/apu/apu_sdl2.c
++++ b/src/apu/apu_sdl2.c
+@@ -221,6 +221,12 @@ void xa2_expect_drain(void)
+     g_dry = 1;
+ }
+ 
++void xa2_set_paused(int on)
++{
++    if (!g_initialized || !g_dev) return;
++    SDL_PauseAudioDevice(g_dev, on ? 1 : 0);
++}
++
+ unsigned xa2_underruns(void)
+ {
+     return g_underruns;
+diff --git a/src/apu/apu_xaudio2.c b/src/apu/apu_xaudio2.c
+index b4ceebd..8547fdc 100644
+--- a/src/apu/apu_xaudio2.c
++++ b/src/apu/apu_xaudio2.c
+@@ -270,6 +270,15 @@ void xa2_expect_drain(void)
+     g_xa2_dry = 1;
+ }
+ 
++void xa2_set_paused(int on)
++{
++    if (!g_xa2_initialized || !g_xa2_source) return;
++    if (on)
++        IXAudio2SourceVoice_Stop(g_xa2_source, 0, XAUDIO2_COMMIT_NOW);
++    else
++        IXAudio2SourceVoice_Start(g_xa2_source, 0, XAUDIO2_COMMIT_NOW);
++}
++
+ unsigned xa2_underruns(void)
+ {
+     return g_xa2_underruns;
+diff --git a/src/apu/apu_xaudio2.h b/src/apu/apu_xaudio2.h
+index 583fc70..9a3c94b 100644
+--- a/src/apu/apu_xaudio2.h
++++ b/src/apu/apu_xaudio2.h
+@@ -40,6 +40,10 @@ int xa2_queued_samples(void);
+  * the dry spell that follows is not an underrun. */
+ void xa2_expect_drain(void);
+ 
++/* Stop (1) or restart (0) the device's playback where it is: the queued
++ * samples stay queued and play on from the same spot (a host pause). */
++void xa2_set_paused(int on);
++
+ /* Pacing marks in samples for count buffers of buf_samples, fed one period
+  * (period samples) at a time. A period is submitted only while queued <
+  * high, so high is capped where that period could fill a buffer the voice
+-- 
+2.53.0.windows.2
+

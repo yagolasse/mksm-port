@@ -74,6 +74,13 @@ void mksm_gpu_set_overlay(MksmGpuOverlayFn fn);
 /* Wakes the present thread to draw the last frame again with the overlay (any thread). */
 void mksm_gpu_overlay_wake(void);
 
+/* Freezes the game (plan B7a2: the settings menu is open): on = the method thread holds at the
+ * next flip, after presenting it and before the game sees it done, so the title soon blocks on
+ * the GPU and its frame loop stops (one logic tick per loop pass: no game time passes); the
+ * present thread keeps drawing the last frame for the overlay. off = the flip completes. Any
+ * thread. */
+void mksm_gpu_set_frozen(int on);
+
 /* The aspect the window present shows each frame at (plan 4.2, B5a: an anamorphic widescreen
  * frame is stretched to it); 0 = the frame's own size (the default). Any thread; the next
  * presented frame uses it. */

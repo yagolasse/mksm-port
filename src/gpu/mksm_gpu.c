@@ -966,6 +966,43 @@ static void wait_vblank(void)
     next += period;
 }
 
+/* mksm_gpu_set_frozen: s_thaw is a manual-reset event, set while not frozen. */
+static volatile LONG s_frozen;
+static HANDLE s_thaw;
+
+void mksm_gpu_set_frozen(int on)
+{
+    if (!s_thaw) {
+        HANDLE e = CreateEventW(NULL, TRUE, TRUE, NULL);
+        if (InterlockedCompareExchangePointer(&s_thaw, e, NULL) != NULL) {
+            CloseHandle(e);
+        }
+    }
+    if (on) {
+        ResetEvent(s_thaw);
+        InterlockedExchange(&s_frozen, 1);
+    } else {
+        InterlockedExchange(&s_frozen, 0);
+        SetEvent(s_thaw);
+    }
+}
+
+/* At a flip: hold while frozen (the timeout only guards a lost wake). */
+static void hold_if_frozen(void)
+{
+    if (!s_frozen) {
+        return;
+    }
+    ULONGLONG t0 = GetTickCount64();
+    fprintf(stderr, "[XGPU] frozen at flip %lu\n", s_stats.flips);
+    fflush(stderr);
+    while (s_frozen) {
+        WaitForSingleObject(s_thaw, 100);
+    }
+    fprintf(stderr, "[XGPU] resumed after %llu ms\n", GetTickCount64() - t0);
+    fflush(stderr);
+}
+
 void mksm_gpu_method(uint32_t subch, uint32_t method, uint32_t param)
 {
     NV2AState *d = s_dev;
@@ -1085,6 +1122,7 @@ void mksm_gpu_method(uint32_t subch, uint32_t method, uint32_t param)
         qemu_mutex_unlock(&pg->lock);
         s_stats.frame_draws = 0;
         wait_vblank();
+        hold_if_frozen();
         if (GET_MASK(pgraph_reg_r(pg, NV_PGRAPH_SURFACE), NV_PGRAPH_SURFACE_MODULO_3D)) {
             pgraph_write(d, NV_PGRAPH_INCREMENT, NV_PGRAPH_INCREMENT_READ_3D, 4);
         }

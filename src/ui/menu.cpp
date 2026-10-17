@@ -17,7 +17,9 @@
  *                  current; while open it asks for a redraw every 16 ms (no new frame needed).
  *
  * B7a1 shows the settings read-only (from the environment variables they are set with today,
- * README Run section); B7b adds the settings file, B7a2 freezes the game while open.
+ * README Run section); B7b adds the settings file. While open the game is frozen (B7a2):
+ * mksm_gpu holds the method thread at the next flip and the toolkit's APU stops (no frames, the
+ * audio device paused where it is).
  */
 #include "menu.h"
 
@@ -45,11 +47,14 @@ typedef int (*xbox_fb_event_hook_fn)(const void *sdl_event);
 void xbox_FramebufferWindowSetEventHook(xbox_fb_event_hook_fn hook);
 void *xbox_FramebufferWindowSdl(void);
 void xbox_InputKeysClear(void);
+/* toolkit src/apu/apu.h */
+void mcpx_apu_set_host_paused(int on);
 }
 
 namespace {
 
 std::atomic<bool> g_open{false};
+std::atomic<unsigned> g_polls{0};    /* pad states filtered (logged at close) */
 std::atomic<bool> g_show_fps{false};
 
 /* SDL events for ImGui, window thread -> present thread. */
@@ -65,7 +70,15 @@ void set_open(bool on)
     if (on) {
         xbox_InputKeysClear();    /* a key held when the menu opens would stay held */
     }
-    fprintf(stderr, "[MENU] %s\n", on ? "open" : "closed");
+    /* Freeze the game while open: the GPU holds at the next flip, the APU stops. */
+    mksm_gpu_set_frozen(on);
+    mcpx_apu_set_host_paused(on);
+    unsigned polls = g_polls.exchange(0);
+    if (on) {
+        fprintf(stderr, "[MENU] open\n");
+    } else {
+        fprintf(stderr, "[MENU] closed (%u pad polls while open)\n", polls);
+    }
     fflush(stderr);
     mksm_gpu_overlay_wake();
 }
@@ -141,6 +154,7 @@ void input_filter(DWORD port, XBOX_INPUT_STATE *st)
     if (port >= XBOX_MAX_CONTROLLERS) {
         return;
     }
+    g_polls++;
     bool combo = (st->Gamepad.wButtons & kCombo) == kCombo;
     if (combo && !g_combo[port]) {
         fprintf(stderr, "[MENU] Back+Start on port %lu\n", (unsigned long)port);

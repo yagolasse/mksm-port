@@ -23,7 +23,7 @@ Work in progress. Windows x64 is the only host tested so far.
 | Further levels, full playthrough | not tested yet |
 | Internal resolution 1x-4x | working (`RECOMP_PB_GPU_SCALE`) |
 | Widescreen | experimental (`RECOMP_ASPECT=16:9`, `RECOMP_ASPECT_WIDE=1`) |
-| Settings menu (F1) | started: shows the settings, FPS counter; no changes yet |
+| Settings menu (F1) | started: shows the settings, FPS counter, pauses the game; no changes yet |
 | Native Linux build | started, paused |
 
 Expect crashes and glitches. Bug reports are welcome; please include the log from `../logs/`
@@ -119,8 +119,8 @@ overrides it) and write a log to `../logs/run_<timestamp>.log`.
   found, and can be plugged in while the game runs.
 - F1, or Back+Start pressed together on a controller, opens the settings menu (Esc, F1,
   Back+Start or B closes it; arrows/Enter or the d-pad/A move around it). For now it shows the
-  current settings and the variables that set them, and has a "Show FPS" counter; the game
-  keeps running behind it but gets no input while it is open.
+  current settings and the variables that set them, and has a "Show FPS" counter. The game
+  (and its sound, movies included) is paused while the menu is open and picks up where it was.
 - Alt+Enter toggles borderless fullscreen (`RECOMP_FB_FULLSCREEN=1` starts in it).
   `RECOMP_WINDOW_SCALE=2` (up to 8) opens the window at twice 640x480.
 - `RECOMP_PB_GPU_SCALE=2` (or 3, 4) renders at a higher internal resolution.

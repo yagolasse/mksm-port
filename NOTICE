@@ -62,6 +62,12 @@ SDL 2.32.10 (game window and keys; linked static into the exe)
            time, not in this repo)
   License: zlib, LICENSE.txt in SDL's source tree (copyright Sam Lantinga)
 
+Dear ImGui 1.91.9b (the settings menu, src/ui/menu.cpp)
+  Source:  https://github.com/ocornut/imgui, tag v1.91.9b
+  Path:    external/imgui/ (the core files and backends/imgui_impl_{sdl2,opengl3}* copied
+           unmodified)
+  License: MIT, external/imgui/LICENSE.txt (copyright Omar Cornut)
+
 xboxrecomp
   Source:  https://github.com/sp00nznet/xboxrecomp (git submodule, external/xboxrecomp)
   License: see external/xboxrecomp/LICENSE and external/xboxrecomp/LICENSES

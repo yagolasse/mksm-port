@@ -61,6 +61,19 @@ typedef struct MksmGpuWindow {
  * until the window exists, frames go to the present callback as before. */
 void mksm_gpu_set_window(const MksmGpuWindow *window);
 
+/* An overlay drawn over each window present (plan B7a1: the settings menu), on the present
+ * thread with its GL context current, after the frame and before the swap; width/height = the
+ * client size in physical pixels, the viewport the whole window; new_frame = 0 when the last
+ * frame is drawn again for the overlay. Returns the ms until it wants a redraw of the last
+ * frame without a new one (an open menu), 0 = only with the next frame.
+ * It may change the program, VAO, texture/sampler unit 0, viewport, blend and scissor state
+ * (the present sets those again). Set before the window opens; NULL = none. */
+typedef unsigned (*MksmGpuOverlayFn)(unsigned width, unsigned height, int new_frame);
+void mksm_gpu_set_overlay(MksmGpuOverlayFn fn);
+
+/* Wakes the present thread to draw the last frame again with the overlay (any thread). */
+void mksm_gpu_overlay_wake(void);
+
 /* The aspect the window present shows each frame at (plan 4.2, B5a: an anamorphic widescreen
  * frame is stretched to it); 0 = the frame's own size (the default). Any thread; the next
  * presented frame uses it. */

@@ -23,6 +23,7 @@ Work in progress. Windows x64 is the only host tested so far.
 | Further levels, full playthrough | not tested yet |
 | Internal resolution 1x-4x | working (`RECOMP_PB_GPU_SCALE`) |
 | Widescreen | experimental (`RECOMP_ASPECT=16:9`, `RECOMP_ASPECT_WIDE=1`) |
+| Settings menu (F1) | started: shows the settings, FPS counter; no changes yet |
 | Native Linux build | started, paused |
 
 Expect crashes and glitches. Bug reports are welcome; please include the log from `../logs/`
@@ -34,6 +35,7 @@ Expect crashes and glitches. Bug reports are welcome; please include the log fro
   recompiled game
 - `src/recomp_manual.c`: hand-written overrides and hooks on top of the generated code (fixes,
   widescreen, diagnostics)
+- `src/ui/`: the settings menu (Dear ImGui, `external/imgui`, over the GPU present)
 - `src/gpu/`: the GPU renderer: xemu's PGRAPH and OpenGL back end (copied unmodified), the glue
   that stands in for the rest of the emulated GPU, and the present path to the game window
 - `external/xboxrecomp/`: the recompiler toolkit and runtime (Xbox kernel, audio, input, D3D
@@ -115,6 +117,10 @@ overrides it) and write a log to `../logs/run_<timestamp>.log`.
   white/black, 1/3 = triggers, numpad 8/2/4/6 = left stick, I/J/K/L = right stick. Controllers
   (Xbox, PlayStation, Switch Pro and others SDL knows) work as pads 1-4 in the order they're
   found, and can be plugged in while the game runs.
+- F1, or Back+Start pressed together on a controller, opens the settings menu (Esc, F1,
+  Back+Start or B closes it; arrows/Enter or the d-pad/A move around it). For now it shows the
+  current settings and the variables that set them, and has a "Show FPS" counter; the game
+  keeps running behind it but gets no input while it is open.
 - Alt+Enter toggles borderless fullscreen (`RECOMP_FB_FULLSCREEN=1` starts in it).
   `RECOMP_WINDOW_SCALE=2` (up to 8) opens the window at twice 640x480.
 - `RECOMP_PB_GPU_SCALE=2` (or 3, 4) renders at a higher internal resolution.

@@ -239,6 +239,9 @@ typedef struct MCPXAPUState MCPXAPUState;
  * RECOMP_PB_GPU_VBLANK=<Hz> sets the flip pacing (default 59.94, 0 = uncapped). */
 #ifdef MKSM_HAVE_GPU
 #include "gpu/mksm_gpu.h"
+#ifdef MKSM_HAVE_MENU
+#include "ui/menu.h"
+#endif
 
 typedef void (*nv2a_pb_method_hook_fn)(uint32_t subch, uint32_t method, uint32_t param);
 extern void nv2a_pb_set_method_hook(nv2a_pb_method_hook_fn fn);
@@ -327,8 +330,12 @@ static bool gpu_init_from_env(void)
      * opens (the toolkit opens it at the first display-mode set). */
     {
         const char *pm = getenv("RECOMP_PB_GPU_PRESENT");
-        if (opengl && (!pm || !*pm || strcmp(pm, "window") == 0))
+        if (opengl && (!pm || !*pm || strcmp(pm, "window") == 0)) {
             xbox_FramebufferWindowExternalPresent(1);
+#ifdef MKSM_HAVE_MENU
+            mksm_menu_install();    /* the settings menu over the window present (B7a1) */
+#endif
+        }
     }
     mksm_gpu_set_notify(gpu_notify);
     nv2a_pb_set_method_hook(mksm_gpu_method);

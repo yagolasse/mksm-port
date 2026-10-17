@@ -204,6 +204,32 @@ else()
     message(STATUS "mksm_gpu skipped: set MKSM_CLANG_CL to clang-cl.exe and put ninja on PATH")
 endif()
 
+# ── Settings menu (plan 4.6, B7a1) ──────────────────────────────
+#
+# Dear ImGui (external/imgui, vendored unmodified, MIT) with its SDL2 + OpenGL3 backends,
+# drawn by mksm_gpu's present thread (src/ui/menu.cpp). Needs the SDL window and the GPU
+# present, so it is linked where mksm_gpu is (non-Debug configs).
+if(MKSM_SDL_WINDOW AND TARGET mksm_gpu)
+    enable_language(CXX)
+    set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/imgui")
+    add_library(mksm_menu STATIC
+        src/ui/menu.cpp
+        ${IMGUI_DIR}/imgui.cpp
+        ${IMGUI_DIR}/imgui_draw.cpp
+        ${IMGUI_DIR}/imgui_tables.cpp
+        ${IMGUI_DIR}/imgui_widgets.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_sdl2.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+    )
+    target_include_directories(mksm_menu PRIVATE
+        ${IMGUI_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src/gpu ${XBOXRECOMP_DIR}/src)
+    target_link_libraries(mksm_menu PRIVATE SDL2::SDL2)
+    target_compile_definitions(mksm_menu PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+    target_compile_options(mksm_menu PRIVATE /Z7)
+    target_link_libraries(${PROJECT_NAME} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:mksm_menu>")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:MKSM_HAVE_MENU=1>")
+endif()
+
 # ── Tests ───────────────────────────────────────────────────────
 #
 # tools: unit tests for the Python tools (tests/), no game data needed.

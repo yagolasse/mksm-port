@@ -540,6 +540,20 @@ void mksm_gpu_set_window(const MksmGpuWindow *window)
     s_win.have_fns = true;
 }
 
+static MksmGpuOverlayFn s_overlay;
+
+void mksm_gpu_set_overlay(MksmGpuOverlayFn fn)
+{
+    s_overlay = fn;
+}
+
+void mksm_gpu_overlay_wake(void)
+{
+    if (s_win.up) {
+        SetEvent(s_win.wake);
+    }
+}
+
 /* The output aspect as float bits, 0 = the surface's own (mksm_gpu_set_output_aspect). */
 static volatile LONG s_output_aspect;
 
@@ -705,13 +719,18 @@ static DWORD WINAPI present_thread(LPVOID unused)
     fprintf(stderr, "[XGPU] presenting into the game window from thread %lu (%s filter)\n",
             GetCurrentThreadId(), filter == GL_NEAREST ? "nearest" : "linear");
 
+    /* The overlay's redraw interval (INFINITE: wait for a frame). */
+    DWORD redraw = INFINITE;
     for (;;) {
-        WaitForSingleObject(s_win.wake, INFINITE);
+        WaitForSingleObject(s_win.wake, redraw);
         EnterCriticalSection(&s_win.lock);
         int i = s_win.ready;
-        if (i >= 0) {
+        bool new_frame = i >= 0;
+        if (new_frame) {
             s_win.showing = i;
             s_win.ready = -1;
+        } else {
+            i = s_win.showing;    /* no new frame: the overlay redraws the last one */
         }
         LeaveCriticalSection(&s_win.lock);
         if (i < 0) {
@@ -753,6 +772,18 @@ static DWORD WINAPI present_thread(LPVOID unused)
         glViewport((GLint)(cw - w) / 2, (GLint)(ch - h) / 2, (GLsizei)w, (GLsizei)h);
         glBindTexture(GL_TEXTURE_2D, s_win.slot[i].tex);
         glDrawArrays(GL_TRIANGLES, 0, 3);
+        if (s_overlay) {
+            glViewport(0, 0, (GLsizei)cw, (GLsizei)ch);
+            unsigned ms = s_overlay(cw, ch, new_frame);
+            redraw = ms ? ms : INFINITE;
+            /* Our state back for the next frame (the overlay may have changed it). */
+            glUseProgram(prog);
+            glBindVertexArray(vao);
+            glActiveTexture(GL_TEXTURE0);
+            glBindSampler(0, sampler);
+            glDisable(GL_BLEND);
+            glDisable(GL_SCISSOR_TEST);
+        }
         glo_swap_buffers(s_win.ctx);
     }
 }

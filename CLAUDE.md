@@ -39,6 +39,11 @@ statically recompiling the retail `default.xbe` to C with
   (RAMHT lookup, acks the NOP-notify and flip-stall waits, presents the last-drawn surface at the
   flip and paces flips to 59.94 Hz); `mksm_gpu.h` = the plain-C interface for
   cl-built code. Licenses: `LICENSE` (GPL-3.0, the combined work), `LICENSES/`, `NOTICE` (file → license)
+- `src/ui/`: the settings menu (`menu.cpp`, plan 4.6/B7a1; C++, cl-built lib `mksm_menu`, linked
+  with the SDL window + GPU in non-Debug configs, `MKSM_HAVE_MENU`): Dear ImGui with its SDL2 and
+  OpenGL3 backends, drawn by `mksm_gpu.c`'s present thread through `mksm_gpu_set_overlay`
+- `external/imgui/`: Dear ImGui 1.91.9b, the core files and the sdl2/opengl3 backends copied
+  **unmodified** (`NOTICE`); update by copying a newer release over them
 - `external/xboxrecomp/`: toolkit git submodule (pinned), from our fork
   https://github.com/yagolasse/xboxrecomp (remote `origin`); add sp00nznet's repo as remote
   `upstream` after cloning (`git remote add upstream https://github.com/sp00nznet/xboxrecomp.git`):
@@ -156,7 +161,14 @@ fullscreen (not seen by the game as Start), `RECOMP_FB_FULLSCREEN=1` starts full
 DPI scale). On the GPU path `main.c` puts the SDL window in external-present mode
 (`xbox_FramebufferWindowExternalPresent`): no SDL_Renderer on it, made with `SDL_WINDOW_OPENGL`
 (patch 0021), so the GPU present's SDL GL context owns it (B9a2; `xbox_FramebufferWindowSdl`), and
-the CPU frames before the present thread is up are dropped (black for a moment at boot). Keys
+the CPU frames before the present thread is up are dropped (black for a moment at boot). Settings menu (B7a1, SDL window + window present only): F1 or Back+Start held together
+toggles it, Esc / B closes; `[MENU] open`/`closed` in the log. Toolkit hooks it uses (patch 0023):
+`xbox_FramebufferWindowSetEventHook` (every SDL event on the window thread first; nonzero keeps it
+from the keyboard pad) and `xbox_InputSetFilter` (each pad state on the polling thread; the menu
+reads Back+Start there and zeroes the state while open and until the pad is let go). Events are
+queued to the present thread, which redraws the last frame every 16 ms while open; closed it
+costs one pointer check per present. The game still runs while open (freeze = B7a2). 
+Keys
 come from SDL events (`keyboard_sdl.c`), pads from SDL's game controllers (B9b1, below). The GDI window only:
 `RECOMP_FB_DUMP` (the SDL window has none) needs an absolute path (the run
 scripts start the exe in `build/Release`). For a renderer drawing into the window itself it

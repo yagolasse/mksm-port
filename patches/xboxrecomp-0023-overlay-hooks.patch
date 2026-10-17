@@ -1,0 +1,137 @@
+From 2df1f450543f9dd5dd8f0d396cca8a75bc5bf2fb Mon Sep 17 00:00:00 2001
+From: The FBC Agent <thefbcspecialagent@gmail.com>
+Date: Sat, 17 Oct 2026 18:42:19 -0300
+Subject: [PATCH] video, input: SDL window event hook and pad-state filter for
+ a title's overlay
+
+xbox_FramebufferWindowSetEventHook: the SDL window loop hands every event to
+a title's hook first (on the window thread); a nonzero return keeps it from
+the keyboard pad stand-in. xbox_InputSetFilter (SDL game-controller backend):
+a title sees, and may change, each state xbox_InputGetState returns. Both are
+for an in-game overlay menu: its toggle combo, its input, and a neutral pad
+for the game while it is open.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016ahYm8JBvCH5KhgtSu9Yoy
+---
+ src/input/xinput_device.c  | 19 ++++++++++++++++++-
+ src/input/xinput_xbox.h    | 10 ++++++++++
+ src/video/fb_present_sdl.c | 16 ++++++++++++++--
+ src/video/video_player.h   |  9 +++++++++
+ 4 files changed, 51 insertions(+), 3 deletions(-)
+
+diff --git a/src/input/xinput_device.c b/src/input/xinput_device.c
+index 3e267c2..7b3e9ff 100644
+--- a/src/input/xinput_device.c
++++ b/src/input/xinput_device.c
+@@ -328,7 +328,7 @@ static DWORD no_pad(DWORD dwPort, XBOX_INPUT_STATE *pState)
+     return ERROR_DEVICE_NOT_CONNECTED;
+ }
+ 
+-DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
++static DWORD get_state(DWORD dwPort, XBOX_INPUT_STATE *pState)
+ {
+     SDL_GameController *c;
+ 
+@@ -419,6 +419,23 @@ DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
+     return ERROR_SUCCESS;
+ }
+ 
++static xbox_input_filter_fn volatile g_filter;
++
++void xbox_InputSetFilter(xbox_input_filter_fn fn)
++{
++    g_filter = fn;
++}
++
++DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
++{
++    DWORD rc = get_state(dwPort, pState);
++    xbox_input_filter_fn fn = g_filter;
++
++    if (rc == ERROR_SUCCESS && fn)
++        fn(dwPort, pState);
++    return rc;
++}
++
+ DWORD xbox_InputSetState(DWORD dwPort, const XBOX_VIBRATION *pVibration)
+ {
+     SDL_GameController *c;
+diff --git a/src/input/xinput_xbox.h b/src/input/xinput_xbox.h
+index 4779275..cbd202f 100644
+--- a/src/input/xinput_xbox.h
++++ b/src/input/xinput_xbox.h
+@@ -94,6 +94,16 @@ void xbox_InputInit(void);
+  */
+ DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState);
+ 
++/**
++ * SDL game-controller backend only (XBOX_SDL_WINDOW or POSIX): fn sees each
++ * state xbox_InputGetState is about to return (pad, keyboard and mouse
++ * merged), on the polling thread, and may change it (a title's overlay menu
++ * reads its combo there and hands the game a neutral pad while open). One
++ * filter; NULL removes it.
++ */
++typedef void (*xbox_input_filter_fn)(DWORD dwPort, XBOX_INPUT_STATE *pState);
++void xbox_InputSetFilter(xbox_input_filter_fn fn);
++
+ /**
+  * Set controller vibration.
+  */
+diff --git a/src/video/fb_present_sdl.c b/src/video/fb_present_sdl.c
+index 5046a1f..a684ac3 100644
+--- a/src/video/fb_present_sdl.c
++++ b/src/video/fb_present_sdl.c
+@@ -245,6 +245,13 @@ void *xbox_FramebufferWindowHwnd(void) { return s_hwnd; }
+ 
+ void *xbox_FramebufferWindowSdl(void) { return s_sdl_win; }
+ 
++static xbox_fb_event_hook_fn volatile s_event_hook;
++
++void xbox_FramebufferWindowSetEventHook(xbox_fb_event_hook_fn hook)
++{
++    s_event_hook = hook;
++}
++
+ /* Nothing to stop: in external mode the window draws nothing of its own. */
+ void xbox_FramebufferWindowGpuPresent(int on) { (void)on; }
+ 
+@@ -488,8 +495,13 @@ static int window_loop(void)
+                     continue;
+                 }
+                 /* Keys for the pad stand-in, and the window events that
+-                 * release them; it only reads the event. */
+-                xbox_InputSdlEvent(&ev);
++                 * release them; it only reads the event. A title's hook
++                 * (an overlay menu) sees it first and may keep it. */
++                {
++                    xbox_fb_event_hook_fn hook = s_event_hook;
++                    if (!hook || !hook(&ev))
++                        xbox_InputSdlEvent(&ev);
++                }
+                 if (ev.type == SDL_QUIT)
+                     quit = 1;
+                 else if (ev.type == s_guest_done_event)
+diff --git a/src/video/video_player.h b/src/video/video_player.h
+index 43ab862..9e4faf3 100644
+--- a/src/video/video_player.h
++++ b/src/video/video_player.h
+@@ -82,6 +82,15 @@ void *xbox_FramebufferWindowHwnd(void);
+ /* SDL window only (fb_present_sdl.c): the SDL_Window * once the window is up
+  * in external-present mode (made with SDL_WINDOW_OPENGL), else NULL. */
+ void *xbox_FramebufferWindowSdl(void);
++/* SDL window only: every SDL event the window loop takes is handed to hook
++ * first, on the window's thread (on Windows its own "fb window" thread, so
++ * a hook that draws elsewhere queues the event across). The argument is the
++ * SDL_Event *. A nonzero return keeps the event from the keyboard stand-in
++ * (keyboard_sdl.c); the window itself still acts on quit, close and size
++ * events, and Alt+Enter is taken before the hook. One hook; NULL removes it;
++ * set it before or after the window opens. */
++typedef int (*xbox_fb_event_hook_fn)(const void *sdl_event);
++void xbox_FramebufferWindowSetEventHook(xbox_fb_event_hook_fn hook);
+ void xbox_FramebufferWindowGpuPresent(int on);
+ int  xbox_FramebufferWindowClientSize(uint32_t *width, uint32_t *height);
+ int  xbox_FramebufferDumpBmp(const char *path);
+-- 
+2.53.0.windows.2
+

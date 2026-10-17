@@ -78,6 +78,7 @@ file(GLOB RECOMP_GEN_SOURCES CONFIGURE_DEPENDS "src/recomp/gen/*.c")
 set(GAME_SOURCES
     src/main.c
     src/prof.c
+    src/settings.c
     src/recomp_manual.c
     # Add game-specific sources here, e.g.:
     # src/asset_loader.c
@@ -244,6 +245,10 @@ if(TARGET gpu_link)
     add_test(NAME gpu_link COMMAND gpu_link)
     add_test(NAME gpu_link_gl COMMAND gpu_link gl)
 endif()
+# settings: the settings file's parse/write and the monitor -> scale/aspect defaults (B7b1).
+add_executable(settings_test tests/settings_test.c src/settings.c)
+target_include_directories(settings_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+add_test(NAME settings COMMAND settings_test)
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
     set(MKSM_GAME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../game_files" CACHE PATH

@@ -12,8 +12,12 @@
 # Env: MKSM_GAME_DIR (default ../game_files): extracted disc root with default.xbe
 #      MKSM_EXE      (default build/Release/mksm_recomp.exe)
 #      MKSM_LOG      (default ../logs/run_<timestamp>.log)
-#      MKSM_SAVE_DIR (default %LOCALAPPDATA%\mksm_recomp): the saves and the
-#                    emulated hard disk; saves left in <game>\UDATA move there once
+#      MKSM_SAVE_DIR (default %LOCALAPPDATA%\mksm_recomp\saves): the saves
+#                    (UDATA/TDATA); older saves in <game>\UDATA or directly in
+#                    mksm_recomp\ move there once. The emulated hard disk and
+#                    settings.ini stay in %LOCALAPPDATA%\mksm_recomp.
+#      RECOMP_SETTINGS defaults to 0: dev runs ignore the player's settings.ini
+#                    (no file = the Xbox look); 1 = use it, <path> = that file.
 #      Toolkit vars such as RECOMP_WATCHDOG_SECS / RECOMP_AC97_READY pass through.
 #      RECOMP_PB_EXEC defaults to 1: boot needs the pushbuffer executor, since
 #      D3D init waits for the GPU to report progress.
@@ -95,6 +99,7 @@ fi
 export RECOMP_TITLE_KEVENTS="${RECOMP_TITLE_KEVENTS-1}"
 export RECOMP_TITLE_KEVENTS_SKIP="${RECOMP_TITLE_KEVENTS_SKIP-}"
 export RECOMP_PB_GPU="${RECOMP_PB_GPU-1}"
+export RECOMP_SETTINGS="${RECOMP_SETTINGS-0}"
 RECOMP_FB_WINDOW="${RECOMP_FB_WINDOW-1}"
 if [ -z "$RECOMP_FB_WINDOW" ] || [ "$RECOMP_FB_WINDOW" = 0 ]; then
     unset RECOMP_FB_WINDOW

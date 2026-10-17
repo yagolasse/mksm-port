@@ -21,6 +21,9 @@ statically recompiling the retail `default.xbe` to C with
 - `CMakeLists.txt`: game executable `mksm_recomp`; pulls in the toolkit via `add_subdirectory`
 - `src/main.c`: host entry: loads the XBE, maps Xbox memory, inits kernel/bridge, calls the guest entry `0x000F40CA`
 - `src/prof.c`: `RECOMP_PROF` sampling profiler (all threads, symbolized from the PDB; see Debugging)
+- `src/settings.c`: the player settings file (`settings.ini`, plan B7b1; see Saves and settings):
+  INI parse/write, monitor defaults, exports the keys as the env vars they stand for. Its C unit
+  test is `tests/settings_test.c` (CTest `settings`; `tests/test_settings.py` runs the built exe)
 - `src/recomp_manual.c`: hand-written overrides (`recomp_lookup_manual`), entry hooks
   (`sub_X_enter`, see Pipeline), widescreen (`RECOMP_ASPECT`) and ICALL diagnostics
 - `src/recomp/gen/`: generated C (not in git)
@@ -185,13 +188,28 @@ there: use `RECOMP_PB_GPU_DUMP`, or `RECOMP_PB_GPU_PRESENT=pbo`.
 console view and prints the last 40 lines on exit; in cmd, turn `RECOMP_AC97_READY` off with `0`
 (empty means unset there). Keep the two scripts' defaults in sync.
 The failure path for a missing XBE shows a MessageBox, which blocks an unattended run.
-Saves: `main.c` (`resolve_save_dir`) passes the toolkit a title-specific save dir, `MKSM_SAVE_DIR`,
-else `%LOCALAPPDATA%\mksm_recomp` (logged as `[BOOT] save dir:`). It holds the game's
-`UDATA\4d570029` saves and the emulated hard disk (`Partition0-5.img`, sparse). Saves left in
-`<game>\UDATA`/`TDATA` by older builds are moved there once at boot (`[SAVE] moved`); not with
-the toolkit's `RECOMP_SAVE_DIR` set (it sends UDATA/TDATA elsewhere), and a failed move (another
-volume) leaves them in use where they are. Older builds used the shared `%LOCALAPPDATA%\xboxrecomp`;
-it can be deleted.
+Saves and settings (plan B7b1): `main.c` passes the toolkit a title-specific base dir,
+`%LOCALAPPDATA%\mksm_recomp` (`resolve_base_dir`): the emulated hard disk (`Partition0-5.img`,
+sparse, caches) and `settings.ini`. The saves (`UDATA\4d570029`, `TDATA`) go to their own folder,
+`<base>\saves`, or `MKSM_SAVE_DIR` (which now names that folder only), handed to the toolkit as
+`RECOMP_SAVE_DIR` (its switch that moves just UDATA/TDATA; one set by hand wins). Logged as
+`[BOOT] save dir: <saves> (disk images: <base>)`. Moved there once at boot (`[SAVE] moved`):
+`<base>\UDATA`/`TDATA` (builds before B7b1; not when `MKSM_SAVE_DIR` comes from the environment,
+so a dev folder never takes the player's saves) and `<game>\UDATA`/`TDATA` (builds before
+toolkit v0.14); a failed move from the game dir (another volume) leaves `RECOMP_SAVE_DIR` unset so
+the toolkit keeps using them there. Older builds used the shared `%LOCALAPPDATA%\xboxrecomp`; it
+can be deleted.
+`settings.ini` (`src/settings.c`, read first thing in `WinMain`, before anything reads the
+variables): each key stands for an env var (`scale` = `RECOMP_PB_GPU_SCALE`, `aspect`, `wide`,
+`hud_edges`, `movie_zoom`, `gauntlet_zoom`, `filter`, `volume`, `fullscreen`, `save_dir` =
+`MKSM_SAVE_DIR`; table in `README.md`) and is `_putenv_s`'d unless that variable is already set
+(`[SETTINGS] key=value` / `... is set, file value ... not used`), so the readers stay as they
+are. Missing file = written with the monitor defaults (D3 (2): `EnumDisplaySettings` of the
+primary monitor; `[SETTINGS] wrote`). `RECOMP_SETTINGS=0` skips it (the run scripts and the
+smoke test default to 0, so dev runs keep the Xbox look), `=1` or unset = `<base>\settings.ini`,
+anything else = that path (handy for tests: a missing path is written fresh).
+`mksm_settings_env_from_file` tells which variables came from the file (a relaunch must drop
+those, B7b2).
 
 ## Testing
 Unit tests for the Python tools (stdlib `unittest`, pytest also runs them; `stub_audit` needs

@@ -24,6 +24,7 @@ Work in progress. Windows x64 is the only host tested so far.
 | Internal resolution 1x-4x | working (`RECOMP_PB_GPU_SCALE`) |
 | Widescreen | experimental (`RECOMP_ASPECT=16:9`, `RECOMP_ASPECT_WIDE=1`) |
 | Settings menu (F1) | started: shows the settings, FPS counter, pauses the game; no changes yet |
+| Settings file | `settings.ini` read at start, monitor-based defaults on first start; edited by hand for now |
 | Native Linux build | started, paused |
 
 Expect crashes and glitches. Bug reports are welcome; please include the log from `../logs/`
@@ -134,8 +135,36 @@ its first argument (it then logs nothing: it's a GUI program).
 
 ### Options
 
-Options are environment variables for now (a settings file is planned). Set them in front of
-the run script in Git Bash, or with `set` before `tools\run.bat` in cmd:
+Options come from a settings file, `%LOCALAPPDATA%\mksm_recomp\settings.ini`, and from
+environment variables; a variable that is set wins over the file. The run scripts and the smoke
+test skip the file (`RECOMP_SETTINGS=0`, so a dev run looks like the Xbox): use
+`RECOMP_SETTINGS=1 tools/run.sh` to run with it, or `RECOMP_SETTINGS=<path>` for another file.
+Without the variable the exe uses the file, and writes it on its first start with defaults for
+the main monitor: borderless fullscreen, internal scale = monitor height / 480 rounded (1080p →
+2x, 1200 and 1440 → 3x, 2160 → 4x), the monitor's aspect with the wide frame, HUD at the edges,
+movie zoom on. One `key=value` per line (`;` starts a comment, an empty value = the built-in
+default); for now the menu only shows the values, edit the file and restart:
+
+| Key | Variable it sets | Values |
+|---|---|---|
+| `scale` | `RECOMP_PB_GPU_SCALE` | 1-4 |
+| `aspect` | `RECOMP_ASPECT` | `4:3` (off), `16:9`, `16:10`, `W:H` |
+| `wide` | `RECOMP_ASPECT_WIDE` | 0/1 |
+| `hud_edges` | `RECOMP_HUD_EDGES` | 0/1 |
+| `movie_zoom` | `RECOMP_MOVIE_ZOOM` | 0/1 |
+| `gauntlet_zoom` | `RECOMP_MOVIE_ZOOM_GAUNTLET` | 0/1 |
+| `filter` | `RECOMP_PB_GPU_FILTER` | `linear`, `nearest` |
+| `volume` | `RECOMP_APU_VOLUME` | 0..1 |
+| `fullscreen` | `RECOMP_FB_FULLSCREEN` | 0/1 |
+| `save_dir` | `MKSM_SAVE_DIR` | a folder for the saves (e.g. a cloud-synced one) |
+
+Saves (`UDATA`/`TDATA`) go to `%LOCALAPPDATA%\mksm_recomp\saves` unless `save_dir` /
+`MKSM_SAVE_DIR` names another folder; the emulated hard disk and `settings.ini` stay in
+`mksm_recomp`, so the saves folder can be synced alone. Saves of older builds (in `mksm_recomp`
+itself or in the game folder) are moved into it once.
+
+Set variables in front of the run script in Git Bash, or with `set` before `tools\run.bat` in
+cmd:
 
 ```bash
 RECOMP_PB_GPU_SCALE=2 RECOMP_ASPECT=16:9 RECOMP_ASPECT_WIDE=1 tools/run.sh
@@ -167,7 +196,8 @@ tools\run.bat
 | `RECOMP_MKB_SENS`, `_DZ`, `_ACC`, `_FULL`, `_INVERT_Y=1`, `_SWAP_STICKS=1` | | mouse sensitivity, dead-zone floor, acceleration, full-throw speed, inverted Y, mouse on the left stick. Also read from `mkb.ini` next to the exe (`sens=`, `dz=`, ...; `RECOMP_MKB_INI` names another file) |
 | **Files** | | |
 | `MKSM_GAME_DIR=<dir>` | `../game_files` | the extracted disc (the folder with `default.xbe`) |
-| `MKSM_SAVE_DIR=<dir>` | `%LOCALAPPDATA%\mksm_recomp` | where saves and the emulated hard disk go |
+| `MKSM_SAVE_DIR=<dir>` | `%LOCALAPPDATA%\mksm_recomp\saves` | where the saves go (the emulated hard disk stays in `mksm_recomp`) |
+| `RECOMP_SETTINGS=0`, `=1`, `=<path>` | `0` in the run scripts, else the file | skip `settings.ini`, use it, or use another file |
 | `MKSM_EXE`, `MKSM_LOG` | `build/Release/mksm_recomp.exe`, `../logs/run_<timestamp>.log` | run scripts only: which exe to run, where to log |
 
 The run scripts also set switches the game needs to run (GPU path, game window, USB pads,

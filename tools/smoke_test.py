@@ -69,6 +69,8 @@ RUN_ENV = {
     "RECOMP_AC97_READY": "1",
     "RECOMP_USB": "1",
     "RECOMP_KEYBOARD": "1",
+    # The player's settings.ini stays out of the checks (plan B7b1): no file = the Xbox look.
+    "RECOMP_SETTINGS": "0",
     "RECOMP_APU_DSP_ACK": "auto",
     "RECOMP_HEAP_RECLAIM": "1",
     "RECOMP_TITLE_KEVENTS": "1",

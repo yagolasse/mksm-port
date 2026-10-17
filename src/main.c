@@ -44,6 +44,7 @@
 #include <xbox/thread_name.h>
 
 #include "prof.h"
+#include "settings.h"
 
 /*
  * If xboxrecomp.h is not an umbrella header in your setup, include
@@ -92,15 +93,20 @@ extern ptrdiff_t g_xbox_mem_offset;
 static char g_game_dir[MAX_PATH];
 static char g_xbe_path[MAX_PATH];
 
-/* Save directory: the emulated hard disk (partition images, T:/U:/Z:) and,
- * unless RECOMP_SAVE_DIR moves them, the title's UDATA/TDATA (the saves).
- * MKSM_SAVE_DIR, else %LOCALAPPDATA%\mksm_recomp. Not the toolkit default
- * (%LOCALAPPDATA%\xboxrecomp), which every xboxrecomp title shares, and not
- * the game dir, which may be read-only (a Steam install). Made absolute by
- * resolve_save_dir(). */
+/* Base directory: the emulated hard disk (partition images, T:/Z: caches) and
+ * settings.ini (plan B7b1). %LOCALAPPDATA%\mksm_recomp: not the toolkit default
+ * (%LOCALAPPDATA%\xboxrecomp), which every xboxrecomp title shares, and not the
+ * game dir, which may be read-only (a Steam install).
+ * Save directory: the title's UDATA/TDATA (the saves) alone, <base>\saves, so a
+ * player can sync the saves without the settings. MKSM_SAVE_DIR (or the
+ * settings file's save_dir=) moves it. It goes to the toolkit as
+ * RECOMP_SAVE_DIR, which moves just those two; one already set wins. Both made
+ * absolute by resolve_base_dir() / resolve_save_dir(). */
 #define SAVE_DIR_NAME           "mksm_recomp"
 
+static char g_base_dir[MAX_PATH];
 static char g_save_dir[MAX_PATH];
+static bool g_save_dir_toolkit = true;  /* RECOMP_SAVE_DIR = g_save_dir (we set it) */
 
 /* ── Forward declarations ──────────────────────────────────── */
 
@@ -634,58 +640,94 @@ static void resolve_game_dir(void)
     snprintf(g_xbe_path, MAX_PATH, "%s\\default.xbe", g_game_dir);
 }
 
-/* ── Save directory ────────────────────────────────────────── */
+/* ── Base and save directories ─────────────────────────────── */
 
+static void trim_dir(char *dir)
+{
+    size_t len = strlen(dir);
+    while (len > 3 && (dir[len - 1] == '\\' || dir[len - 1] == '/'))
+        dir[--len] = '\0';
+}
+
+static void resolve_base_dir(void)
+{
+    char base[MAX_PATH];
+
+    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, base)))
+        snprintf(g_base_dir, MAX_PATH, "%s\\" SAVE_DIR_NAME, base);
+    else
+        snprintf(g_base_dir, MAX_PATH, "%s\\" SAVE_DIR_NAME, g_game_dir);
+    trim_dir(g_base_dir);
+}
+
+/* After mksm_settings_load: its save_dir= arrives as MKSM_SAVE_DIR. */
 static void resolve_save_dir(void)
 {
     const char *env = getenv("MKSM_SAVE_DIR");
-    char base[MAX_PATH];
-    size_t len;
 
     if (env && env[0]) {
         if (!GetFullPathNameA(env, MAX_PATH, g_save_dir, NULL))
             snprintf(g_save_dir, MAX_PATH, "%s", env);
-    } else if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, base))) {
-        snprintf(g_save_dir, MAX_PATH, "%s\\" SAVE_DIR_NAME, base);
     } else {
-        snprintf(g_save_dir, MAX_PATH, "%s\\saves", g_game_dir);
+        snprintf(g_save_dir, MAX_PATH, "%s\\saves", g_base_dir);
     }
-
-    len = strlen(g_save_dir);
-    while (len > 3 && (g_save_dir[len - 1] == '\\' || g_save_dir[len - 1] == '/'))
-        g_save_dir[--len] = '\0';
+    trim_dir(g_save_dir);
 }
 
-/* Builds before the toolkit's UDATA/TDATA rules (v0.14) wrote the saves into
- * <game dir>\UDATA and \TDATA. Move them to the save dir once, so a player
- * keeps them. Only when the save dir has none yet and RECOMP_SAVE_DIR isn't
- * set (that one points the toolkit somewhere else). A move across volumes
- * fails for a directory; then they stay where they are, and the toolkit
- * keeps using them there (it warns about it). */
-static void migrate_legacy_saves(void)
+/* Saves from older builds, moved into the save dir once so a player keeps
+ * them: <base>\UDATA/TDATA (builds before B7b1 kept them next to the disk
+ * images; not when MKSM_SAVE_DIR comes from the environment: a dev run's
+ * folder shouldn't take the player's saves), then <game dir>\UDATA/TDATA
+ * (before toolkit v0.14's UDATA/TDATA rules). Only into a save dir that has
+ * none yet, and not with RECOMP_SAVE_DIR set by hand (it sends them
+ * elsewhere). A move across volumes fails for a directory: base saves then
+ * stay where they are (logged); game-dir saves too, and the save dir isn't
+ * handed to the toolkit, whose own fallback keeps using them there. */
+static bool move_saves(const char *from_dir, const char *what)
 {
     static const char *const names[] = { "UDATA", "TDATA" };
-    const char *ov = getenv("RECOMP_SAVE_DIR");
+    bool ok = true;
 
-    if (ov && ov[0])
-        return;
-    SHCreateDirectoryExA(NULL, g_save_dir, NULL);  /* absolute, any depth */
     for (int i = 0; i < 2; i++) {
         char from[MAX_PATH], to[MAX_PATH];
         DWORD fa;
-        snprintf(from, MAX_PATH, "%s\\%s", g_game_dir, names[i]);
+        snprintf(from, MAX_PATH, "%s\\%s", from_dir, names[i]);
         snprintf(to, MAX_PATH, "%s\\%s", g_save_dir, names[i]);
         fa = GetFileAttributesA(from);
         if (fa == INVALID_FILE_ATTRIBUTES || !(fa & FILE_ATTRIBUTE_DIRECTORY))
             continue;
         if (GetFileAttributesA(to) != INVALID_FILE_ATTRIBUTES)
             continue;
-        if (MoveFileExA(from, to, 0))
+        if (MoveFileExA(from, to, 0)) {
             fprintf(stderr, "[SAVE] moved %s to %s\n", from, to);
-        else
-            fprintf(stderr, "[SAVE] could not move %s to %s (error %lu); "
-                    "it stays in use there\n", from, to, GetLastError());
+        } else {
+            fprintf(stderr, "[SAVE] could not move %s (%s) to %s (error %lu)\n",
+                    from, what, to, GetLastError());
+            ok = false;
+        }
     }
+    return ok;
+}
+
+static void migrate_legacy_saves(void)
+{
+    const char *ov = getenv("RECOMP_SAVE_DIR");
+
+    if (ov && ov[0]) {
+        g_save_dir_toolkit = false;
+        snprintf(g_save_dir, MAX_PATH, "%s", ov);   /* for the log line */
+        return;
+    }
+    SHCreateDirectoryExA(NULL, g_save_dir, NULL);  /* absolute, any depth */
+    if (_stricmp(g_save_dir, g_base_dir) != 0
+            && (!getenv("MKSM_SAVE_DIR") || mksm_settings_env_from_file("MKSM_SAVE_DIR")))
+        move_saves(g_base_dir, "old save location");
+    if (!move_saves(g_game_dir, "saves in the game folder")) {
+        g_save_dir_toolkit = false;
+        fprintf(stderr, "[SAVE] the game folder's saves stay in use there\n");
+    }
+    if (g_save_dir_toolkit)
+        _putenv_s("RECOMP_SAVE_DIR", g_save_dir);
 }
 
 /* ── WinMain ───────────────────────────────────────────────── */
@@ -720,6 +762,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* Step 1: Load XBE */
     resolve_game_dir();
     printf("Game dir: %s\n", g_game_dir);
+    /* The settings file before anything reads the variables it sets (plan B7b1). */
+    resolve_base_dir();
+    mksm_settings_load(g_base_dir);
     if (!load_xbe(g_xbe_path, &xbe_data, &xbe_size)) {
         fprintf(stderr, "Failed to load %s\n", g_xbe_path);
         MessageBoxA(NULL, "Failed to load default.xbe.\n"
@@ -793,8 +838,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         extern void xbox_path_init(const char *game_dir, const char *save_dir);
         resolve_save_dir();
         migrate_legacy_saves();
-        fprintf(stderr, "[BOOT] save dir: %s\n", g_save_dir);
-        xbox_path_init(g_game_dir, g_save_dir);
+        fprintf(stderr, "[BOOT] save dir: %s (disk images: %s)\n",
+                g_save_dir_toolkit || getenv("RECOMP_SAVE_DIR") ? g_save_dir : g_game_dir,
+                g_base_dir);
+        xbox_path_init(g_game_dir, g_base_dir);
     }
 
     /* Step 5: Initialize kernel bridge (thunk table in Xbox memory) */

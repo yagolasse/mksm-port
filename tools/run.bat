@@ -14,8 +14,12 @@ rem
 rem Env: MKSM_GAME_DIR (default ..\game_files): extracted disc root with default.xbe
 rem      MKSM_EXE      (default build\Release\mksm_recomp.exe)
 rem      MKSM_LOG      (default ..\logs\run_<timestamp>.log)
-rem      MKSM_SAVE_DIR (default %LOCALAPPDATA%\mksm_recomp): the saves and the
-rem                    emulated hard disk; saves left in <game>\UDATA move there once
+rem      MKSM_SAVE_DIR (default %LOCALAPPDATA%\mksm_recomp\saves): the saves
+rem                    (UDATA/TDATA); older saves in <game>\UDATA or directly in
+rem                    mksm_recomp\ move there once. The emulated hard disk and
+rem                    settings.ini stay in %LOCALAPPDATA%\mksm_recomp.
+rem      RECOMP_SETTINGS defaults to 0: dev runs ignore the player's settings.ini
+rem                    (no file = the Xbox look); 1 = use it, <path> = that file.
 rem      Toolkit vars such as RECOMP_WATCHDOG_SECS pass through.
 rem      RECOMP_PB_EXEC defaults to 1: boot needs the pushbuffer executor, since
 rem      D3D init waits for the GPU to report progress.
@@ -82,6 +86,7 @@ if "%RECOMP_AC97_READY%"=="0" set "RECOMP_AC97_READY="
 if not defined RECOMP_USB set "RECOMP_USB=1"
 if "%RECOMP_USB%"=="0" set "RECOMP_USB="
 if not defined RECOMP_KEYBOARD set "RECOMP_KEYBOARD=1"
+if not defined RECOMP_SETTINGS set "RECOMP_SETTINGS=0"
 if not defined RECOMP_APU_DSP_ACK set "RECOMP_APU_DSP_ACK=auto"
 if not defined RECOMP_APU_EP_ALIVE set "RECOMP_APU_EP_ALIVE=0xFE85A018"
 rem The DMA-engine ring walk (toolkit v0.14+); the default segment scan loses the tail of each lap.

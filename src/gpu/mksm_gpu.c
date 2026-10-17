@@ -540,6 +540,16 @@ void mksm_gpu_set_window(const MksmGpuWindow *window)
     s_win.have_fns = true;
 }
 
+/* The output aspect as float bits, 0 = the surface's own (mksm_gpu_set_output_aspect). */
+static volatile LONG s_output_aspect;
+
+void mksm_gpu_set_output_aspect(float aspect)
+{
+    LONG bits;
+    memcpy(&bits, &aspect, sizeof(bits));
+    InterlockedExchange(&s_output_aspect, aspect > 0.0f ? bits : 0);
+}
+
 static GLuint compile_shader(GLenum type, const char *src)
 {
     GLuint sh = glCreateShader(type);
@@ -654,12 +664,16 @@ static DWORD WINAPI present_thread(LPVOID unused)
         }
         glViewport(0, 0, (GLsizei)cw, (GLsizei)ch);
         glClear(GL_COLOR_BUFFER_BIT);
-        /* The largest rect of the surface's aspect that fits, centred. */
-        uint32_t aw = s_win.slot[i].aw, ah = s_win.slot[i].ah, w = cw, h = ch;
-        if ((uint64_t)cw * ah > (uint64_t)ch * aw) {
-            w = (uint32_t)((uint64_t)ch * aw / ah);
+        /* The largest rect of the surface's aspect (or the output aspect) that fits, centred. */
+        LONG bits = s_output_aspect;
+        float out_aspect;
+        memcpy(&out_aspect, &bits, sizeof(out_aspect));
+        double aspect = bits ? out_aspect : (double)s_win.slot[i].aw / s_win.slot[i].ah;
+        uint32_t w = cw, h = ch;
+        if (cw > ch * aspect) {
+            w = (uint32_t)(ch * aspect + 0.5);
         } else {
-            h = (uint32_t)((uint64_t)cw * ah / aw);
+            h = (uint32_t)(cw / aspect + 0.5);
         }
         glViewport((GLint)(cw - w) / 2, (GLint)(ch - h) / 2, (GLsizei)w, (GLsizei)h);
         glBindTexture(GL_TEXTURE_2D, s_win.slot[i].tex);

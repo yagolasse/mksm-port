@@ -17,7 +17,8 @@ statically recompiling the retail `default.xbe` to C with
 - `CMakeLists.txt`: game executable `mksm_recomp`; pulls in the toolkit via `add_subdirectory`
 - `src/main.c`: host entry: loads the XBE, maps Xbox memory, inits kernel/bridge, calls the guest entry `0x000F40CA`
 - `src/prof.c`: `RECOMP_PROF` sampling profiler (all threads, symbolized from the PDB; see Debugging)
-- `src/recomp_manual.c`: hand-written overrides (`recomp_lookup_manual`) and ICALL diagnostics
+- `src/recomp_manual.c`: hand-written overrides (`recomp_lookup_manual`), entry hooks
+  (`sub_X_enter`, see Pipeline), widescreen (`RECOMP_ASPECT`) and ICALL diagnostics
 - `src/recomp/gen/`: generated C (not in git)
 - `src/gpu/`: GPU renderer library `mksm_gpu` (xemu's PGRAPH; the game uses it with `RECOMP_PB_GPU=1`): its own
   CMake project built with clang-cl (see Build). `xemu/hw/xbox/nv2a/` = xemu files **copied unmodified**
@@ -67,8 +68,15 @@ python -m tools.func_id ../../../game_files/default.xbe -v
 python -m tools.abi_analysis ../../../game_files/default.xbe -v
 bash ../../tools/ghidra/run_ghidra.sh   # our wrapper (Java export; Ghidra 12 has no Jython), ~20+ min
 python tools/ghidra_naming/merge_names.py --apply
-python -m tools.recomp ../../../game_files/default.xbe --all --split 250 --gen-dir ../../src/recomp/gen
+python -m tools.recomp ../../../game_files/default.xbe --all --split 250 --gen-dir ../../src/recomp/gen \
+    --exclude-manual ../../src/recomp_manual.c
 ```
+- `--exclude-manual` (since plan B5a) scans `src/recomp_manual.c`: a `void sub_X_enter(void)` there
+  is an entry hook (the generated `sub_X` calls it first, on every path, direct calls included);
+  a `void sub_X(void)` there replaces the generated body (`extern void sub_X_gen(void);` keeps it
+  under that name to wrap). `recomp_lookup_manual` only sees indirect calls and thread/APC/DPC
+  routines: the lifted code calls direct targets by symbol. A lift without the flag fails to link
+  once a hook exists (or, worse, links without them if the hooks were removed), so keep it.
 - Use all code sections. The game calls directly into its statically linked D3D/DSOUND/D3DX/WMADEC/XPP/
   PSFD00 (Sofdec)/DOLBY sections.
 - Tool outputs land in `external/xboxrecomp/tools/*/output/` (gitignored there).
@@ -224,7 +232,13 @@ while running. Above 1x, `src/gpu/shader_patch.c` edits xemu's generated GLSL as
 layer (HUD, bars, menus) shows what 1x shows; it also hooks `glUseProgram`/`glLinkProgram`/the
 draw calls to set a per-draw uniform with the point-sampled stages. `RECOMP_PB_GPU_SNAP2D=0`
 turns it off, `=debug` colours 2D draws (red/green = sub-pixel x/y of a vertex, blue = 0.25,
-+0.5 for w = 1, +0.25 if stage 0 is point-sampled). `RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
++0.5 for w = 1, +0.25 if stage 0 is point-sampled). `RECOMP_ASPECT=16:9` (plan 4.2, B5a; also `16:10`, `21:9`, `W/H` or a ratio; unset/4:3 = off) draws
+the 3D view at that aspect (Hor+: entry hook on the camera update in `recomp_manual.c`, see
+`--exclude-manual`) and the window present stretches the 640x480 frame to it (anamorphic, so the
+HUD/menus stretch until B5b), except during movies (kept 4:3). The dump shows the unstretched
+frame. `RECOMP_CINE_LOG=1` prints `[cine]` lines when the cutscene signals change (sequence
+flag, cinematic camera, letterbox bars, fade) and at movie start/end.
+`RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
 changed on every use (default: once per pushbuffer kick, texture pages only when their content hash
 changed, see `docs/gpu-renderer.md`; for A/B runs); `=kick` drops the texture-page hash.
 By default (`RECOMP_PB_GPU_PRESENT=window`, plan 2.6b) the method thread draws the scanout surface

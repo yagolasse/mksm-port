@@ -151,6 +151,191 @@ static int audio_tick_stats(void)
     return on;
 }
 
+/* ── Widescreen (plan 4.2, B5a) ────────────────────────────────────────────
+ *
+ * RECOMP_ASPECT=16:9 (also 16:10, 21:9, W/H or a plain ratio; unset or 4:3 = off) draws the
+ * 3D view at that aspect: Hor+, the vertical FOV stays, more shows at the sides. The game
+ * builds its projection as D3DXMatrixPerspectiveFovLH(fovy, cam+0x20, ...) in the camera
+ * update 0x00124150, and nothing rewrites cam+0x20 per frame, so the hook widens it by
+ * target / (4/3) before each update (see the hook for why relative); frustum culling is built from
+ * the same matrix and follows. The frame stays 640x480 (anamorphic) and the GPU present
+ * stretches it to the aspect, except while a movie plays (0x00142420 sets the movie up,
+ * 0x00141F10 tears it down): movies keep 4:3. The 2D layer (HUD, menus, text) is stretched
+ * for now. Addresses and the reasoning: ../docs/widescreen.md § 9.
+ *
+ * The hooks are entry hooks (`sub_X_enter`): the lift has to be made with
+ * `--exclude-manual src/recomp_manual.c` so the generated function calls them first. Direct
+ * calls in the lifted code don't go through recomp_lookup_manual, so an override there would
+ * miss them. */
+extern __declspec(thread) uint32_t g_ecx, g_esp;
+
+#define GUEST_U8(va)  (*(volatile uint8_t *)((uintptr_t)(va) + g_xbox_mem_offset))
+#define GUEST_U32(va) (*(volatile uint32_t *)((uintptr_t)(va) + g_xbox_mem_offset))
+#define GUEST_F32(va) (*(volatile float *)((uintptr_t)(va) + g_xbox_mem_offset))
+
+#ifdef MKSM_HAVE_GPU
+#include "gpu/mksm_gpu.h"
+#endif
+
+/* The target aspect, 0 = off (the game's own 4:3). */
+static float wide_aspect(void)
+{
+    static int parsed;
+    static float aspect;
+    if (!parsed) {
+        const char *e = getenv("RECOMP_ASPECT");
+        double a = 0.0, w, h;
+        char sep;
+        if (e && *e) {
+            if (sscanf(e, "%lf%c%lf", &w, &sep, &h) == 3 && (sep == ':' || sep == '/') && h > 0)
+                a = w / h;
+            else
+                a = atof(e);
+            if (a < 1.0 || a > 4.0) {
+                fprintf(stderr, "[WIDE] RECOMP_ASPECT=%s ignored (want e.g. 16:9)\n", e);
+                a = 0.0;
+            } else if (a > 4.0 / 3.0 - 0.001 && a < 4.0 / 3.0 + 0.001) {
+                a = 0.0;    /* 4:3 is the game's own */
+            }
+        }
+        aspect = (float)a;
+        if (aspect)
+            fprintf(stderr, "[WIDE] aspect %.4f: 3D Hor+, frame stretched at present\n", a);
+        parsed = 1;
+    }
+    return aspect;
+}
+
+/* What the present shows the frame at: the target aspect, or the frame's own (0) in a movie. */
+static void wide_set_output(int movie)
+{
+#ifdef MKSM_HAVE_GPU
+    mksm_gpu_set_output_aspect(movie ? 0.0f : wide_aspect());
+#else
+    (void)movie;
+#endif
+}
+
+/* Camera update (thiscall, ecx = camera). Only the renderer's view camera: renderer
+ * *(0x00639224), current camera +0x304, world camera +0x308.
+ *
+ * Relative, not absolute: the game draws its 640x480 frame with cam+0x20 = 1.2, not 4/3
+ * (B5a run: the camera already holds 1.2 at its first update, and gets it back after
+ * movies; the writer isn't known, the constructor writes 640/480), so the 4:3 picture is
+ * ~11% wider than square. The hook scales whatever the game set by target / (4/3), which keeps
+ * the original proportions and only adds picture at the sides. A value other than the one
+ * written last is the game's new base. */
+void sub_00124150_enter(void)
+{
+    static int logged, output_set;
+    static uint32_t last_cam;
+    static float base, written;
+    float aspect = wide_aspect(), now;
+    uint32_t cam = g_ecx, renderer;
+    if (!aspect)
+        return;
+    renderer = GUEST_U32(0x00639224u);
+    if (!renderer || !cam ||
+        (cam != GUEST_U32(renderer + 0x304u) && cam != GUEST_U32(renderer + 0x308u)))
+        return;
+    if (!output_set) {
+        wide_set_output(0);
+        output_set = 1;
+    }
+    now = GUEST_F32(cam + 0x20u);
+    if (cam == last_cam && now == written)
+        return;
+    if (now != base && logged < 8) {
+        logged++;
+        fprintf(stderr, "[WIDE] camera 0x%08X game aspect %.4f -> %.4f (from 0x%08X)\n", cam,
+                now, now * aspect * 0.75f, GUEST_U32(g_esp));
+    }
+    last_cam = cam;
+    base = now;
+    written = now * aspect * 0.75f;
+    GUEST_F32(cam + 0x20u) = written;
+}
+
+static int cine_log_on(void);
+
+/* Movie set-up / tear-down (the blocking movie loop 0x00128DE0 calls both). */
+void sub_00142420_enter(void)
+{
+    if (cine_log_on())
+        fprintf(stderr, "[cine] movie start\n");
+    if (wide_aspect())
+        wide_set_output(1);
+}
+
+void sub_00141F10_enter(void)
+{
+    if (cine_log_on())
+        fprintf(stderr, "[cine] movie end\n");
+    if (wide_aspect())
+        wide_set_output(0);
+}
+
+/* RECOMP_CINE_LOG=1 (plan B5a): the cutscene signals, sampled at the start of each game
+ * update 0x000CB780 (= after the previous one), one line whenever one changes
+ * (widescreen.md § 10.4). seq = a scripted sequence is playing (0x006C4198); cincam = the
+ * current camera is the cinematic class and not done (FUN_0016CEC0's test, read from the
+ * fields); auto = the update's own "bars wanted" state (0x005ACEE6); bars = the letterbox
+ * sprites are up (FUN_001CF6C0's test) with their y; fade = fade active / alpha. */
+static int cine_log_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("RECOMP_CINE_LOG");
+        on = e && *e && *e != '0';
+    }
+    return on;
+}
+
+void sub_000CB780_enter(void)
+{
+    static unsigned frame;
+    static uint32_t last_key = 0xFFFFFFFFu;
+    uint32_t mgr, cam = 0, top, bot, key;
+    unsigned seq, cincam = 0, mode = 0, done = 0, autob, bars, fade;
+    float top_y = 0.0f, bot_y = 0.0f;
+
+    frame++;
+    if (!cine_log_on())
+        return;
+    seq = GUEST_U8(0x006C4198u);
+    mgr = GUEST_U32(0x00599844u);
+    if (mgr) {
+        uint32_t slot = GUEST_U32(mgr + 0x1Cu) - GUEST_U32(mgr + 0x120u);
+        if (slot < 64)
+            cam = GUEST_U32(mgr + 0x20u + slot * 4u);
+    }
+    if (cam && GUEST_U32(cam) == 0x0049E3A0u) {    /* cinematic camera vtable */
+        mode = GUEST_U32(cam + 0x2CCu);
+        done = GUEST_U8(cam + 0x2D9u);
+        cincam = !done || GUEST_U8(0x005144F8u);
+    }
+    autob = GUEST_U8(0x005ACEE6u);
+    top = GUEST_U32(0x006CE8A0u);
+    bot = GUEST_U32(0x006CE8A4u);
+    bars = top && !GUEST_U8(top + 0x70u);
+    if (top)
+        top_y = GUEST_F32(top + 0xC4u);
+    if (bot)
+        bot_y = GUEST_F32(bot + 0xC4u);
+    fade = GUEST_U8(0x005146E4u);
+    /* Bar y only counts as "at rest" or "moving", or a slide prints 30 lines. */
+    key = seq | cincam << 1 | autob << 2 | bars << 3 | (fade != 0) << 4 |
+          (top_y != 0.0f) << 5 | (cam && GUEST_U32(cam) == 0x0049E3A0u) << 6;
+    if (key != last_key) {
+        last_key = key;
+        fprintf(stderr,
+                "[cine] f=%u seq=%u cincam=%u (cam 0x%08X vt 0x%08X mode %u done %u) auto=%u "
+                "bars=%u topY=%.1f botY=%.1f fade=%u/%.0f\n",
+                frame, seq, cincam, cam, cam ? GUEST_U32(cam) : 0u, mode, done, autob, bars,
+                top_y, bot_y, fade, GUEST_F32(0x005146ECu));
+    }
+}
+
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
 {
     if (xbox_va == 0x00319DF0u && audio_tick_stats())

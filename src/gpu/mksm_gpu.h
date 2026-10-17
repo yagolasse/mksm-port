@@ -59,6 +59,11 @@ typedef struct MksmGpuWindow {
  * until the window exists, frames go to the present callback as before. */
 void mksm_gpu_set_window(const MksmGpuWindow *window);
 
+/* The aspect the window present shows each frame at (plan 4.2, B5a: an anamorphic widescreen
+ * frame is stretched to it); 0 = the frame's own size (the default). Any thread; the next
+ * presented frame uses it. */
+void mksm_gpu_set_output_aspect(float aspect);
+
 /* Receives the parameter of each software notify (NO_OPERATION with a non-zero parameter),
  * which on hardware interrupts the title's GPU handler. Runs on the method thread. */
 typedef void (*MksmGpuNotifyFn)(uint32_t param);

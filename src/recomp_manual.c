@@ -215,7 +215,13 @@ static float wide_aspect(void)
 
 /* RECOMP_ASPECT_WIDE=1 (plan B5b1) with an aspect: the game renders into a wider back buffer
  * (W x 480, W = 480 * aspect rounded to even: 854 at 16:9) instead of stretching 640x480, so
- * the frame has square pixels and the present shows it at its own size. 0 = anamorphic (B5a). */
+ * the frame has square pixels and the present shows it at its own size. 0 = anamorphic (B5a).
+ * W is capped at 1024: wider buffers (pitch above 4096 bytes) get horizontal stripes over the
+ * frame from the glow layer (21:9 = 1120 wide; cause not found yet), so a capped frame is
+ * stretched the rest of the way to the aspect at present. */
+#define WIDE_MAX_WIDTH 1024u
+static int wide_capped;
+
 static uint32_t wide_buffer_width(void)
 {
     static int parsed;
@@ -224,7 +230,12 @@ static uint32_t wide_buffer_width(void)
         const char *e = getenv("RECOMP_ASPECT_WIDE");
         if (e && *e && *e != '0' && wide_aspect()) {
             width = ((uint32_t)(480.0f * wide_aspect() + 1.0f)) & ~1u;
-            fprintf(stderr, "[WIDE] back buffer %ux480\n", width);
+            if (width > WIDE_MAX_WIDTH) {
+                width = WIDE_MAX_WIDTH;
+                wide_capped = 1;
+            }
+            fprintf(stderr, "[WIDE] back buffer %ux480%s\n", width,
+                    wide_capped ? " (capped: stretched to the aspect at present)" : "");
         }
         parsed = 1;
     }
@@ -232,11 +243,12 @@ static uint32_t wide_buffer_width(void)
 }
 
 /* What the present shows the frame at: the target aspect, or the frame's own (0) in a movie
- * or when the frame is already wide. */
+ * or when the frame is already as wide as the aspect. */
 static void wide_set_output(int movie)
 {
 #ifdef MKSM_HAVE_GPU
-    mksm_gpu_set_output_aspect(movie || wide_buffer_width() ? 0.0f : wide_aspect());
+    int own = movie || (wide_buffer_width() && !wide_capped);
+    mksm_gpu_set_output_aspect(own ? 0.0f : wide_aspect());
 #else
     (void)movie;
 #endif

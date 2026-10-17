@@ -242,7 +242,8 @@ the 3D view at that aspect (Hor+: entry hook on the camera update in `recomp_man
 `--exclude-manual`) and the window present stretches the 640x480 frame to it (anamorphic, so the
 HUD/menus stretch until B5b), except during movies (kept 4:3). The dump shows the unstretched
 frame. `RECOMP_ASPECT_WIDE=1` (B5b1, with `RECOMP_ASPECT`) renders into a wider back buffer
-instead (W x 480, 854 at 16:9; hooks on the display init `0x0011B290` (a `_gen` wrapper), the
+instead (W x 480, 854 at 16:9, at most 1024: wider buffers get stripes, so wider aspects are
+stretched the rest of the way at present, plan B5b3; hooks on the display init `0x0011B290` (a `_gen` wrapper), the
 device reset and D3D's display-mode lookup, which only knows 640/720-wide modes and is handed
 640): square pixels, the present and the dump show the W-wide frame. The 2D layer (authored
 for 640) is pillarboxed (B5b2): the game keeps seeing a 640-wide display, so its layout is the

@@ -236,7 +236,11 @@ turns it off, `=debug` colours 2D draws (red/green = sub-pixel x/y of a vertex, 
 the 3D view at that aspect (Hor+: entry hook on the camera update in `recomp_manual.c`, see
 `--exclude-manual`) and the window present stretches the 640x480 frame to it (anamorphic, so the
 HUD/menus stretch until B5b), except during movies (kept 4:3). The dump shows the unstretched
-frame. `RECOMP_CINE_LOG=1` prints `[cine]` lines when the cutscene signals change (sequence
+frame. `RECOMP_ASPECT_WIDE=1` (B5b1, with `RECOMP_ASPECT`) renders into a wider back buffer
+instead (W x 480, 854 at 16:9; hooks on the display init `0x0011B290` (a `_gen` wrapper), the
+device reset and D3D's display-mode lookup, which only knows 640/720-wide modes and is handed
+640): square pixels, the present and the dump show the W-wide frame; the 2D layer stays at
+x 0..640 (left-anchored) until B5b2. `RECOMP_CINE_LOG=1` prints `[cine]` lines when the cutscene signals change (sequence
 flag, cinematic camera, letterbox bars, fade) and at movie start/end.
 `RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
 changed on every use (default: once per pushbuffer kick, texture pages only when their content hash

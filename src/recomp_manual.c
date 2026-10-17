@@ -163,6 +163,10 @@ static int audio_tick_stats(void)
  * 0x00141F10 tears it down): movies keep 4:3. The 2D layer (HUD, menus, text) is stretched
  * for now. Addresses and the reasoning: ../docs/widescreen.md § 9.
  *
+ * RECOMP_ASPECT_WIDE=1 (B5b1) renders into a W x 480 back buffer instead (854 at 16:9): the
+ * display init, the device reset and D3D's mode lookup are hooked below, and the present shows
+ * the frame at its own size. The 2D layer is not re-anchored yet (B5b2): it stays at x 0..640.
+ *
  * The hooks are entry hooks (`sub_X_enter`): the lift has to be made with
  * `--exclude-manual src/recomp_manual.c` so the generated function calls them first. Direct
  * calls in the lifted code don't go through recomp_lookup_manual, so an override there would
@@ -206,14 +210,100 @@ static float wide_aspect(void)
     return aspect;
 }
 
-/* What the present shows the frame at: the target aspect, or the frame's own (0) in a movie. */
+/* RECOMP_ASPECT_WIDE=1 (plan B5b1) with an aspect: the game renders into a wider back buffer
+ * (W x 480, W = 480 * aspect rounded to even: 854 at 16:9) instead of stretching 640x480, so
+ * the frame has square pixels and the present shows it at its own size. 0 = anamorphic (B5a). */
+static uint32_t wide_buffer_width(void)
+{
+    static int parsed;
+    static uint32_t width;
+    if (!parsed) {
+        const char *e = getenv("RECOMP_ASPECT_WIDE");
+        if (e && *e && *e != '0' && wide_aspect()) {
+            width = ((uint32_t)(480.0f * wide_aspect() + 1.0f)) & ~1u;
+            fprintf(stderr, "[WIDE] back buffer %ux480\n", width);
+        }
+        parsed = 1;
+    }
+    return width;
+}
+
+/* What the present shows the frame at: the target aspect, or the frame's own (0) in a movie
+ * or when the frame is already wide. */
 static void wide_set_output(int movie)
 {
 #ifdef MKSM_HAVE_GPU
-    mksm_gpu_set_output_aspect(movie ? 0.0f : wide_aspect());
+    mksm_gpu_set_output_aspect(movie || wide_buffer_width() ? 0.0f : wide_aspect());
 #else
     (void)movie;
 #endif
+}
+
+/* Display init 0x0011B290 (thiscall, ecx = display object *(0x00638988)): fills the present
+ * parameters at +0xC (BackBufferWidth +0xC, BackBufferHeight +0x10) with 640x480, the float
+ * size +0xC0/+0xC4 and the globals 0x0050E59C/0x0050E5A0, then resets the device (when one
+ * exists) or returns to 0x0011B7C0, which creates it from the same parameters. It runs again
+ * after every movie. The wide size goes into all of them; the reset inside sees it through the
+ * hook on 0x003C99E0. Also the 2D origin 0x0071AF48 (-W/2), set once from .data at start-up
+ * (widescreen.md § 3). */
+extern void sub_0011B290_gen(void);
+
+static void wide_patch_display(uint32_t disp)
+{
+    uint32_t w = wide_buffer_width();
+    if (!w || !disp)
+        return;
+    GUEST_U32(disp + 0xCu) = w;
+    GUEST_F32(disp + 0xC0u) = (float)w;
+    GUEST_F32(0x0050E59Cu) = (float)w;
+    GUEST_F32(0x0071AF48u) = -0.5f * (float)w;
+}
+
+void sub_0011B290(void)
+{
+    static int logged;
+    uint32_t disp = g_ecx;
+    sub_0011B290_gen();
+    if (wide_buffer_width()) {
+        wide_patch_display(disp);
+        if (logged++ < 8)
+            fprintf(stderr, "[WIDE] display 0x%08X init: %ux%u, 2D origin %.1f\n", disp,
+                    GUEST_U32(disp + 0xCu), GUEST_U32(disp + 0x10u), GUEST_F32(0x0071AF48u));
+    }
+}
+
+/* D3D's display-mode lookup 0x003D30D3 (cdecl; width, height, flags, ...): matches the size
+ * against the AV encoder mode table (0x003EB238, 12-byte entries keyed by AV pack, with width
+ * and height at +4/+6) and fails CreateDevice for a size that isn't there (B5b1's first wide
+ * run: buffers allocated at pitch 0xE00, then all freed, no pushbuffer). The mode only picks
+ * the encoder timings; the frame shown is the rendered surface (mksm_gpu.c), so W x 480 asks
+ * for the 640x480 mode. */
+void sub_003D30D3_enter(void)
+{
+    static int logged;
+    uint32_t w = wide_buffer_width();
+    if (!w || GUEST_U32(g_esp + 4u) != w || GUEST_U32(g_esp + 8u) != 480u)
+        return;
+    GUEST_U32(g_esp + 4u) = 640u;
+    if (logged++ < 4)
+        fprintf(stderr, "[WIDE] display mode lookup %ux480 -> 640x480 (from 0x%08X)\n", w,
+                GUEST_U32(g_esp));
+}
+
+/* D3DDevice_Reset 0x003C99E0 (stdcall, the present parameters): 0x0011B290 calls it with the
+ * display's parameters it has just set to 640 wide. */
+void sub_003C99E0_enter(void)
+{
+    uint32_t w = wide_buffer_width(), pp, disp;
+    if (!w)
+        return;
+    pp = GUEST_U32(g_esp + 4u);
+    disp = GUEST_U32(0x00638988u);
+    if (disp && pp == disp + 0xCu)
+        wide_patch_display(disp);
+    else
+        fprintf(stderr, "[WIDE] reset with other parameters 0x%08X (%ux%u), left alone\n", pp,
+                pp ? GUEST_U32(pp) : 0, pp ? GUEST_U32(pp + 4u) : 0);
 }
 
 /* Camera update (thiscall, ecx = camera). Only the renderer's view camera: renderer
@@ -231,6 +321,7 @@ void sub_00124150_enter(void)
     static uint32_t last_cam;
     static float base, written;
     float aspect = wide_aspect(), now;
+    int keep;
     uint32_t cam = g_ecx, renderer;
     if (!aspect)
         return;
@@ -245,13 +336,21 @@ void sub_00124150_enter(void)
     now = GUEST_F32(cam + 0x20u);
     if (cam == last_cam && now == written)
         return;
+    /* With the wide back buffer the game derives the aspect from the wider display itself (it
+     * writes 0.9 * W/H: 1.2 at 640, 1.6012 at 854, B5b1 run); only a 4:3-based value is widened.
+     * The camera's first update still sees the 640-based 1.2. */
+    keep = wide_buffer_width() && now > 1.4f;
     if (now != base && logged < 8) {
         logged++;
         fprintf(stderr, "[WIDE] camera 0x%08X game aspect %.4f -> %.4f (from 0x%08X)\n", cam,
-                now, now * aspect * 0.75f, GUEST_U32(g_esp));
+                now, keep ? now : now * aspect * 0.75f, GUEST_U32(g_esp));
     }
     last_cam = cam;
     base = now;
+    if (keep) {
+        written = now;
+        return;
+    }
     written = now * aspect * 0.75f;
     GUEST_F32(cam + 0x20u) = written;
 }

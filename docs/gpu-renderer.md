@@ -286,6 +286,18 @@ The OpenGL renderer (`pgraph/gl/*`, 11 files) and the GLSL generators (`pgraph/g
   `display.quality.surface_scale` (1; `RECOMP_PB_GPU_SCALE` sets it in `mksm_gpu_init`, plan 4.1:
   read once when the GL renderer sets up its surfaces; xemu's runtime change halts and kicks PFIFO,
   which we don't have) and `perf.cache_shaders` (off).
+- **Generated GLSL edits** (`shader_patch.c`, plan B2b): xemu's vertex/fragment shaders are text
+  built from register state, so the glue swaps glad's `glShaderSource` pointer at init and edits
+  the text on the way (each edit keyed on a fixed line of the generator; a shader without it is
+  passed through). Only above 1x, to make the 2D layer match 1x: screen-space vertices (w = 2^63
+  from rhw = 0, or exactly 1) go to `ceil(x - 0.5)` before the NDC mapping (at 1x a centre on a
+  top/left edge is covered; the game's 2D sits on such x.5 ties), and in the fragment shader the
+  texture coordinates of a point-sampled stage are read at the 1x pixel centre (with a small
+  texel-space bias, as 1x lands on texel boundaries), of a filtered stage at the unsnapped place
+  (derivatives × the snap delta of `vtxPos0`). Which stages are point-sampled comes from
+  `NV_PGRAPH_TEXFILTER0` per draw: `glUseProgram`/`glLinkProgram`/`glDraw*` are hooked too and
+  set a uniform `mksmNearest` before each draw (`mksm_gpu.c`'s `nearest_stages`). xemu has no
+  disk shader cache here, so every program goes through the hook.
 - **Dirty memory and accelerator** (`xemu_stubs.c`): `memory_region_test_and_clear_dirty` always returns
   true and `memory_region_set_client_dirty` is a no-op (the "always dirty" plan above), so vertex data
   is re-uploaded per draw range and textures re-hashed. `tcg_enabled()` returns **true**: under xemu's

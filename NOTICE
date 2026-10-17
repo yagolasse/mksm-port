@@ -34,6 +34,8 @@ xemu NV2A PGRAPH renderer
   for this port, mirroring QEMU's interfaces; LGPL-2.1-or-later). src/gpu/gloffscreen_wgl.c is
   this port's WGL implementation of the gloffscreen interface (MIT), in place of xemu's SDL one;
   src/gpu/gloffscreen_wgl.h (MIT) declares its additions.
+  src/gpu/shader_patch.c (LGPL-2.1-or-later, written for this port) matches and extends the
+  GLSL text xemu's shader generator emits.
 
 nv2a_vsh_cpu
   Source:  https://github.com/xemu-project/nv2a_vsh_cpu, commit 561fe80 (the revision xemu pins)

@@ -39,6 +39,9 @@
 #include "gloffscreen_wgl.h"
 #include "ui/xemu-settings.h"
 
+/* shader_patch.c */
+int mksm_shader_patch_install(unsigned surface_scale, unsigned (*nearest_mask)(void));
+
 static NV2AState *s_dev;
 static MemoryRegion s_vram;
 static const volatile uint32_t *s_pfifo;
@@ -123,6 +126,23 @@ void mksm_gpu_set_vblank_hz(double hz)
     s_vblank_hz = hz;
 }
 
+/* For shader_patch.c, at each GL draw (method thread, pg->lock held): the enabled texture
+ * stages whose magnification filter is nearest (NV_PGRAPH_TEXFILTER0_MAG = 1, GL_NEAREST in
+ * xemu's map), one bit per stage. */
+static unsigned nearest_stages(void)
+{
+    PGRAPHState *pg = &s_dev->pgraph;
+    unsigned mask = 0;
+    for (int i = 0; i < NV2A_MAX_TEXTURES; i++) {
+        if (pgraph_is_texture_enabled(pg, i) &&
+            GET_MASK(pgraph_reg_r(pg, NV_PGRAPH_TEXFILTER0 + i * 4),
+                     NV_PGRAPH_TEXFILTER0_MAG) == 1) {
+            mask |= 1u << i;
+        }
+    }
+    return mask;
+}
+
 int mksm_gpu_init(const MksmGpuMemory *mem, int opengl)
 {
     /* xemu runs with asserts on; report them on stderr, not in a message box that would
@@ -169,14 +189,17 @@ int mksm_gpu_init(const MksmGpuMemory *mem, int opengl)
     /* early_context_init leaves the GL display context current on this thread; the method
      * thread needs it at each flip, and a context is current on one thread at a time. */
     glo_set_current(NULL);
+    int snap2d = opengl &&
+        mksm_shader_patch_install((unsigned)g_config.display.quality.surface_scale,
+                                  nearest_stages);
     /* One channel, always current: pgraph_method asserts the channel is valid. */
     pgraph_reg_w(&d->pgraph, NV_PGRAPH_CTX_CONTROL, NV_PGRAPH_CTX_CONTROL_CHID);
 
     s_dev = d;
     fprintf(stderr, "[XGPU] PGRAPH set up: vram %zu MiB, ramin %zu KiB, %s renderer, "
-            "vblank %.2f Hz, surface scale %ux\n", mem->vram_size >> 20, mem->ramin_size >> 10,
+            "vblank %.2f Hz, surface scale %ux%s\n", mem->vram_size >> 20, mem->ramin_size >> 10,
             opengl ? "OpenGL" : "null", s_vblank_hz,
-            (unsigned)g_config.display.quality.surface_scale);
+            (unsigned)g_config.display.quality.surface_scale, snap2d ? ", 2D snap" : "");
     return 0;
 }
 
@@ -237,27 +260,66 @@ static void note_scanout(NV2AState *d)
     s_scanout.pitch = pg->surface_color.pitch;
 }
 
-/* RECOMP_PB_GPU_DUMP=<path.bmp>: one presented frame as a 24-bit BMP, at the flip given by
- * RECOMP_PB_GPU_DUMP_FLIP (default 600). */
-static const char *dump_path(unsigned long *at_flip)
+/* RECOMP_PB_GPU_DUMP=<path.bmp>: presented frames as 24-bit BMPs, at the flips listed in
+ * RECOMP_PB_GPU_DUMP_FLIP (comma-separated, up to 16; default 600). With more than one flip
+ * each file is <path minus .bmp>_<flip>.bmp. */
+#define DUMP_MAX 16
+static struct {
+    int parsed;
+    const char *path;
+    unsigned long at[DUMP_MAX];
+    int n;
+} s_dump;
+
+static const char *dump_path(void)
 {
-    static const char *path = (const char *)-1;
-    static unsigned long at;
-    if (path == (const char *)-1) {
-        path = getenv("RECOMP_PB_GPU_DUMP");
+    if (!s_dump.parsed) {
+        s_dump.parsed = 1;
+        s_dump.path = getenv("RECOMP_PB_GPU_DUMP");
         const char *f = getenv("RECOMP_PB_GPU_DUMP_FLIP");
-        at = f ? strtoul(f, NULL, 0) : 600;
+        char *end;
+        for (const char *p = f; p && *p && s_dump.n < DUMP_MAX; p = *end ? end + 1 : end) {
+            unsigned long v = strtoul(p, &end, 0);
+            if (end == p) {
+                break;
+            }
+            s_dump.at[s_dump.n++] = v;
+        }
+        if (!s_dump.n) {
+            s_dump.at[s_dump.n++] = 600;
+        }
     }
-    *at_flip = at;
-    return path;
+    return s_dump.path;
+}
+
+/* Is flip f + ahead one to dump? */
+static int dump_wanted(unsigned long f, unsigned long ahead)
+{
+    if (!dump_path()) {
+        return 0;
+    }
+    for (int i = 0; i < s_dump.n; i++) {
+        if (f + ahead == s_dump.at[i]) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static void maybe_dump(const uint32_t *xrgb, unsigned w, unsigned h)
 {
-    unsigned long at;
-    const char *path = dump_path(&at);
-    if (!path || s_stats.flips != at) {
+    if (!dump_wanted(s_stats.flips, 0)) {
         return;
+    }
+    char named[1024];
+    const char *path = s_dump.path;
+    if (s_dump.n > 1) {
+        size_t len = strlen(path);
+        if (len > 4 && _stricmp(path + len - 4, ".bmp") == 0) {
+            len -= 4;
+        }
+        snprintf(named, sizeof(named), "%.*s_%lu.bmp", (int)len, path, s_stats.flips);
+        path = named;
     }
     FILE *fp = fopen(path, "wb");
     if (!fp) {
@@ -713,10 +775,8 @@ static void present_scanout(NV2AState *d)
         /* The window shows the frame on the GPU; for the [XGPU] non-black count and
          * RECOMP_PB_GPU_DUMP, two flips in every 256 (and the two up to the dump flip) are also
          * read back. A read is handed out one flip later, so a pair gives one fresh frame. */
-        unsigned long at;
-        const char *dump = dump_path(&at);
         unsigned long f = s_stats.flips;
-        if ((f & 0xFF) <= 1 || (dump && (f == at || f + 1 == at))) {
+        if ((f & 0xFF) <= 1 || dump_wanted(f, 0) || dump_wanted(f, 1)) {
             present_async(d, surface, false);
         }
     }

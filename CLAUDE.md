@@ -28,7 +28,8 @@ statically recompiling the retail `default.xbe` to C with
   `nv2a_vsh_cpu/`, `xxhash/` = vendored libraries; `glad/` = generated GL 4.6 core/WGL loader;
   `gloffscreen_wgl.c` = xemu's GL context layer on WGL (hidden windows, newest 4.x core, shared contexts;
   plus `gloffscreen_wgl.h`: a context on the game window for the present);
-  `xemu_stubs.c` = externals from unported xemu files; `mksm_gpu.c` = stands in for xemu's PFIFO
+  `xemu_stubs.c` = externals from unported xemu files; `shader_patch.c` = edits to xemu's generated GLSL
+  (hooked at `glShaderSource`); `mksm_gpu.c` = stands in for xemu's PFIFO
   (RAMHT lookup, acks the NOP-notify and flip-stall waits, presents the last-drawn surface at the
   flip and paces flips to 59.94 Hz); `mksm_gpu.h` = the plain-C interface for
   cl-built code. Licenses: `LICENSE` (GPL-3.0, the combined work), `LICENSES/`, `NOTICE` (file → license)
@@ -212,11 +213,18 @@ support. Useful env vars from the toolkit: `RECOMP_WATCHDOG_SECS`, `RECOMP_AC97_
 so during movies later; each line ends with its real interval in seconds, which `tools/profsum.py` divides by); each flip presents the
 surface drawn last into the framebuffer window (`RECOMP_FB_WINDOW=1`) and waits for a 59.94 Hz VBlank.
 `RECOMP_PB_GPU_RENDERER=null` = xemu's null renderer (draws nothing), `RECOMP_PB_GPU_VBLANK=<Hz>` sets
-the pacing (0 = uncapped), `RECOMP_PB_GPU_DUMP=<file.bmp>` (+ `RECOMP_PB_GPU_DUMP_FLIP=<N>`, default
-600) dumps one presented frame. `RECOMP_PB_GPU_SCALE=1..4` (plan 4.1, default 1) sets xemu's internal
+the pacing (0 = uncapped), `RECOMP_PB_GPU_DUMP=<file.bmp>` (+ `RECOMP_PB_GPU_DUMP_FLIP=<N>[,<N>...]`,
+default 600, up to 16 flips; with more than one each file is `<file>_<flip>.bmp`) dumps presented
+frames. `RECOMP_PB_GPU_SCALE=1..4` (plan 4.1, default 1) sets xemu's internal
 resolution scale at start-up: surfaces render at Nx, CPU reads of surfaces are downscaled to 1x,
 the window shows the scaled surface (the dump and the `pbo` path see it at Nx too); not changeable
-while running. `RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
+while running. Above 1x, `src/gpu/shader_patch.c` edits xemu's generated GLSL as it reaches
+`glShaderSource` (plan B2b): screen-space vertices (w = 1 or rhw = 0) snap to the 1x pixel grid
+(`ceil(x - 0.5)`) and point-sampled stages read their texels at the 1x pixel centre, so the 2D
+layer (HUD, bars, menus) shows what 1x shows; it also hooks `glUseProgram`/`glLinkProgram`/the
+draw calls to set a per-draw uniform with the point-sampled stages. `RECOMP_PB_GPU_SNAP2D=0`
+turns it off, `=debug` colours 2D draws (red/green = sub-pixel x/y of a vertex, blue = 0.25,
++0.5 for w = 1, +0.25 if stage 0 is point-sampled). `RECOMP_PB_GPU_DIRTY=always` makes every texture/vertex range read as
 changed on every use (default: once per pushbuffer kick, texture pages only when their content hash
 changed, see `docs/gpu-renderer.md`; for A/B runs); `=kick` drops the texture-page hash.
 By default (`RECOMP_PB_GPU_PRESENT=window`, plan 2.6b) the method thread draws the scanout surface

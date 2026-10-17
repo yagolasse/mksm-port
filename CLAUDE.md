@@ -251,7 +251,7 @@ for 640) is pillarboxed (B5b2): the game keeps seeing a 640-wide display, so its
 quads, pixel-space rects move by (W-640)/2, full-width menu sprites and the bars widen to W, movies keep a 640x480 buffer (pillarboxed by the
 present), and in the menus (the game's front-end flag) the GPU glue blacks out the columns
 outside the centred 640 at each flip (`mksm_gpu_set_side_mask`): their backdrops have art there.
-Movie zoom (plan B5c2, on by default, independent of `RECOMP_ASPECT`): letterboxed movies are zoomed
+Movie zoom (plan B5c2, on by default with `RECOMP_ASPECT`; without it movies stay as on the Xbox): letterboxed movies are zoomed
 by the window present as far as the window is wider than 4:3, up to the share the picture fills
 (a per-file table in `recomp_manual.c`, keyed by the name the movie player gets; `[MOVIE]` logs
 it), cropping only black rows; the others stay pillarboxed. `RECOMP_MOVIE_ZOOM=0` turns it off,

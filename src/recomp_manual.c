@@ -383,8 +383,8 @@ static int cine_log_on(void);
  * window the present may zoom them up to the share the picture fills (480 / picture rows, by
  * decoding the files: ../docs/widescreen.md § 14), cropping only black rows. The rest (logo or
  * card on black, full-frame shots) stay pillarboxed. Keyed by the file name the movie player
- * 0x00128DE0 (name, w, h, ...) gets, the only caller of the set-up. RECOMP_MOVIE_ZOOM=0 turns it
- * off; RECOMP_MOVIE_ZOOM_GAUNTLET=1 zooms the Gauntlet trailer too, which cuts 17% of its
+ * 0x00128DE0 (name, w, h, ...) gets, the only caller of the set-up. Only with RECOMP_ASPECT set
+ * (wide or anamorphic); RECOMP_MOVIE_ZOOM=0 turns it off there too; RECOMP_MOVIE_ZOOM_GAUNTLET=1 zooms the Gauntlet trailer too, which cuts 17% of its
  * full-frame shots at 16:9. */
 static float movie_zoom_for(const char *name)
 {
@@ -394,8 +394,8 @@ static float movie_zoom_for(const char *name)
         { "blitz.sfd", 480.0f / 322 },
     };
     const char *e = getenv("RECOMP_MOVIE_ZOOM"), *base = name, *p;
-    if (e && *e == '0')
-        return 0.0f;
+    if (!wide_aspect() || (e && *e == '0'))
+        return 0.0f;    /* without RECOMP_ASPECT movies look as on the Xbox */
     for (p = name; *p; p++)
         if (*p == '\\' || *p == '/' || *p == ':')
             base = p + 1;

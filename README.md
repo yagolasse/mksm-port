@@ -16,7 +16,7 @@ Work in progress. Windows x64 is the only host tested so far.
 | Area | State |
 |---|---|
 | Boot, intro movies (Sofdec), title, menus | working |
-| Controller (XInput) and keyboard | working |
+| Controller (SDL2 game controllers) and keyboard | working |
 | Save games | working (stored under `%LOCALAPPDATA%\mksm_recomp`) |
 | Audio | working; a stereo balance issue is open |
 | First level | loads and plays at 60 fps; some rendering issues remain |
@@ -112,8 +112,9 @@ The scripts set the needed defaults, use `../game_files` as the game folder (`MK
 overrides it) and write a log to `../logs/run_<timestamp>.log`.
 
 - Keyboard: arrows = d-pad, Enter = Start, Backspace = Back, Z/X/A/S = A/B/X/Y, Q/E =
-  white/black, 1/3 = triggers, numpad 8/2/4/6 = left stick, I/J/K/L = right stick. An XInput
-  controller works as pad 1.
+  white/black, 1/3 = triggers, numpad 8/2/4/6 = left stick, I/J/K/L = right stick. Controllers
+  (Xbox, PlayStation, Switch Pro and others SDL knows) work as pads 1-4 in the order they're
+  found, and can be plugged in while the game runs.
 - Alt+Enter toggles borderless fullscreen (`RECOMP_FB_FULLSCREEN=1` starts in it).
   `RECOMP_WINDOW_SCALE=2` (up to 8) opens the window at twice 640x480.
 - `RECOMP_PB_GPU_SCALE=2` (or 3, 4) renders at a higher internal resolution.

@@ -1,0 +1,395 @@
+From 0b1c9eefb584cd037a1fdeb55800ec8e63043674 Mon Sep 17 00:00:00 2001
+From: The FBC Agent <thefbcspecialagent@gmail.com>
+Date: Sat, 17 Oct 2026 18:02:12 -0300
+Subject: [PATCH] input: SDL2 game controllers on Windows too (XBOX_SDL_WINDOW)
+
+With XBOX_SDL_WINDOW the Windows build reads its pads through SDL's game
+controller API instead of XInput, the backend macOS and Linux already used,
+so one map serves every host and any controller SDL knows works. The
+keyboard and the mouse+keyboard pad merge as before.
+
+The SDL backend now also opens its controllers: nothing called
+xbox_InputInit, so before this the POSIX build never opened one.
+xbox_InputInit (or the first poll) brings them up once; an empty port is
+scanned again at most once a second (plug in / pull out while running).
+Pads are locked against a rescan from another thread. On Windows the pads
+read in the background as XInput did, device arrival goes to SDL's own
+joystick thread, the events are ignored (the state is polled) and the
+input layer updates them itself: the window runs on its own thread there.
+
+Logs [PAD] lines for a pad opened or gone and for Back+Start held together.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016ahYm8JBvCH5KhgtSu9Yoy
+---
+ src/input/CMakeLists.txt   |  11 +-
+ src/input/README.md        |  13 ++-
+ src/input/xinput_device.c  | 200 +++++++++++++++++++++++++++++++------
+ src/video/fb_present_sdl.c |   4 +-
+ 4 files changed, 191 insertions(+), 37 deletions(-)
+
+diff --git a/src/input/CMakeLists.txt b/src/input/CMakeLists.txt
+index e32661d..bea5db2 100644
+--- a/src/input/CMakeLists.txt
++++ b/src/input/CMakeLists.txt
+@@ -10,15 +10,22 @@ target_include_directories(xbox_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+ if(WIN32)
+     # Mouse+keyboard pad (RECOMP_MKB) reads Win32 raw input.
+     target_sources(xbox_input PRIVATE mkb_input.c)
+-    target_link_libraries(xbox_input PUBLIC platform xinput)
++    target_link_libraries(xbox_input PUBLIC platform)
++    if(NOT XBOX_SDL_WINDOW)
++        target_link_libraries(xbox_input PUBLIC xinput)
++    endif()
+ endif()
+ if(NOT WIN32 OR XBOX_SDL_WINDOW)
+     if(NOT TARGET SDL2::SDL2)
+         find_package(SDL2 REQUIRED)
+     endif()
+-    # The SDL window's key and focus events into that table.
++    # The SDL window's key and focus events into that table, and the pads
++    # through SDL's game controllers (xinput_device.c), on Windows too.
+     target_sources(xbox_input PRIVATE keyboard_sdl.c)
+     target_link_libraries(xbox_input PUBLIC platform SDL2::SDL2)
++    if(WIN32)
++        target_compile_definitions(xbox_input PRIVATE XBOX_SDL_WINDOW=1)
++    endif()
+ endif()
+ 
+ if(MSVC)
+diff --git a/src/input/README.md b/src/input/README.md
+index cfcdac4..6841464 100644
+--- a/src/input/README.md
++++ b/src/input/README.md
+@@ -2,6 +2,17 @@
+ 
+ Maps the Xbox controller API to Windows XInput. The original Xbox used `XInputGetState` with a slightly different structure layout than the XInput API on Windows. This layer translates between them.
+ 
++On macOS and Linux, and on Windows when built with `XBOX_SDL_WINDOW`, the pads
++come from SDL2's game controller API instead (same button map; any controller
++SDL knows, not only XInput ones). Pads are given ports in the order SDL lists
++them and are looked for again once a second while a port is empty (plug in /
++pull out while running). Call `xbox_InputInit()` on the main thread before
++other threads use SDL; otherwise the first poll brings SDL's controllers up.
++On Windows the pads are read also while the window is in the background (as
++XInput), and SDL watches for new devices on a thread of its own. Log lines:
++`[PAD] port N: <name> (SDL game controller)`, `[PAD] port N: disconnected`,
++and `[PAD] port N: Back+Start held` when both are pressed together on a pad.
++
+ ## Files
+ 
+ | File | LOC | Purpose |
+@@ -9,7 +20,7 @@ Maps the Xbox controller API to Windows XInput. The original Xbox used `XInputGe
+ | `xinput_xbox.h` | 189 | Public header — types, button constants, function prototypes |
+ | `xinput_device.c` | 23 | Implementation (maps Xbox calls to Windows XInput) |
+ | `keyboard.c` | | The key table and the one key map, every host |
+-| `keyboard_sdl.c` | | The SDL window's key and focus events into that table (POSIX) |
++| `keyboard_sdl.c` | | The SDL window's key and focus events into that table (POSIX, `XBOX_SDL_WINDOW`) |
+ 
+ ## Quick Start
+ 
+diff --git a/src/input/xinput_device.c b/src/input/xinput_device.c
+index 5975014..3e267c2 100644
+--- a/src/input/xinput_device.c
++++ b/src/input/xinput_device.c
+@@ -6,8 +6,9 @@
+  * (analog buttons as bytes, separate trigger channels) and the host
+  * (digital face buttons, trigger axes).
+  *
+- *   _WIN32 -> Windows XInput
+- *   POSIX  -> SDL2 GameController
++ *   _WIN32                 -> Windows XInput
++ *   POSIX, XBOX_SDL_WINDOW -> SDL2 GameController (on Windows with the SDL
++ *                             window, so one backend serves every host)
+  */
+ 
+ #include "xinput_xbox.h"
+@@ -49,7 +50,7 @@ static void keyboard_merge(XBOX_INPUT_STATE *pState)
+ }
+ 
+ /* ======================================================================== */
+-#if defined(_WIN32)
++#if defined(_WIN32) && !defined(XBOX_SDL_WINDOW)
+ /* ====================  XInput backend  ================================== */
+ /* ======================================================================== */
+ 
+@@ -171,20 +172,30 @@ DWORD xbox_InputGetCapabilities(DWORD dwPort, DWORD dwFlags, XBOX_INPUT_CAPABILI
+ }
+ 
+ /* ======================================================================== */
+-#else /* !_WIN32 */
++#else /* !_WIN32 || XBOX_SDL_WINDOW */
+ /* ====================  SDL2 GameController backend  ===================== */
+ /* ======================================================================== */
+ 
+ #include <SDL.h>
++#include <stdio.h>
+ 
+ static SDL_GameController *g_pads[XBOX_MAX_CONTROLLERS];
+ static BOOL  g_controller_connected[XBOX_MAX_CONTROLLERS];
+ static DWORD g_packet[XBOX_MAX_CONTROLLERS];
++static BOOL  g_combo[XBOX_MAX_CONTROLLERS];   /* Back+Start held */
++
++/* The pads may be read from more than one thread (the USB thread, the
++ * kernel's XInput ordinals), and a rescan closes and opens them. */
++static SDL_SpinLock g_lock;
++static SDL_atomic_t g_init;                   /* 0 no, 1 going, 2 up, 3 failed */
++static Uint64       g_last_scan;
+ 
+ /* Set while the framebuffer window's main thread pumps SDL events
+  * (src/video/fb_present_sdl.c). The pump already updates the controllers,
+  * and SDL_GameControllerUpdate pumps events itself, which on macOS must only
+- * happen on the main thread; so then this side only reads them. */
++ * happen on the main thread; so then this side only reads them. Windows
++ * never sets it: the window runs on a thread of its own there, and the pads
++ * update here (SDL's joystick calls take its joystick lock). */
+ static volatile int g_main_pump;
+ 
+ void xbox_InputSetMainPump(int on)
+@@ -201,46 +212,146 @@ int xbox_InputAnyOpen(void)
+     return 0;
+ }
+ 
+-/* Open up to XBOX_MAX_CONTROLLERS attached game controllers. */
++/* Drop the pads that went away, then give each newly attached game
++ * controller the first free port, in SDL's device order. With g_lock held. */
+ static void open_controllers(void)
+ {
+-    int slot = 0;
+-    for (int i = 0; i < SDL_NumJoysticks() && slot < XBOX_MAX_CONTROLLERS; i++) {
++    int slot, i, n;
++
++    for (slot = 0; slot < XBOX_MAX_CONTROLLERS; slot++) {
++        if (g_pads[slot] && !SDL_GameControllerGetAttached(g_pads[slot])) {
++            SDL_GameControllerClose(g_pads[slot]);
++            g_pads[slot] = NULL;
++            g_controller_connected[slot] = FALSE;
++            fprintf(stderr, "  [PAD] port %d: disconnected\n", slot);
++        }
++    }
++    n = SDL_NumJoysticks();
++    for (i = 0; i < n; i++) {
++        SDL_JoystickID id;
++        int open = 0;
++
+         if (!SDL_IsGameController(i))
+             continue;
+-        if (!g_pads[slot]) {
+-            g_pads[slot] = SDL_GameControllerOpen(i);
+-            g_controller_connected[slot] = (g_pads[slot] != NULL);
++        id = SDL_JoystickGetDeviceInstanceID(i);
++        for (slot = 0; slot < XBOX_MAX_CONTROLLERS; slot++)
++            if (g_pads[slot] && SDL_JoystickInstanceID(
++                    SDL_GameControllerGetJoystick(g_pads[slot])) == id)
++                open = 1;
++        if (open)
++            continue;
++        for (slot = 0; slot < XBOX_MAX_CONTROLLERS && g_pads[slot]; slot++)
++            ;
++        if (slot == XBOX_MAX_CONTROLLERS)
++            break;
++        g_pads[slot] = SDL_GameControllerOpen(i);
++        if (g_pads[slot]) {
++            const char *name = SDL_GameControllerName(g_pads[slot]);
++            fprintf(stderr, "  [PAD] port %d: %s (SDL game controller)\n",
++                    slot, name ? name : "unnamed");
++        }
++    }
++    fflush(stderr);
++    g_last_scan = SDL_GetTicks64();
++}
++
++/* Once, on whichever thread gets here first; the others wait for "up" or
++ * "failed". SDL_InitSubSystem is not thread-safe, so a title calls
++ * xbox_InputInit on its main thread before other threads use SDL; an input
++ * thread getting here first is the fallback. */
++static int input_up(void)
++{
++    int st = SDL_AtomicGet(&g_init);
++
++    if (st >= 2)
++        return st == 2;
++    if (SDL_AtomicCAS(&g_init, 0, 1)) {
++        /* Keep the default SIGINT/SIGTERM: SDL would turn them into an
++         * SDL_QUIT that nothing reads without a window, and Ctrl-C would
++         * stop working. */
++        SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
++#if defined(_WIN32)
++        /* Read as XInput was: also while the window is in the background.
++         * Device arrival goes to a thread of SDL's own: the thread that
++         * initialises SDL here is the game's and never pumps messages. */
++        SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
++        SDL_SetHint(SDL_HINT_JOYSTICK_THREAD, "1");
++#endif
++        if (SDL_WasInit(SDL_INIT_GAMECONTROLLER)
++                || SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) == 0) {
++#if defined(_WIN32)
++            /* The state is polled below; the pads' events would only pile
++             * up for the window thread to drop. */
++            SDL_GameControllerEventState(SDL_IGNORE);
++            SDL_JoystickEventState(SDL_IGNORE);
++#endif
++            SDL_AtomicLock(&g_lock);
++            open_controllers();
++            SDL_AtomicUnlock(&g_lock);
++            SDL_AtomicSet(&g_init, 2);
++        } else {
++            fprintf(stderr, "  [PAD] SDL game controllers unavailable (%s)\n",
++                    SDL_GetError());
++            SDL_AtomicSet(&g_init, 3);
+         }
+-        slot++;
++        return SDL_AtomicGet(&g_init) == 2;
+     }
++    while ((st = SDL_AtomicGet(&g_init)) == 1)
++        SDL_Delay(1);
++    return st == 2;
+ }
+ 
+ void xbox_InputInit(void)
+ {
+-    /* Keep the default SIGINT/SIGTERM: SDL would turn them into an SDL_QUIT
+-     * that nothing reads without a window, and Ctrl-C would stop working. */
+-    SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
+-    if (!SDL_WasInit(SDL_INIT_GAMECONTROLLER))
+-        SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
+-    open_controllers();
++    input_up();
++}
++
++/* No pad on this port: on port 0 the keyboard (and on Windows the
++ * mouse+keyboard pad) stand in, so the game is playable with none. */
++static DWORD no_pad(DWORD dwPort, XBOX_INPUT_STATE *pState)
++{
++    g_controller_connected[dwPort] = FALSE;
++    if (dwPort == 0) {
++        int kb;
++        memset(pState, 0, sizeof *pState);
++        kb = xbox_InputKeyboardPoll(pState);
++#if defined(_WIN32)
++        if (mkb_merge(dwPort, pState))
++            g_controller_connected[dwPort] = TRUE;
++        if (kb || mkb_enabled())
++            return ERROR_SUCCESS;
++#else
++        if (kb)
++            return ERROR_SUCCESS;
++#endif
++    }
++    return ERROR_DEVICE_NOT_CONNECTED;
+ }
+ 
+ DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
+ {
+-    if (dwPort >= XBOX_MAX_CONTROLLERS || !pState)
+-        return ERROR_DEVICE_NOT_CONNECTED;
++    SDL_GameController *c;
+ 
+-    SDL_GameController *c = g_pads[dwPort];
+-    if (!c || !SDL_GameControllerGetAttached(c)) {
+-        g_controller_connected[dwPort] = FALSE;
+-        if (dwPort == 0 && xbox_InputKeyboardPoll(pState))
+-            return ERROR_SUCCESS;
++    if (dwPort >= XBOX_MAX_CONTROLLERS || !pState)
+         return ERROR_DEVICE_NOT_CONNECTED;
+-    }
++    if (!input_up())
++        return no_pad(dwPort, pState);
+ 
++    SDL_AtomicLock(&g_lock);
+     if (!g_main_pump)
+         SDL_GameControllerUpdate();
++    c = g_pads[dwPort];
++    /* Plugged in or pulled out: look again, at most once a second. */
++    if ((!c || !SDL_GameControllerGetAttached(c))
++            && SDL_GetTicks64() - g_last_scan >= 1000) {
++        open_controllers();
++        c = g_pads[dwPort];
++    }
++    if (!c || !SDL_GameControllerGetAttached(c)) {
++        SDL_AtomicUnlock(&g_lock);
++        g_combo[dwPort] = FALSE;
++        return no_pad(dwPort, pState);
++    }
+     g_controller_connected[dwPort] = TRUE;
+ 
+     memset(pState, 0, sizeof(XBOX_INPUT_STATE));
+@@ -284,25 +395,48 @@ DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
+     pState->Gamepad.sThumbRX = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_RIGHTX);
+     pState->Gamepad.sThumbRY =
+         (SHORT)(-1 - SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_RIGHTY));
++    SDL_AtomicUnlock(&g_lock);
++
++    /* Back+Start held together on the pad itself (a title's menu combo),
++     * logged as it is pressed, before the keyboard can add either. */
++    {
++        const WORD both = XBOX_GAMEPAD_BACK | XBOX_GAMEPAD_START;
++        BOOL held = (btn & both) == both;
++        if (held && !g_combo[dwPort]) {
++            fprintf(stderr, "  [PAD] port %lu: Back+Start held\n", (unsigned long)dwPort);
++            fflush(stderr);
++        }
++        g_combo[dwPort] = held;
++    }
+ 
+     if (dwPort == 0)
+         keyboard_merge(pState);
++#if defined(_WIN32)
++    /* Mouse+keyboard merges on top of a real pad too, as with XInput. */
++    if (dwPort == 0)
++        mkb_merge(dwPort, pState);
++#endif
+     return ERROR_SUCCESS;
+ }
+ 
+ DWORD xbox_InputSetState(DWORD dwPort, const XBOX_VIBRATION *pVibration)
+ {
++    SDL_GameController *c;
++
+     if (dwPort >= XBOX_MAX_CONTROLLERS || !pVibration)
+         return ERROR_DEVICE_NOT_CONNECTED;
++    if (!input_up())
++        return ERROR_DEVICE_NOT_CONNECTED;
+ 
+-    SDL_GameController *c = g_pads[dwPort];
+-    if (!c) return ERROR_DEVICE_NOT_CONNECTED;
+-
++    SDL_AtomicLock(&g_lock);
++    c = g_pads[dwPort];
+     /* SDL rumble needs a duration; refresh for ~1s on each call (the game
+      * polls vibration continuously). */
+-    SDL_GameControllerRumble(c, pVibration->wLeftMotorSpeed,
+-                             pVibration->wRightMotorSpeed, 1000);
+-    return ERROR_SUCCESS;
++    if (c)
++        SDL_GameControllerRumble(c, pVibration->wLeftMotorSpeed,
++                                 pVibration->wRightMotorSpeed, 1000);
++    SDL_AtomicUnlock(&g_lock);
++    return c ? ERROR_SUCCESS : ERROR_DEVICE_NOT_CONNECTED;
+ }
+ 
+ BOOL xbox_InputIsConnected(DWORD dwPort)
+@@ -326,4 +460,4 @@ DWORD xbox_InputGetCapabilities(DWORD dwPort, DWORD dwFlags, XBOX_INPUT_CAPABILI
+     return ERROR_SUCCESS;
+ }
+ 
+-#endif /* _WIN32 */
++#endif /* _WIN32 && !XBOX_SDL_WINDOW */
+diff --git a/src/video/fb_present_sdl.c b/src/video/fb_present_sdl.c
+index b61a3f5..5046a1f 100644
+--- a/src/video/fb_present_sdl.c
++++ b/src/video/fb_present_sdl.c
+@@ -92,7 +92,9 @@ struct fb_slot {
+ };
+ 
+ /* What the window takes from SDL, and gives back on every way out. On
+- * Windows the pads are still XInput's (src/input), so no game controllers. */
++ * Windows the input layer brings up SDL's game controllers itself
++ * (xbox_InputInit, src/input) and updates them on its own thread, so the
++ * window takes none. */
+ #if defined(_WIN32)
+ #define FBWIN_SDL_SUBSYSTEMS (SDL_INIT_VIDEO | SDL_INIT_EVENTS)
+ #else
+-- 
+2.53.0.windows.2
+

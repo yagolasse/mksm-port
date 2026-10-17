@@ -157,7 +157,7 @@ DPI scale). On the GPU path `main.c` puts the SDL window in external-present mod
 (`xbox_FramebufferWindowExternalPresent`): no SDL_Renderer on it, made with `SDL_WINDOW_OPENGL`
 (patch 0021), so the GPU present's SDL GL context owns it (B9a2; `xbox_FramebufferWindowSdl`), and
 the CPU frames before the present thread is up are dropped (black for a moment at boot). Keys
-come from SDL events (`keyboard_sdl.c`); pads are still XInput (B9b). The GDI window only:
+come from SDL events (`keyboard_sdl.c`), pads from SDL's game controllers (B9b1, below). The GDI window only:
 `RECOMP_FB_DUMP` (the SDL window has none) needs an absolute path (the run
 scripts start the exe in `build/Release`). For a renderer drawing into the window itself it
 exports the HWND, a "GPU presents" switch (no GDI blit) and the client size in physical pixels;
@@ -223,7 +223,14 @@ also fails on `Assertion failed` (xemu keeps its asserts on; `abort()` exits 3 l
 ## Input
 The game's statically linked XAPI drives the USB host controllers directly, so pads come from the
 toolkit's emulated OHCI (`RECOMP_USB`, wired up in `main.c`: `xbox_OhciInit` + the VEH MMIO trap).
-The run scripts default `RECOMP_USB=1` and `RECOMP_KEYBOARD=1`. Host XInput pad 1 drives Xbox pad 1.
+The run scripts default `RECOMP_USB=1` and `RECOMP_KEYBOARD=1`. Host pad n drives Xbox pad n: with
+the SDL window (the default build) through SDL2's game controller API (toolkit patch 0022, plan
+B9b1: any controller SDL knows, ports in SDL's device order, an empty port rescanned once a second
+so pads can be plugged in while running, read also in the background as XInput was); `main.c`
+calls `xbox_InputInit` on the main thread before the USB thread starts. `-DMKSM_SDL_WINDOW=OFF`
+keeps XInput. Log: `[PAD] port N: <name> (SDL game controller)` / `disconnected` / `Back+Start
+held` (the menu combo for B7a). The mouse+keyboard pad (`RECOMP_MKB`, F9) is still Win32 raw
+input (B9b2).
 The keyboard is merged on top and read from the framebuffer window (`RECOMP_FB_WINDOW=1`, needs focus):
 arrows = d-pad, Enter = Start, Backspace = Back, Z/X/A/S = A/B/X/Y, Q/E = white/black,
 1/3 = triggers, numpad 8/2/4/6 = left stick, I/K/J/L = right stick, Shift/Ctrl = stick clicks.

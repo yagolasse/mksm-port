@@ -509,6 +509,9 @@ extern bool apu_hook_handle_mmio(PCONTEXT ctx, uintptr_t fault_addr,
  * these; the title brings the model up and routes its register faults here.
  * Both do nothing unless RECOMP_USB is set. */
 extern void xbox_OhciInit(void);
+/* The host pads (src/input): with the SDL window, SDL's game controllers (plan B9b1),
+ * brought up here on the main thread before other threads use SDL. */
+extern void xbox_InputInit(void);
 extern int  xbox_OhciOwnsAddress(uint32_t xbox_va);
 extern int  xbox_OhciHandleMmio(void *ctx, uint32_t xbox_va);
 
@@ -770,6 +773,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     /* Bring up the USB host controllers (RECOMP_USB). Needs the guest memory
      * mapped: it makes their register pages fault so the VEH can answer. */
+    if (getenv("RECOMP_USB"))
+        xbox_InputInit();
     xbox_OhciInit();
 
     /* Step 3: Initialize Xbox kernel */

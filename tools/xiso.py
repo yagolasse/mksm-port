@@ -13,6 +13,16 @@ SECTOR = 2048
 MAGIC = b"MICROSOFT*XBOX*MEDIA"
 # Redump images carry a video partition first; XISO images start directly.
 PARTITION_OFFSETS = (0, 0x18300000, 0x0FD90000, 0x02080000)
+MAX_DEPTH = 32  # deeper nesting = a directory that links back to itself
+BAD_CHARS = set('\\/:*?"<>|')
+
+
+def check_name(name):
+    """A plain file name: printable ASCII, no path separators or reserved characters, not
+    "." / "..", no trailing dot or space. Keeps extract inside out_dir (as src/xiso.c)."""
+    if (not name or any(not 0x20 <= ord(c) <= 0x7E or c in BAD_CHARS for c in name)
+            or name[-1] in ". "):
+        raise ValueError(f"invalid file name on the disc: {name!r}")
 
 
 class XIso:
@@ -32,12 +42,14 @@ class XIso:
         self.f.seek(self.base + sector * SECTOR)
         return self.f.read(size)
 
-    def walk(self, sector=None, size=None, prefix=""):
+    def walk(self, sector=None, size=None, prefix="", depth=0):
         """Yield (path, start_sector, size, is_dir) for every entry."""
         if sector is None:
             sector, size = self.root_sector, self.root_size
         if size == 0:
             return
+        if depth > MAX_DEPTH:
+            raise ValueError("directories nested too deep (a directory loop?)")
         data = self._read(sector, size)
         seen = set()
         stack = [0]
@@ -50,11 +62,12 @@ class XIso:
             if left == 0xFFFF:  # sector padding
                 continue
             name = data[off + 14 : off + 14 + nlen].decode("ascii", "replace")
+            check_name(name)
             path = f"{prefix}{name}"
             is_dir = bool(attr & 0x10)
             yield path, start, fsize, is_dir
             if is_dir:
-                yield from self.walk(start, fsize, path + "/")
+                yield from self.walk(start, fsize, path + "/", depth + 1)
             if left:
                 stack.append(left * 4)
             if right:
@@ -67,6 +80,8 @@ class XIso:
             remaining = size
             while remaining:
                 chunk = self.f.read(min(remaining, 1 << 20))
+                if not chunk:
+                    raise ValueError(f"image truncated: {out_path} misses {remaining} bytes")
                 out.write(chunk)
                 remaining -= len(chunk)
 

@@ -34,12 +34,13 @@ def tree(entries):
     return table + b"\xff" * (S - len(table))
 
 
-def image():
+def image(a_name="A.TXT", sub_sector=34):
     """Root (sector 33): A.TXT, EMPTY (empty dir), SUB (dir at 34 holding
     B.BIN). File data at sectors 35 and 36 (B.BIN is longer than a sector)."""
     a, b = b"alpha\n", bytes(range(256)) * 10
     sub = tree([("B.BIN", 36, len(b), 0x20)])
-    root = tree([("A.TXT", 35, len(a), 0x20), ("EMPTY", 0, 0, 0x10), ("SUB", 34, S, 0x10)])
+    root = tree([(a_name, 35, len(a), 0x20), ("EMPTY", 0, 0, 0x10),
+                 ("SUB", sub_sector, S, 0x10)])
     img = bytearray(38 * S)
     img[32 * S:32 * S + 28] = xiso.MAGIC + struct.pack("<II", 33, S)
     img[33 * S:34 * S] = root
@@ -52,6 +53,7 @@ def image():
 class XIsoTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)  # cleanups run last, after open() closes its files
         data, self.a, self.b = image()
         self.path = Path(self.tmp.name, "test.iso")
         self.path.write_bytes(data)
@@ -59,7 +61,6 @@ class XIsoTest(unittest.TestCase):
 
     def tearDown(self):
         self.iso.f.close()
-        self.tmp.cleanup()
 
     def test_walk(self):
         self.assertEqual(self.iso.base, 0)
@@ -75,6 +76,33 @@ class XIsoTest(unittest.TestCase):
         out = Path(self.tmp.name, "out", "SUB", "B.BIN")
         self.iso.extract(36, len(self.b), str(out))
         self.assertEqual(out.read_bytes(), self.b)
+
+    def open(self, data):
+        path = Path(self.tmp.name, f"other{len(list(Path(self.tmp.name).iterdir()))}.iso")
+        path.write_bytes(data)
+        iso = xiso.XIso(path)
+        self.addCleanup(iso.f.close)
+        return iso
+
+    def test_truncated_image(self):
+        """Extracting a file whose data is cut off raises instead of looping forever."""
+        data, _, b = image()
+        iso = self.open(data[:36 * S + 100])
+        with self.assertRaises(ValueError):
+            iso.extract(36, len(b), str(Path(self.tmp.name, "out", "B.BIN")))
+
+    def test_dir_loop(self):
+        """A directory whose table is its parent's stops at the depth limit."""
+        iso = self.open(image(sub_sector=33)[0])
+        with self.assertRaises(ValueError):
+            list(iso.walk())
+
+    def test_bad_names(self):
+        for name in ("..", "A\\B", "C:", "X.", "\x01"):
+            with self.subTest(name=name):
+                iso = self.open(image(a_name=name)[0])
+                with self.assertRaises(ValueError):
+                    list(iso.walk())
 
     def test_no_volume_descriptor(self):
         bad = Path(self.tmp.name, "bad.iso")

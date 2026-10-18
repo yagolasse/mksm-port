@@ -79,6 +79,7 @@ set(GAME_SOURCES
     src/main.c
     src/prof.c
     src/settings.c
+    src/xiso.c
     src/recomp_manual.c
     # Add game-specific sources here, e.g.:
     # src/asset_loader.c
@@ -116,6 +117,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     # Lets the fault handler resolve the host RIP back to the generated
     # function's symbol, i.e. to the guest function that faulted.
     dbghelp
+    # CNG hashes for the default.xbe version check (src/xiso.c, B10b1).
+    bcrypt
 )
 
 # MSVC-specific: large address aware, increase section limit for big generated files
@@ -250,6 +253,12 @@ endif()
 add_executable(settings_test tests/settings_test.c src/settings.c)
 target_include_directories(settings_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 add_test(NAME settings COMMAND settings_test)
+# xiso: the XDVDFS reader/extractor and the CNG hashes on synthetic images (B10b1);
+# `xiso_test --extract <image> <dir>` extracts a real image (dev use, the B10b1 gate).
+add_executable(xiso_test tests/xiso_test.c src/xiso.c)
+target_include_directories(xiso_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(xiso_test PRIVATE bcrypt shell32)
+add_test(NAME xiso COMMAND xiso_test)
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
     set(MKSM_GAME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../game_files" CACHE PATH

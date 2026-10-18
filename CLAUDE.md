@@ -24,6 +24,12 @@ statically recompiling the retail `default.xbe` to C with
 - `src/settings.c`: the player settings file (`settings.ini`, plan B7b1; see Saves and settings):
   INI parse/write, monitor defaults, exports the keys as the env vars they stand for. Its C unit
   test is `tests/settings_test.c` (CTest `settings`; `tests/test_settings.py` runs the built exe)
+- `src/xiso.c`: XDVDFS reader/extractor in C (plan B10b1, for B10b2's first-launch setup; linked
+  but not called yet): opens a trimmed xiso or a full disc image (tries the partition offsets of
+  `tools/xiso.py`), walks with bounds/name/depth checks, extracts with progress + free-space check,
+  SHA-256/SHA-1 via CNG (`bcrypt`), `mksm_xbe_is_known` = the retail `default.xbe` hash. Unit test
+  `tests/xiso_test.c` (CTest `xiso`, synthetic in-memory images incl. a file past 4 GB;
+  `tests/test_xiso_c.py` runs it); `xiso_test --extract <image> <dir>` extracts a real image
 - `src/recomp_manual.c`: hand-written overrides (`recomp_lookup_manual`), entry hooks
   (`sub_X_enter`, see Pipeline), widescreen (`RECOMP_ASPECT`) and ICALL diagnostics
 - `src/recomp/gen/`: generated C (not in git)
@@ -54,7 +60,8 @@ statically recompiling the retail `default.xbe` to C with
   first; toolkit changes stay in the fork and go upstream once the port is done
 - `tools/run.sh`, `tools/run.bat`: run the exe with the needed env defaults, log to `../logs/`
 - `tools/smoke_test.py`: boot smoke test (also CTest `smoke`), see Testing
-- `tools/xiso.py`: list/extract files from an Xbox disc image
+- `tools/xiso.py`: list/extract files from an Xbox disc image (refuses bad names, directory
+  loops and truncated data with `ValueError`, like `src/xiso.c`)
 - `tools/ghidra/`: `run_ghidra.sh` (headless import + name export, see Pipeline),
   `RefsTo.java` (the functions that reference given addresses) and `DecompAt.java` (decompile the functions at given addresses into a file, read-only:
   `analyzeHeadless.bat <ghidra/project> mksm -process xbe_flat.bin -noanalysis -readOnly

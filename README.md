@@ -26,7 +26,7 @@ Work in progress. Windows x64 is the only host tested so far.
 | Settings menu (F1) | edits the settings (saved to `settings.ini`), Apply and restart, FPS counter, pauses the game; scale/aspect/wide apply on restart, the rest at once |
 | Settings file | `settings.ini` read at start, monitor-based defaults on first start; written by the menu |
 | First-start setup | asks for the disc image or game folder once, checks the version, extracts an image |
-| Native Linux build | in progress: builds and runs on the Steam Deck (GPU renderer, window, pads, audio); settings menu; movies don't open yet, no first-start setup |
+| Native Linux build | in progress: builds and runs on the Steam Deck (GPU renderer, window, pads, audio); settings menu, movies, smoke test passes; no first-start setup |
 
 Expect crashes and glitches. Bug reports are welcome; please include the log (`../logs/` from the run
 scripts, else `%LOCALAPPDATA%\mksm_recomp\last_run.log`; see [Run](#run)), never game files.
@@ -223,7 +223,7 @@ tools\run.bat
 | `MKSM_GAME_DIR=<dir>` | `../game_files` | the extracted disc (the folder with `default.xbe`) |
 | `MKSM_SAVE_DIR=<dir>` | `%LOCALAPPDATA%\mksm_recomp\saves` | where the saves go (the emulated hard disk stays in `mksm_recomp`) |
 | `RECOMP_SETTINGS=0`, `=1`, `=<path>` | `0` in the run scripts, else the file | skip `settings.ini`, use it, or use another file |
-| `MKSM_EXE`, `MKSM_LOG` | `build/Release/mksm_recomp.exe`, `../logs/run_<timestamp>.log` | run scripts only: which exe to run, where to log |
+| `MKSM_EXE`, `MKSM_LOG` | `build/Release/mksm_recomp.exe`, `../logs/run_<timestamp>.log` | run scripts (`MKSM_EXE` also `tools/smoke_test.py`): which exe to run, where to log; on Linux set `MKSM_EXE` to the build dir's `mksm_recomp` |
 
 The switches the game needs to run (GPU path, game window, USB pads, audio) are on by default,
 in the exe and the run scripts; leave those alone (`0` turns one off, e.g. `RECOMP_FB_WINDOW=0`

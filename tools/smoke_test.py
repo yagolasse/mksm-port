@@ -22,7 +22,8 @@ Usage:
                                [--software]
 
 The game dir (holding default.xbe) defaults to MKSM_GAME_DIR, else
-../game_files. No game data lives in this repo; without it the test exits 77
+../game_files; the exe to MKSM_EXE, else build/Release/mksm_recomp.exe (as the
+run scripts; on Linux point it at the build dir's mksm_recomp). No game data lives in this repo; without it the test exits 77
 (CTest's skip code). Exit 0 = all checks passed, 1 = a check failed.
 
 The env defaults match tools/run.sh and tools/run.bat: keep the three in sync.
@@ -285,7 +286,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--game-dir", default=os.environ.get("MKSM_GAME_DIR",
                                                          str(PORT.parent / "game_files")))
-    ap.add_argument("--exe", default=str(PORT / "build" / "Release" / "mksm_recomp.exe"))
+    ap.add_argument("--exe", default=os.environ.get(
+        "MKSM_EXE", str(PORT / "build" / "Release" / "mksm_recomp.exe")))
     ap.add_argument("--log-dir", default=str(PORT.parent / "logs"))
     ap.add_argument("--only", choices=[c.name for c in CHECKPOINTS], action="append")
     cap = ap.add_mutually_exclusive_group()

@@ -13,7 +13,8 @@
 # Usage: tools/run.sh [extra exe args...]
 #
 # Env: MKSM_GAME_DIR (default ../game_files): extracted disc root with default.xbe
-#      MKSM_EXE      (default build/Release/mksm_recomp.exe)
+#      MKSM_EXE      (default build/Release/mksm_recomp.exe; on Linux the build dir's
+#                    mksm_recomp)
 #      MKSM_LOG      (default ../logs/run_<timestamp>.log)
 #      MKSM_SAVE_DIR (default %LOCALAPPDATA%\mksm_recomp\saves): the saves
 #                    (UDATA/TDATA); older saves in <game>\UDATA or directly in
@@ -102,7 +103,9 @@ export RECOMP_FB_WINDOW
 
 mkdir -p "$(dirname "$LOG")"
 LOG="$(cd "$(dirname "$LOG")" && pwd)/$(basename "$LOG")"
-GAME_DIR_W="$(cygpath -w "$(cd "$GAME_DIR" && pwd)")"
+GAME_DIR_W="$(cd "$GAME_DIR" && pwd)"
+# Git Bash on Windows: the exe takes a Windows path. Linux: the path as is.
+if command -v cygpath >/dev/null 2>&1; then GAME_DIR_W="$(cygpath -w "$GAME_DIR_W")"; fi
 echo "exe:  $EXE"
 echo "game: $GAME_DIR_W"
 echo "log:  $LOG"

@@ -177,8 +177,10 @@ for the SDL window and its events and runs the rest of the boot on a guest threa
 at `mksm_boot`, after the memory layout and the GPU init (the window's present mode must be set
 before it opens, and the Xbox ranges must be mapped before SDL/Mesa/PipeWire take address space:
 the other order lost the contiguous window at base + 2 GB and crashed). Headless runs stay on the
-main thread. File names on the disc are matched case-sensitively on Linux for now (the movies in
-`front/movies/*.sfd` don't open; plan H.5c2d).
+main thread. Guest paths are matched case-insensitively against the disc folder (patch 0030:
+the game opens `d:\FRONT\MOVIES\MIDWAY.SFD`, the folder has `front/movies/midway.sfd`), and the
+POSIX path backend prints the same `[PATH]` lines as Win32. Smoke test on Linux:
+`MKSM_EXE=~/mksm-build/port/mksm_recomp python tools/smoke_test.py` (in the distrobox).
 The exe exports its symbols (`ENABLE_EXPORTS`, for `dladdr` in the crash report), and lifted CRT
 functions with libc names (`write`, `close`, ...) are renamed in `gen/` by the force-included
 `src/recomp_libc_names.h`: without it the toolkit's `close`/`write` calls ran guest code.

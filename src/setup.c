@@ -293,10 +293,81 @@ static int run_extract(Xiso *x, const wchar_t *out_dir, unsigned long *os_error)
 
 /* ── A disc image ──────────────────────────────────────────── */
 
-/* 1 = extracted into game (copied to out), 0 = refused (pick again), -1 = stop. */
-static int from_image(const wchar_t *path, const wchar_t *game, const wchar_t *partial,
-                      char *out, size_t cap)
+/* ── Where an image is extracted ───────────────────────────── */
+
+/* Candidates in order: beside the exe (the whole install in one folder; also where the
+ * default lookup finds game\), then the settings file's folder (%LOCALAPPDATA%\mksm_recomp
+ * unless RECOMP_SETTINGS moves it). */
+enum { DEST_MAX = 2 };
+static wchar_t g_dest[DEST_MAX][MAX_PATH];
+static int g_ndest;
+
+static void add_dest(const wchar_t *dir)
 {
+    for (int i = 0; i < g_ndest; i++)
+        if (_wcsicmp(g_dest[i], dir) == 0)
+            return;
+    if (g_ndest < DEST_MAX && dir[0])
+        wcscpy_s(g_dest[g_ndest++], MAX_PATH, dir);
+}
+
+static void dest_path(int i, const wchar_t *name, wchar_t *out)
+{
+    _snwprintf_s(out, MAX_PATH, _TRUNCATE, L"%ls\\%ls", g_dest[i], name);
+}
+
+/* A test file there can be created (Program Files can't, for a normal user). */
+static int writable(const wchar_t *dir)
+{
+    wchar_t probe[MAX_PATH];
+    HANDLE h;
+    _snwprintf_s(probe, MAX_PATH, _TRUNCATE, L"%ls\\mksm_write_test.tmp", dir);
+    h = CreateFileW(probe, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                    FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+    if (h == INVALID_HANDLE_VALUE)
+        return 0;
+    CloseHandle(h);
+    return 1;
+}
+
+/* The first candidate that has no game folder yet, is writable and has need bytes free
+ * (need 0 = not checked). -1 = none; *space_avail then gets the free bytes of the first one
+ * that failed only on space (0 if none did). log: say why each one was skipped. */
+static int choose_dest(uint64_t need, uint64_t *space_avail, int log)
+{
+    static const char *const why[] = { "a game folder is there already", "not writable",
+                                       "not enough free space" };
+    *space_avail = 0;
+    for (int i = 0; i < g_ndest; i++) {
+        wchar_t game[MAX_PATH];
+        uint64_t avail = 0;
+        int r = -1;
+        dest_path(i, L"game", game);
+        if (GetFileAttributesW(game) != INVALID_FILE_ATTRIBUTES) {
+            r = 0;
+        } else if (!writable(g_dest[i])) {
+            r = 1;
+        } else if (need && xiso_check_space(g_dest[i], need, &avail) == XISO_E_NO_SPACE) {
+            r = 2;
+            if (!*space_avail)
+                *space_avail = avail ? avail : 1;
+        }
+        if (r < 0)
+            return i;
+        if (log) {
+            char d[MAX_PATH * 3];
+            if (!WideCharToMultiByte(CP_UTF8, 0, g_dest[i], -1, d, sizeof(d), NULL, NULL))
+                d[0] = '\0';
+            fprintf(stderr, "[SETUP] not extracting into %s: %s\n", d, why[r]);
+        }
+    }
+    return -1;
+}
+
+/* 1 = extracted (the folder copied to out), 0 = refused (pick again), -1 = stop. */
+static int from_image(const wchar_t *path, char *out, size_t cap)
+{
+    wchar_t game[MAX_PATH], partial[MAX_PATH];
     Xiso *x = NULL;
     XisoEntry e;
     uint8_t h[32];
@@ -304,7 +375,7 @@ static int from_image(const wchar_t *path, const wchar_t *game, const wchar_t *p
     uint32_t files, dirs;
     unsigned long os_error = 0;
     ULONGLONG t0;
-    int rc;
+    int rc, d;
 
     rc = xiso_open_file(path, &x);
     if (rc) {
@@ -329,22 +400,29 @@ static int from_image(const wchar_t *path, const wchar_t *game, const wchar_t *p
         return 0;
     }
     rc = xiso_totals(x, &bytes, &files, &dirs);
-    need = xiso_space_needed(bytes, files, dirs);
-    if (rc == XISO_OK && xiso_check_space(partial, need, &avail) == XISO_E_NO_SPACE) {
-        say(MB_ICONWARNING, L"Extracting the disc needs %.1f GB free on the drive of\n%ls\n"
-            L"(%.1f GB free now). Free some space and start again.", GB(need), game, GB(avail));
+    need = rc == XISO_OK ? xiso_space_needed(bytes, files, dirs) : 0;
+    d = choose_dest(need, &avail, 1);
+    if (d < 0) {
+        dest_path(0, L"game", game);
+        if (avail)
+            say(MB_ICONWARNING, L"Extracting the disc needs %.1f GB free; the drive of\n%ls\n"
+                L"has %.1f GB. Free some space and start again.", GB(need), g_dest[0], GB(avail));
+        else
+            say(MB_ICONERROR, L"There is no folder to extract the disc into:\n%ls\nis there "
+                L"already but holds no usable game files, or the folder can't be written. "
+                L"Delete or rename it and start again.", game);
         xiso_close(x);
         return -1;
     }
-    if (GetFileAttributesW(game) != INVALID_FILE_ATTRIBUTES) {
-        say(MB_ICONERROR, L"%ls\nis there already but holds no usable game files. Delete or "
-            L"rename it and start again.", game);
-        xiso_close(x);
-        return -1;
-    }
+    dest_path(d, L"game", game);
+    dest_path(d, L"game.partial", partial);
 
     remove_tree(partial);       /* left by a run that was killed mid-extract */
-    log_w(L"extracting the disc image");
+    {
+        wchar_t line[MAX_PATH + 40];
+        _snwprintf_s(line, MAX_PATH + 40, _TRUNCATE, L"extracting the disc image into %ls", game);
+        log_w(line);
+    }
     t0 = GetTickCount64();
     rc = run_extract(x, partial, &os_error);
     xiso_close(x);
@@ -377,8 +455,7 @@ static int from_image(const wchar_t *path, const wchar_t *game, const wchar_t *p
 /* ── The flow ──────────────────────────────────────────────── */
 
 /* 1 = ok, 0 = pick again, -1 = stop. */
-static int try_path(const wchar_t *path, const wchar_t *game, const wchar_t *partial,
-                    char *out, size_t cap)
+static int try_path(const wchar_t *path, char *out, size_t cap)
 {
     DWORD a = GetFileAttributesW(path);
     const wchar_t *ext = wcsrchr(path, L'.');
@@ -402,7 +479,7 @@ static int try_path(const wchar_t *path, const wchar_t *game, const wchar_t *par
             wcscat_s(dir, MAX_PATH, L"\\");       /* "D:" → "D:\" */
         return check_folder(dir, out, cap, 0);
     }
-    return from_image(path, game, partial, out, cap);
+    return from_image(path, out, cap);
 }
 
 /* 1 = picked (path in out), 0 = cancelled, -1 = the dialog didn't open. */
@@ -462,25 +539,37 @@ int mksm_setup_run(const char *base_dir, char *game_dir, size_t cap)
     const char *pick_env = getenv("MKSM_SETUP_PICK");
     const char *sp = mksm_settings_path();
     char dir[MAX_PATH], *slash;
-    wchar_t dest[MAX_PATH], game[MAX_PATH], partial[MAX_PATH], path[MAX_PATH];
+    wchar_t dest[MAX_PATH], game[MAX_PATH], path[MAX_PATH], *wslash;
+    uint64_t avail;
     HRESULT co;
-    int rc = 0;
+    DWORD n;
+    int rc = 0, d;
 
     g_auto = pick_env && pick_env[0];
-    /* Next to the settings file: %LOCALAPPDATA%\mksm_recomp unless RECOMP_SETTINGS moves it. */
+    g_ndest = 0;
+    n = GetModuleFileNameW(NULL, dest, MAX_PATH);
+    if (n && n < MAX_PATH && (wslash = wcsrchr(dest, L'\\')) != NULL) {
+        *wslash = L'\0';
+        add_dest(dest);
+    }
     snprintf(dir, MAX_PATH, "%s", sp && sp[0] ? sp : base_dir);
     if (sp && sp[0] && (slash = strrchr(dir, '\\')) != NULL)
         *slash = '\0';
     to_wide(dir, dest, MAX_PATH);
-    _snwprintf_s(game, MAX_PATH, _TRUNCATE, L"%ls\\game", dest);
-    _snwprintf_s(partial, MAX_PATH, _TRUNCATE, L"%ls\\game.partial", dest);
+    add_dest(dest);
 
     /* An earlier extract whose game_dir= was lost (the settings file reset). */
-    if (check_folder(game, game_dir, cap, 1)) {
-        fprintf(stderr, "[SETUP] using the earlier extract %s\n", game_dir);
-        save_game_dir(game_dir);
-        return 1;
+    for (int i = 0; i < g_ndest; i++) {
+        dest_path(i, L"game", game);
+        if (check_folder(game, game_dir, cap, 1)) {
+            fprintf(stderr, "[SETUP] using the earlier extract %s\n", game_dir);
+            save_game_dir(game_dir);
+            return 1;
+        }
     }
+    /* For the intro: where an image would go (the space is checked once it is open). */
+    d = choose_dest(0, &avail, 0);
+    dest_path(d < 0 ? 0 : d, L"game", game);
 
     if (!g_auto) {
         wchar_t intro[1024];
@@ -518,7 +607,7 @@ int mksm_setup_run(const char *base_dir, char *game_dir, size_t cap)
             _snwprintf_s(line, MAX_PATH + 16, _TRUNCATE, L"picked %ls", path);
             log_w(line);
         }
-        rc = try_path(path, game, partial, game_dir, cap);
+        rc = try_path(path, game_dir, cap);
         if (rc != 0 || g_auto)
             break;
     }

@@ -115,7 +115,8 @@ tools/run.sh            # Git Bash; tools/run.bat from cmd
 The scripts use `../game_files` as the game folder and write a log to
 `../logs/run_<timestamp>.log`. The exe can also be started directly (double-clicked, or with
 the game folder as its first argument; without one it uses `MKSM_GAME_DIR`, then the settings
-file's `game_dir`, then `game\` next to where it is started): the switches the game needs to
+file's `game_dir`, then `game\` in the folder it is started from or beside the exe): the
+switches the game needs to
 run (GPU path, game window, pads, sound) are built in,
 and with nowhere to print (no redirect) it writes its log to
 `%LOCALAPPDATA%\mksm_recomp\last_run.log` (the run before it: `last_run.old.log`).
@@ -125,9 +126,11 @@ disc image (`.iso`; a trimmed xiso or a full disc dump) or `default.xbe` in a fo
 extracted disc. The game's `default.xbe` must be the USA/Europe Xbox release (checked by its
 SHA-256; another version is refused with a message). An image is extracted once, with a
 progress window (about 4 GB, a minute or two; Cancel deletes the partial
-copy), into `%LOCALAPPDATA%\mksm_recomp\game`. The folder is then saved as `game_dir` in the
-settings file, so the next start goes straight in. To change it later, edit or clear
-`game_dir` (cleared, the earlier extract in `mksm_recomp\game` is found again).
+copy), into `game\` beside the exe, so the whole install stays in one folder. If that folder
+can't be written (e.g. under `Program Files`), has too little free space or already has a
+`game\` without the game, it goes to `%LOCALAPPDATA%\mksm_recomp\game` instead. The folder is
+then saved as `game_dir` in the settings file, so the next start goes straight in. To change it
+later, edit or clear `game_dir` (cleared, an earlier extract in either place is found again).
 
 ### Keys and controllers
 

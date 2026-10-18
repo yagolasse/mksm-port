@@ -660,6 +660,20 @@ static GameDirFrom resolve_game_dir(void)
         return mksm_settings_env_from_file("MKSM_GAME_DIR") ? GAME_DIR_FILE : GAME_DIR_ENV;
     }
     set_game_dir(DEFAULT_GAME_DIR);
+    if (GetFileAttributesA(g_xbe_path) == INVALID_FILE_ATTRIBUTES) {
+        /* game\ beside the exe (where the setup extracts to), when started from elsewhere. */
+        char exe_game[MAX_PATH];
+        DWORD n = GetModuleFileNameA(NULL, exe_game, MAX_PATH);
+        char *slash = n && n < MAX_PATH ? strrchr(exe_game, '\\') : NULL;
+        if (slash && (size_t)(slash - exe_game) + sizeof("\\" DEFAULT_GAME_DIR) <= MAX_PATH) {
+            strcpy(slash, "\\" DEFAULT_GAME_DIR);
+            snprintf(g_xbe_path, MAX_PATH, "%s\\default.xbe", exe_game);
+            if (GetFileAttributesA(g_xbe_path) != INVALID_FILE_ATTRIBUTES)
+                set_game_dir(exe_game);
+            else
+                set_game_dir(DEFAULT_GAME_DIR);   /* both missing: report the working dir's */
+        }
+    }
     return GAME_DIR_DEFAULT;
 }
 

@@ -157,15 +157,18 @@ an object nothing references, and a plain link drops it ("No available renderer"
 ## Run
 The exe takes the extracted game folder (holding `default.xbe`) from its first argument, else
 `MKSM_GAME_DIR` (or `settings.ini`'s `game_dir=`, which sets it), else `game\` in the working
-directory (`resolve_game_dir` in `src/main.c`, after `mksm_settings_load`). When the folder came
-from the file or the default and has no `default.xbe`, `mksm_setup_run` (`src/setup.c`, plan
-B10b2) asks for the disc: first `<dir>\game` is tried quietly (an earlier extract; `<dir>` = the
-settings file's folder, `%LOCALAPPDATA%\mksm_recomp` unless `RECOMP_SETTINGS=<path>` moves it),
-then an intro box and the file picker (an image, or any `.xbe` = its folder). `default.xbe`'s
-SHA-256 must be `mksm_xbe_is_known`, else "different version" and pick again. An image is
-checked (hash, free space, `<dir>\game` not there yet), extracted into `<dir>\game.partial` on a
-worker thread (progress window; Cancel / close deletes the partial folder, exit 1), renamed to
-`game`. The folder is saved as `game_dir=` (`[SETUP] game_dir=... saved`; not with
+directory, else `game\` beside the exe (`resolve_game_dir` in `src/main.c`, after
+`mksm_settings_load`). When the folder came from the file or the default and has no
+`default.xbe`, `mksm_setup_run` (`src/setup.c`, plan B10b2) asks for the disc. Extract
+candidates, in order: the exe's folder, then the settings file's folder
+(`%LOCALAPPDATA%\mksm_recomp` unless `RECOMP_SETTINGS=<path>` moves it). First each one's
+`game` is tried quietly (an earlier extract), then an intro box and the file picker (an image,
+or any `.xbe` = its folder). `default.xbe`'s SHA-256 must be `mksm_xbe_is_known`, else
+"different version" and pick again. An image is checked (hash), then `choose_dest` takes the
+first candidate with no `game` folder yet, writable (a delete-on-close probe file) and with the
+free space (`[SETUP] not extracting into X: <reason>` for each one skipped). It is extracted
+into `<dest>\game.partial` on a worker thread (progress window; Cancel / close deletes the
+partial folder, exit 1), renamed to `game`. The folder is saved as `game_dir=` (`[SETUP] game_dir=... saved`; not with
 `RECOMP_SETTINGS=0`). A folder from the argument or a user-set `MKSM_GAME_DIR` gets the old
 MessageBox instead. Every boot logs `[SETUP] default.xbe is the retail ... build` or `is NOT`
 (logged, not refused). Paths stay ANSI in `main.c`; a picked path that doesn't fit the code page

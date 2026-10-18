@@ -733,9 +733,9 @@ static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
 }
 #else
 /* POSIX: the same report from a SIGSEGV/SIGBUS handler. Trapped hardware registers (APU,
- * AC'97, OHCI) go to the toolkit first (xbox_PosixMmioFault; it has a decoder on arm64 only
- * so far, plan H.5c2b). stdio in a signal handler, as the toolkit's traps do: the process is
- * about to die. */
+ * AC'97, OHCI) go to the toolkit first (xbox_PosixMmioFault: arm64 and Linux x86-64
+ * decoders). stdio in a signal handler, as the toolkit's traps do: the process is about to
+ * die. */
 static void posix_fault(int sig, siginfo_t *si, void *ucv)
 {
     ucontext_t *uc = (ucontext_t *)ucv;

@@ -1,0 +1,721 @@
+From 6be9923cc72f3e49f8af5f1447e26e802f7d9f38 Mon Sep 17 00:00:00 2001
+From: Yago Lasse <yagolasse@gmail.com>
+Date: Sun, 18 Oct 2026 14:09:26 -0300
+Subject: [PATCH] linux: x86-64 trapped MMIO (APU, AC'97, OHCI) through a
+ ucontext bridge
+
+On POSIX only arm64 had a trapped-MMIO decoder, so on Linux x86-64
+xbox_PosixMmioFault returned 0: OHCI switched itself off (no pads), the
+AC'97 bus-master write trap was not armed, and the first trapped APU
+register access was a crash.
+
+mmio_decode.h now builds on Linux x86-64 too: the decoder works on
+mmio_ctx_t (CONTEXT on Win32, a CONTEXT-shaped struct on Linux), and
+mmio_emulate_ucontext copies a signal handler's gregs[] in and back
+(kernel sigcontext order; only CF/ZF/SF/OF are written back to EFLAGS).
+The APU hook, the AC'97 POSIX trap, OHCI and xbox_PosixMmioFault use it
+there as they use the A64 decoder on arm64. Win32 is unchanged.
+
+Tests: mmio_decode builds on Linux x86-64 and adds a gregs round-trip
+case (slot order, rip, flags kept); usb_ohci_posix runs on x86-64 Linux
+instead of skipping.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MpLs2w6Qd9WdNHUWmKSXXn
+---
+ src/apu/apu_mmio_hook.c             | 45 +++++++++----
+ src/kernel/xbox_memory_layout.c     | 32 +++++++---
+ src/platform/mmio_decode.h          | 99 +++++++++++++++++++++++++++--
+ src/usb/ohci.c                      | 31 +++++++--
+ tests/mmio_decode/CMakeLists.txt    |  1 +
+ tests/mmio_decode/test_main.c       | 98 +++++++++++++++++++++-------
+ tests/usb_ohci_posix/CMakeLists.txt |  5 +-
+ tests/usb_ohci_posix/test_main.c    |  7 +-
+ 8 files changed, 259 insertions(+), 59 deletions(-)
+
+diff --git a/src/apu/apu_mmio_hook.c b/src/apu/apu_mmio_hook.c
+index f4f8a82..335451f 100644
+--- a/src/apu/apu_mmio_hook.c
++++ b/src/apu/apu_mmio_hook.c
+@@ -2,9 +2,9 @@
+  * MCPX APU MMIO Hook - trapped APU register access
+  *
+  * Decodes the faulting instruction with the shared trapped-MMIO decoders
+- * (src/platform/mmio_decode.h on x86-64 under a VEH, mmio_decode_a64.h on
+- * POSIX arm64 under SIGBUS/SIGSEGV) and routes reads/writes through the MCPX
+- * APU register handlers.
++ * (src/platform/mmio_decode.h on x86-64 under a VEH or a Linux SIGSEGV
++ * handler, mmio_decode_a64.h on POSIX arm64 under SIGBUS/SIGSEGV) and routes
++ * reads/writes through the MCPX APU register handlers.
+  */
+ 
+ #include "apu.h"
+@@ -17,9 +17,9 @@
+  * platform's MMIO hook is active, so define it before the #if guard. */
+ MCPXAPUState *g_apu_state = NULL;
+ 
+-/* Windows: a VEH hands over the CONTEXT. POSIX arm64: a SIGBUS/SIGSEGV
+- * handler hands over the ucontext (apu_hook_handle_mmio_posix, at the end).
+- * x86-64 Linux has no trap yet. */
++/* Windows: a VEH hands over the CONTEXT. POSIX (arm64, Linux x86-64): a
++ * SIGBUS/SIGSEGV handler hands over the ucontext (apu_hook_handle_mmio_posix,
++ * at the end). */
+ #if defined(_WIN32)
+ #include <windows.h>
+ #include "../platform/mmio_decode.h"
+@@ -124,12 +124,19 @@ bool apu_hook_handle_mmio(PCONTEXT ctx, uintptr_t fault_addr,
+ 
+ #endif /* _WIN32 */
+ 
+-#if !defined(_WIN32) && defined(__aarch64__)
+-/* POSIX arm64: the same hook over sigaction + ucontext, with the A64 decoder
+- * (src/platform/mmio_decode_a64.h). The host's fault handler reaches it
+- * through xbox_PosixMmioFault before it reports a crash. */
++#if !defined(_WIN32) && (defined(__aarch64__) \
++                         || (defined(__x86_64__) && defined(__linux__)))
++/* POSIX: the same hook over sigaction + ucontext, with the A64 decoder
++ * (src/platform/mmio_decode_a64.h) on arm64 and the x86-64 one
++ * (src/platform/mmio_decode.h, through its ucontext bridge) on Linux x86-64.
++ * The host's fault handler reaches it through xbox_PosixMmioFault before it
++ * reports a crash. */
+ #include <signal.h>
++#if defined(__aarch64__)
+ #include "../platform/mmio_decode_a64.h"
++#else
++#include "../platform/mmio_decode.h"
++#endif
+ 
+ #define APU_MMIO_BASE  0xFE800000u
+ #define APU_MMIO_SIZE  0x00080000u
+@@ -137,8 +144,8 @@ bool apu_hook_handle_mmio(PCONTEXT ctx, uintptr_t fault_addr,
+ static int g_apu_mmio_decode_fail;
+ 
+ /* The model's registers are 32-bit and its read/write ignore the size, so an
+- * 8-byte access (ldr/str x, a d register, each half of a q register) is two
+- * 4-byte accesses here, as on Windows. */
++ * 8-byte access (ldr/str x, a d register, each half of a q register; a REX.W
++ * mov on x86-64) is two 4-byte accesses here, as on Windows. */
+ static uint64_t apu_mmio_rd(void *dev, uint32_t off, int size)
+ {
+     if (size == 8) {
+@@ -171,16 +178,28 @@ bool apu_hook_handle_mmio_posix(void *ucv, uintptr_t fault_addr,
+     (void)fault_addr; (void)is_write;
+     if (!g_apu_state || off >= APU_MMIO_SIZE)
+         return false;
++#if defined(__aarch64__)
+     if (mmio_emulate_a64(uc, off, g_apu_state, apu_mmio_rd, apu_mmio_wr))
+         return true;
++#else
++    if (mmio_emulate_ucontext(uc, off, g_apu_state, apu_mmio_rd, apu_mmio_wr))
++        return true;
++#endif
+     g_apu_mmio_decode_fail++;
+     /* stdio in a signal handler is not async-signal-safe. The process is
+      * about to die of this fault anyway, and the line is what says why;
+      * capped at 20, as on Windows. */
+-    if (g_apu_mmio_decode_fail <= 20)
++    if (g_apu_mmio_decode_fail <= 20) {
++#if defined(__aarch64__)
+         fprintf(stderr, "[APU] MMIO decode fail at PC=%p insn=%08X offset=0x%X\n",
+                 (void *)(uintptr_t)A64_CTX_PC(uc),
+                 *(const uint32_t *)(uintptr_t)A64_CTX_PC(uc), off);
++#else
++        const uint8_t *ip = mmio_ucontext_ip(uc);
++        fprintf(stderr, "[APU] MMIO decode fail at RIP=%p offset=0x%X: %02X %02X %02X %02X %02X %02X\n",
++                (const void *)ip, off, ip[0], ip[1], ip[2], ip[3], ip[4], ip[5]);
++#endif
++    }
+     return false;
+ }
+ #endif
+diff --git a/src/kernel/xbox_memory_layout.c b/src/kernel/xbox_memory_layout.c
+index 546ac31..cb7c571 100644
+--- a/src/kernel/xbox_memory_layout.c
++++ b/src/kernel/xbox_memory_layout.c
+@@ -656,8 +656,19 @@ static LONG CALLBACK ac97_write_veh(PEXCEPTION_POINTERS ep)
+     return EXCEPTION_CONTINUE_SEARCH;
+ }
+ 
+-#if !defined(_WIN32) && defined(__aarch64__)
++/* POSIX hosts with a trapped-MMIO decoder: arm64 (mmio_decode_a64.h) and
++ * Linux x86-64 (mmio_decode.h's ucontext bridge). */
++#if !defined(_WIN32) && (defined(__aarch64__) \
++                         || (defined(__x86_64__) && defined(__linux__)))
++#define XBOX_POSIX_MMIO_TRAP 1
++#endif
++
++#if defined(XBOX_POSIX_MMIO_TRAP)
++#if defined(__aarch64__)
+ #include "../platform/mmio_decode_a64.h"
++#else
++#include "../platform/mmio_decode.h"
++#endif
+ #include <sys/mman.h>
+ static size_t g_ac97_hsize;    /* host page: 16 KB on arm64 Darwin */
+ 
+@@ -673,7 +684,7 @@ static void ac97_posix_wr(void *dev, uint32_t off, uint64_t v, int size)
+     memcpy((char *)dev + off, &v, size > 8 ? 8 : size);
+ }
+ 
+-/* POSIX arm64 half of the AC'97 write trap: the page is PROT_READ, so a
++/* POSIX half of the AC'97 write trap: the page is PROT_READ, so a
+  * write arrives as SIGBUS/SIGSEGV; the title's fault handler reaches this
+  * through xbox_PosixMmioFault before reporting. The store is emulated onto
+  * the page (open for the moment), the controller's reaction applied, and the
+@@ -705,8 +716,13 @@ int xbox_Ac97PosixFault(void *ucv, uintptr_t fault)
+         __atomic_store_n(&g_ac97_posix_lock, 0, __ATOMIC_RELEASE);
+         return 0;
+     }
++#if defined(__aarch64__)
+     ok = mmio_emulate_a64((ucontext_t *)ucv, (uint32_t)(fault - (uintptr_t)g_ac97_page),
+                           g_ac97_page, ac97_posix_rd, ac97_posix_wr);
++#else
++    ok = mmio_emulate_ucontext(ucv, (uint32_t)(fault - (uintptr_t)g_ac97_page),
++                               g_ac97_page, ac97_posix_rd, ac97_posix_wr);
++#endif
+     if (ok)
+         ac97_clear_reset_bits();
+     mprotect(g_ac97_page, g_ac97_hsize, PROT_READ);
+@@ -724,7 +740,7 @@ static void ac97_arm_write_trap(void)
+ 
+     if (!g_mcpx_memory || g_ac97_page)
+         return;
+-#if !defined(_WIN32) && !defined(__aarch64__)
++#if !defined(_WIN32) && !defined(XBOX_POSIX_MMIO_TRAP)
+     /* No POSIX decoder for this host's stores: a trapped write would be a
+      * fault nothing services. Leave the page writable. */
+     (void)old;
+@@ -733,7 +749,7 @@ static void ac97_arm_write_trap(void)
+     return;
+ #endif
+     g_ac97_page = (char *)g_mcpx_memory + AC97_NABM_OFFSET;
+-#if !defined(_WIN32) && defined(__aarch64__)
++#if defined(XBOX_POSIX_MMIO_TRAP)
+     (void)old;
+     g_ac97_hsize = (size_t)sysconf(_SC_PAGESIZE);
+     if (g_ac97_hsize < AC97_TRAP_BYTES)
+@@ -831,7 +847,7 @@ int xbox_VehMmioFault(void *exception_pointers)
+     return 0;
+ }
+ #else
+-#if defined(__aarch64__)
++#if defined(XBOX_POSIX_MMIO_TRAP)
+ extern bool apu_hook_handle_mmio_posix(void *ucv, uintptr_t fault_addr,
+                                        uint32_t fault_xbox_va, int is_write);
+ #endif
+@@ -839,11 +855,11 @@ extern bool apu_hook_handle_mmio_posix(void *ucv, uintptr_t fault_addr,
+ /* POSIX: call from the title's SIGBUS/SIGSEGV handler (SA_SIGINFO) with its
+  * ucontext_t * and si_addr; on 1, return from the handler and the thread
+  * resumes after the emulated instruction. APU, then AC'97, then OHCI. Only
+- * arm64 hosts have a decoder; elsewhere nothing is trapped and this returns
+- * 0. */
++ * arm64 and Linux x86-64 hosts have a decoder; elsewhere nothing is trapped
++ * and this returns 0. */
+ int xbox_PosixMmioFault(void *ucv, uintptr_t fault)
+ {
+-#if defined(__aarch64__)
++#if defined(XBOX_POSIX_MMIO_TRAP)
+     uint32_t va;
+ 
+     if (!mmio_fault_va(fault, &va))
+diff --git a/src/platform/mmio_decode.h b/src/platform/mmio_decode.h
+index 1916156..b0ab597 100644
+--- a/src/platform/mmio_decode.h
++++ b/src/platform/mmio_decode.h
+@@ -28,16 +28,38 @@
+ #ifndef MMIO_DECODE_H
+ #define MMIO_DECODE_H
+ 
++#include <stddef.h>
+ #include <stdint.h>
+ 
+ #if defined(_WIN32)
+ #include <windows.h>
++#define MMIO_DECODE_X64 1
+ 
++/* The thread state the decoder edits: the VEH's CONTEXT. */
++typedef CONTEXT mmio_ctx_t;
++#elif defined(__x86_64__) && defined(__linux__)
++#include <ucontext.h>
++#define MMIO_DECODE_X64 1
++#define MMIO_DECODE_X64_POSIX 1
++
++/* A SIGSEGV handler's ucontext keeps the registers in gregs[], in the
++ * kernel's sigcontext order, not CONTEXT's. The decoder works on this
++ * CONTEXT-shaped copy (same field names, so one body serves both hosts);
++ * mmio_emulate_ucontext at the end copies it in and back. */
++typedef struct mmio_ctx_t {
++    uint64_t Rax, Rcx, Rdx, Rbx, Rsp, Rbp, Rsi, Rdi;
++    uint64_t R8, R9, R10, R11, R12, R13, R14, R15;
++    uint64_t Rip;
++    uint32_t EFlags;
++} mmio_ctx_t;
++#endif
++
++#if defined(MMIO_DECODE_X64)
+ /* Service one register access. dev is passed straight back to the callbacks. */
+ typedef uint64_t (*mmio_read_fn)(void *dev, uint32_t off, int size);
+ typedef void     (*mmio_write_fn)(void *dev, uint32_t off, uint64_t val, int size);
+ 
+-static inline uint64_t *mmio_ctx_reg(PCONTEXT c, int reg)
++static inline uint64_t *mmio_ctx_reg(mmio_ctx_t *c, int reg)
+ {
+     switch (reg & 0xF) {
+     case 0:  return (uint64_t *)&c->Rax;   case 1:  return (uint64_t *)&c->Rcx;
+@@ -80,7 +102,7 @@ static inline uint64_t mmio_size_mask(int size)
+ /* a OP b at the given width, with the flags a following jcc reads: ZF, SF, CF
+  * and OF. PF and AF are left alone; nothing branches on them after a register
+  * read. The logical operations clear CF and OF, as the hardware does. */
+-static inline uint64_t mmio_alu(PCONTEXT ctx, int op, uint64_t a, uint64_t b,
++static inline uint64_t mmio_alu(mmio_ctx_t *ctx, int op, uint64_t a, uint64_t b,
+                                 int size)
+ {
+     uint64_t m = mmio_size_mask(size), sign = 1ULL << (size * 8 - 1), r;
+@@ -112,7 +134,7 @@ static inline uint64_t mmio_alu(PCONTEXT ctx, int op, uint64_t a, uint64_t b,
+ 
+ /* A general register at an operand width. Without a REX prefix, byte
+  * registers 4-7 are AH, CH, DH and BH -- bits 15:8 of registers 0-3. */
+-static inline uint64_t mmio_get_reg(PCONTEXT c, int reg, int size, int has_rex)
++static inline uint64_t mmio_get_reg(mmio_ctx_t *c, int reg, int size, int has_rex)
+ {
+     if (size == 1 && !has_rex && reg >= 4 && reg < 8)
+         return (*mmio_ctx_reg(c, reg - 4) >> 8) & 0xFF;
+@@ -121,7 +143,7 @@ static inline uint64_t mmio_get_reg(PCONTEXT c, int reg, int size, int has_rex)
+ 
+ /* Write with x86-64 width rules: a 32-bit write zeroes bits 63:32, an 8- or
+  * 16-bit write merges into what was there. */
+-static inline void mmio_set_reg(PCONTEXT c, int reg, uint64_t v, int size,
++static inline void mmio_set_reg(mmio_ctx_t *c, int reg, uint64_t v, int size,
+                                 int has_rex)
+ {
+     uint64_t *d;
+@@ -159,7 +181,7 @@ static inline uint64_t mmio_imm(const uint8_t *p, int size, int *len)
+  * once; a memory-destination form reads, then writes (CMP and TEST only
+  * read). ADC/SBB, the rest of F6/F7 (NOT/NEG/MUL/DIV), string moves and
+  * anything else return 0. */
+-static inline int mmio_emulate(PCONTEXT ctx, uint32_t off, void *dev,
++static inline int mmio_emulate(mmio_ctx_t *ctx, uint32_t off, void *dev,
+                                mmio_read_fn rd, mmio_write_fn wr)
+ {
+     const uint8_t *ip = (const uint8_t *)ctx->Rip;
+@@ -290,5 +312,70 @@ static inline int mmio_emulate(PCONTEXT ctx, uint32_t off, void *dev,
+     }
+ }
+ 
+-#endif /* _WIN32 */
++#if defined(MMIO_DECODE_X64_POSIX)
++/* The gregs[] slots, as <sys/ucontext.h> names them under _GNU_SOURCE (REG_RAX
++ * and friends; the indices are the kernel ABI). Spelled out here so a file
++ * that includes <ucontext.h> without _GNU_SOURCE still builds. */
++enum { MMIO_GREG_R8 = 0, MMIO_GREG_R9, MMIO_GREG_R10, MMIO_GREG_R11,
++       MMIO_GREG_R12, MMIO_GREG_R13, MMIO_GREG_R14, MMIO_GREG_R15,
++       MMIO_GREG_RDI, MMIO_GREG_RSI, MMIO_GREG_RBP, MMIO_GREG_RBX,
++       MMIO_GREG_RDX, MMIO_GREG_RAX, MMIO_GREG_RCX, MMIO_GREG_RSP,
++       MMIO_GREG_RIP, MMIO_GREG_EFL };
++#if defined(REG_RAX)
++_Static_assert((int)REG_RAX == (int)MMIO_GREG_RAX
++               && (int)REG_RIP == (int)MMIO_GREG_RIP
++               && (int)REG_EFL == (int)MMIO_GREG_EFL
++               && (int)REG_R8 == (int)MMIO_GREG_R8, "gregs[] layout");
++#endif
++
++/* mmio_emulate from a SIGSEGV/SIGBUS handler (SA_SIGINFO): ucv is its
++ * ucontext_t *. The registers go through a CONTEXT-shaped copy; on success
++ * the copy is written back, and returning from the handler resumes the thread
++ * past the instruction with the device's value in place. */
++static inline int mmio_emulate_ucontext(void *ucv, uint32_t off, void *dev,
++                                        mmio_read_fn rd, mmio_write_fn wr)
++{
++    greg_t *g = ((ucontext_t *)ucv)->uc_mcontext.gregs;
++    mmio_ctx_t c;
++    int ok;
++
++    c.Rax = (uint64_t)g[MMIO_GREG_RAX]; c.Rcx = (uint64_t)g[MMIO_GREG_RCX];
++    c.Rdx = (uint64_t)g[MMIO_GREG_RDX]; c.Rbx = (uint64_t)g[MMIO_GREG_RBX];
++    c.Rsp = (uint64_t)g[MMIO_GREG_RSP]; c.Rbp = (uint64_t)g[MMIO_GREG_RBP];
++    c.Rsi = (uint64_t)g[MMIO_GREG_RSI]; c.Rdi = (uint64_t)g[MMIO_GREG_RDI];
++    c.R8  = (uint64_t)g[MMIO_GREG_R8];  c.R9  = (uint64_t)g[MMIO_GREG_R9];
++    c.R10 = (uint64_t)g[MMIO_GREG_R10]; c.R11 = (uint64_t)g[MMIO_GREG_R11];
++    c.R12 = (uint64_t)g[MMIO_GREG_R12]; c.R13 = (uint64_t)g[MMIO_GREG_R13];
++    c.R14 = (uint64_t)g[MMIO_GREG_R14]; c.R15 = (uint64_t)g[MMIO_GREG_R15];
++    c.Rip = (uint64_t)g[MMIO_GREG_RIP];
++    c.EFlags = (uint32_t)g[MMIO_GREG_EFL];
++
++    ok = mmio_emulate(&c, off, dev, rd, wr);
++    if (!ok)
++        return 0;
++
++    g[MMIO_GREG_RAX] = (greg_t)c.Rax; g[MMIO_GREG_RCX] = (greg_t)c.Rcx;
++    g[MMIO_GREG_RDX] = (greg_t)c.Rdx; g[MMIO_GREG_RBX] = (greg_t)c.Rbx;
++    g[MMIO_GREG_RSP] = (greg_t)c.Rsp; g[MMIO_GREG_RBP] = (greg_t)c.Rbp;
++    g[MMIO_GREG_RSI] = (greg_t)c.Rsi; g[MMIO_GREG_RDI] = (greg_t)c.Rdi;
++    g[MMIO_GREG_R8]  = (greg_t)c.R8;  g[MMIO_GREG_R9]  = (greg_t)c.R9;
++    g[MMIO_GREG_R10] = (greg_t)c.R10; g[MMIO_GREG_R11] = (greg_t)c.R11;
++    g[MMIO_GREG_R12] = (greg_t)c.R12; g[MMIO_GREG_R13] = (greg_t)c.R13;
++    g[MMIO_GREG_R14] = (greg_t)c.R14; g[MMIO_GREG_R15] = (greg_t)c.R15;
++    g[MMIO_GREG_RIP] = (greg_t)c.Rip;
++    /* Only the arithmetic flags the decoder sets; TF, IF, DF etc. stay. */
++    g[MMIO_GREG_EFL] = (greg_t)(((uint64_t)g[MMIO_GREG_EFL] & ~0x08C1ull)
++                                | (c.EFlags & 0x08C1u));
++    return 1;
++}
++
++/* The instruction pointer of a handler's ucontext, for a decode-fail line. */
++static inline const uint8_t *mmio_ucontext_ip(void *ucv)
++{
++    return (const uint8_t *)(uintptr_t)
++        ((ucontext_t *)ucv)->uc_mcontext.gregs[MMIO_GREG_RIP];
++}
++#endif /* MMIO_DECODE_X64_POSIX */
++
++#endif /* MMIO_DECODE_X64 */
+ #endif /* MMIO_DECODE_H */
+diff --git a/src/usb/ohci.c b/src/usb/ohci.c
+index 091f5fa..e7587d7 100644
+--- a/src/usb/ohci.c
++++ b/src/usb/ohci.c
+@@ -21,12 +21,15 @@
+ 
+ /* Where the registers can be trapped. They are answered by faulting on the
+  * aperture and decoding the instruction that touched it: the x86-64 decoder
+- * under a Win32 VEH, or the A64 decoder under a POSIX SIGBUS/SIGSEGV
+- * handler. A host with neither leaves the model off (see xbox_OhciInit). */
++ * under a Win32 VEH or a Linux SIGSEGV handler, or the A64 decoder under a
++ * POSIX SIGBUS/SIGSEGV handler. A host with neither leaves the model off (see
++ * xbox_OhciInit). */
+ #if defined(_WIN32)
+ #  define OHCI_TRAP_WIN32 1
+ #elif defined(__aarch64__)
+ #  define OHCI_TRAP_POSIX_A64 1
++#elif defined(MMIO_DECODE_X64_POSIX)
++#  define OHCI_TRAP_POSIX_X64 1
+ #endif
+ 
+ /* The runtime maps guest memory at a fixed host offset. */
+@@ -1288,7 +1291,8 @@ void xbox_OhciInit(void)
+         if ((unsigned)s_npads > s_ndp)
+             s_ndp = (unsigned)s_npads;      /* a port for every pad */
+     }
+-#if !defined(OHCI_TRAP_WIN32) && !defined(OHCI_TRAP_POSIX_A64)
++#if !defined(OHCI_TRAP_WIN32) && !defined(OHCI_TRAP_POSIX_A64) \
++    && !defined(OHCI_TRAP_POSIX_X64)
+     /* No decoder for this host's instructions, so a trapped access could not
+      * be answered. Leave the aperture as plain memory -- the title then sees
+      * no controller, exactly as with RECOMP_USB unset -- and say so. */
+@@ -1364,7 +1368,8 @@ int xbox_OhciOwnsAddress(uint32_t xbox_va)
+     return hc_for(xbox_va) != NULL;
+ }
+ 
+-#if defined(OHCI_TRAP_POSIX_A64) || defined(OHCI_TRAP_WIN32)
++#if defined(OHCI_TRAP_POSIX_A64) || defined(OHCI_TRAP_WIN32) \
++    || defined(OHCI_TRAP_POSIX_X64)
+ /* Both decoders hand over 8-byte accesses whole (ldr/str x or a d register
+  * on A64, a REX.W mov on x86-64); the registers are 32-bit, so an 8-byte
+  * access is two of them. */
+@@ -1405,6 +1410,24 @@ int xbox_OhciHandleMmio(void *ctx, uint32_t xbox_va)
+         fflush(stderr);
+     }
+     return ok;
++#elif defined(OHCI_TRAP_POSIX_X64)
++    OhciController *hc = hc_for(xbox_va);
++    int ok;
++
++    if (!hc)
++        return 0;
++    ok = mmio_emulate_ucontext(ctx, xbox_va - hc->base, hc,
++                               ohci_read_split, ohci_write_split);
++    /* stdio in a signal handler, deliberately: see apu_mmio_hook.c. */
++    if (!ok && hc->decode_fail++ < 20) {
++        const uint8_t *ip = mmio_ucontext_ip(ctx);
++        fprintf(stderr, "  [OHCI%d] undecoded access at +0x%03X: "
++                        "%02X %02X %02X %02X %02X %02X\n",
++                hc->index, xbox_va - hc->base,
++                ip[0], ip[1], ip[2], ip[3], ip[4], ip[5]);
++        fflush(stderr);
++    }
++    return ok;
+ #elif defined(OHCI_TRAP_WIN32)
+     OhciController *hc = hc_for(xbox_va);
+     int ok;
+diff --git a/tests/mmio_decode/CMakeLists.txt b/tests/mmio_decode/CMakeLists.txt
+index e91eda7..83d21ea 100644
+--- a/tests/mmio_decode/CMakeLists.txt
++++ b/tests/mmio_decode/CMakeLists.txt
+@@ -6,3 +6,4 @@ add_executable(mmio_decode_test test_main.c)
+ target_include_directories(mmio_decode_test PRIVATE ../../src/platform)
+ enable_testing()
+ add_test(NAME mmio_decode COMMAND mmio_decode_test)
++set_tests_properties(mmio_decode PROPERTIES SKIP_RETURN_CODE 77)
+diff --git a/tests/mmio_decode/test_main.c b/tests/mmio_decode/test_main.c
+index a379d32..5e562e5 100644
+--- a/tests/mmio_decode/test_main.c
++++ b/tests/mmio_decode/test_main.c
+@@ -3,8 +3,9 @@
+  * XDK's device code emits, and refuse what it does not understand.
+  *
+  * This is testable without a device or a fault because the decoder only ever
+- * reads instruction bytes at ctx->Rip and edits a CONTEXT. Point Rip at a
+- * buffer of hand-encoded instructions and the whole thing is a pure function.
++ * reads instruction bytes at ctx->Rip and edits a CONTEXT (on Linux x86-64,
++ * the CONTEXT-shaped mmio_ctx_t). Point Rip at a buffer of hand-encoded
++ * instructions and the whole thing is a pure function.
+  *
+  * The cases that matter are the ones where being wrong is silent: an
+  * instruction length that leaves Rip mid-instruction, a 32-bit read that does
+@@ -15,10 +16,16 @@
+ #include <stdio.h>
+ #include <string.h>
+ #include <stdint.h>
++#if defined(_WIN32)
+ #include <windows.h>
++#endif
+ 
+ #include "mmio_decode.h"
+ 
++#if !defined(MMIO_DECODE_X64)
++int main(void) { printf("mmio_decode: not an x86-64 Win32/Linux host, skipped\n"); return 77; }
++#else
++
+ static int failures;
+ #define CHECK(name, cond) \
+     do { if (cond) {} else { printf("FAIL: %s\n", name); failures++; } } while (0)
+@@ -47,15 +54,15 @@ static void t_write(void *d, uint32_t off, uint64_t v, int size)
+ 
+ /* Run one instruction. Returns what mmio_emulate returned; `code` is the
+  * encoding, and Rip is expected to land exactly past it. */
+-static int run(const uint8_t *code, size_t len, CONTEXT *ctx)
++static int run(const uint8_t *code, size_t len, mmio_ctx_t *ctx)
+ {
+     int r;
+     memset(&dev, 0, sizeof dev);
+     dev.next_read = 0;
+-    ctx->Rip = (DWORD64)(uintptr_t)code;
++    ctx->Rip = (uint64_t)(uintptr_t)code;
+     r = mmio_emulate(ctx, 0x54, NULL, t_read, t_write);
+     if (r) {
+-        uint64_t advanced = ctx->Rip - (DWORD64)(uintptr_t)code;
++        uint64_t advanced = ctx->Rip - (uint64_t)(uintptr_t)code;
+         if (advanced != len) {
+             printf("FAIL: Rip advanced %llu, instruction is %llu bytes\n",
+                    (unsigned long long)advanced, (unsigned long long)len);
+@@ -66,17 +73,17 @@ static int run(const uint8_t *code, size_t len, CONTEXT *ctx)
+ }
+ 
+ /* run() with the device answering `next_read` to the read. */
+-static int run_rd(const uint8_t *code, size_t len, CONTEXT *ctx,
++static int run_rd(const uint8_t *code, size_t len, mmio_ctx_t *ctx,
+                   uint64_t next_read)
+ {
+     int r;
+     memset(&dev, 0, sizeof dev);
+     dev.next_read = next_read;
+-    ctx->Rip = (DWORD64)(uintptr_t)code;
++    ctx->Rip = (uint64_t)(uintptr_t)code;
+     r = mmio_emulate(ctx, 0x54, NULL, t_read, t_write);
+-    if (r && ctx->Rip - (DWORD64)(uintptr_t)code != len) {
++    if (r && ctx->Rip - (uint64_t)(uintptr_t)code != len) {
+         printf("FAIL: Rip advanced %llu, instruction is %llu bytes\n",
+-               (unsigned long long)(ctx->Rip - (DWORD64)(uintptr_t)code),
++               (unsigned long long)(ctx->Rip - (uint64_t)(uintptr_t)code),
+                (unsigned long long)len);
+         failures++;
+     }
+@@ -85,7 +92,7 @@ static int run_rd(const uint8_t *code, size_t len, CONTEXT *ctx,
+ 
+ int main(void)
+ {
+-    CONTEXT ctx;
++    mmio_ctx_t ctx;
+     printf("mmio_decode: running\n");
+     memset(&ctx, 0, sizeof ctx);
+ 
+@@ -108,7 +115,7 @@ int main(void)
+     { const uint8_t c[] = { 0x8B, 0x08 };
+       ctx.Rcx = 0xFFFFFFFFFFFFFFFFULL;
+       memset(&dev, 0, sizeof dev);
+-      ctx.Rip = (DWORD64)(uintptr_t)c;
++      ctx.Rip = (uint64_t)(uintptr_t)c;
+       dev.next_read = 0x12345678;
+       CHECK("mov r,r/m handled", mmio_emulate(&ctx, 0x54, NULL, t_read, t_write));
+       CHECK_U64("32-bit read clears high half", ctx.Rcx, 0x12345678ULL); }
+@@ -121,7 +128,7 @@ int main(void)
+     /* movzx eax, byte [rax] -- 0F B6 00 */
+     { const uint8_t c[] = { 0x0F, 0xB6, 0x00 };
+       memset(&dev, 0, sizeof dev);
+-      ctx.Rip = (DWORD64)(uintptr_t)c;
++      ctx.Rip = (uint64_t)(uintptr_t)c;
+       ctx.Rax = 0xFFFFFFFFFFFFFFFFULL;
+       dev.next_read = 0x00000091;
+       CHECK("movzx r32,r/m8 handled",
+@@ -132,14 +139,14 @@ int main(void)
+      * spins on jz/jnz off this. */
+     { const uint8_t c[] = { 0x85, 0x08 };
+       memset(&dev, 0, sizeof dev);
+-      ctx.Rip = (DWORD64)(uintptr_t)c;
++      ctx.Rip = (uint64_t)(uintptr_t)c;
+       ctx.Rcx = 0x00000001; ctx.EFlags = 0;
+       dev.next_read = 0x00000001;
+       mmio_emulate(&ctx, 0x54, NULL, t_read, t_write);
+       CHECK("test bit set -> ZF clear", (ctx.EFlags & 0x40) == 0);
+ 
+       memset(&dev, 0, sizeof dev);
+-      ctx.Rip = (DWORD64)(uintptr_t)c;
++      ctx.Rip = (uint64_t)(uintptr_t)c;
+       dev.next_read = 0x00000002;
+       mmio_emulate(&ctx, 0x54, NULL, t_read, t_write);
+       CHECK("test bit clear -> ZF set", (ctx.EFlags & 0x40) != 0); }
+@@ -147,14 +154,14 @@ int main(void)
+     /* cmp [rax], ecx -- 39 08. Equal sets ZF; below sets CF. */
+     { const uint8_t c[] = { 0x39, 0x08 };
+       memset(&dev, 0, sizeof dev);
+-      ctx.Rip = (DWORD64)(uintptr_t)c;
++      ctx.Rip = (uint64_t)(uintptr_t)c;
+       ctx.Rcx = 0x10; dev.next_read = 0x10; ctx.EFlags = 0;
+       mmio_emulate(&ctx, 0x54, NULL, t_read, t_write);
+       CHECK("cmp equal -> ZF", (ctx.EFlags & 0x40) != 0);
+       CHECK("cmp equal -> no CF", (ctx.EFlags & 0x01) == 0);
+ 
+       memset(&dev, 0, sizeof dev);
+-      ctx.Rip = (DWORD64)(uintptr_t)c;
++      ctx.Rip = (uint64_t)(uintptr_t)c;
+       ctx.Rcx = 0x20; dev.next_read = 0x10;
+       mmio_emulate(&ctx, 0x54, NULL, t_read, t_write);
+       CHECK("cmp below -> CF", (ctx.EFlags & 0x01) != 0); }
+@@ -164,7 +171,7 @@ int main(void)
+      * already had. */
+     { const uint8_t c[] = { 0x09, 0x08 };
+       memset(&dev, 0, sizeof dev);
+-      ctx.Rip = (DWORD64)(uintptr_t)c;
++      ctx.Rip = (uint64_t)(uintptr_t)c;
+       ctx.Rcx = 0x0F; dev.next_read = 0xF0;
+       mmio_emulate(&ctx, 0x54, NULL, t_read, t_write);
+       CHECK_U64("or merges existing bits", dev.val, 0xFF);
+@@ -172,7 +179,7 @@ int main(void)
+ 
+     { const uint8_t c[] = { 0x21, 0x08 };
+       memset(&dev, 0, sizeof dev);
+-      ctx.Rip = (DWORD64)(uintptr_t)c;
++      ctx.Rip = (uint64_t)(uintptr_t)c;
+       ctx.Rcx = 0x0F; dev.next_read = 0xFF;
+       mmio_emulate(&ctx, 0x54, NULL, t_read, t_write);
+       CHECK_U64("and masks existing bits", dev.val, 0x0F); }
+@@ -337,21 +344,65 @@ int main(void)
+     { const uint8_t adc[] = { 0x83, 0x10, 0x01 };
+       const uint8_t sbb[] = { 0x19, 0x08 };
+       const uint8_t neg[] = { 0xF7, 0x18 };
+-      ctx.Rip = (DWORD64)(uintptr_t)adc;
++      ctx.Rip = (uint64_t)(uintptr_t)adc;
+       CHECK("adc refused", mmio_emulate(&ctx, 0x54, NULL, t_read, t_write) == 0);
+-      ctx.Rip = (DWORD64)(uintptr_t)sbb;
++      ctx.Rip = (uint64_t)(uintptr_t)sbb;
+       CHECK("sbb refused", mmio_emulate(&ctx, 0x54, NULL, t_read, t_write) == 0);
+-      ctx.Rip = (DWORD64)(uintptr_t)neg;
++      ctx.Rip = (uint64_t)(uintptr_t)neg;
+       CHECK("neg refused", mmio_emulate(&ctx, 0x54, NULL, t_read, t_write) == 0); }
+ 
+     /* And the one that must fail. An unknown opcode reported as handled steps
+      * over an instruction nobody decoded. */
+     { const uint8_t c[] = { 0xF7, 0x10 };                     /* not dword [rax] */
+       memset(&dev, 0, sizeof dev);
+-      ctx.Rip = (DWORD64)(uintptr_t)c;
++      ctx.Rip = (uint64_t)(uintptr_t)c;
+       CHECK("unknown opcode refused",
+             mmio_emulate(&ctx, 0x54, NULL, t_read, t_write) == 0);
+-      CHECK("refused leaves Rip alone", ctx.Rip == (DWORD64)(uintptr_t)c); }
++      CHECK("refused leaves Rip alone", ctx.Rip == (uint64_t)(uintptr_t)c); }
++
++#if defined(MMIO_DECODE_X64_POSIX)
++    /* The POSIX bridge: registers in and out of a signal handler's gregs[],
++     * which keep the kernel's order, not CONTEXT's. A slot mix-up there would
++     * put the device's value in the wrong register with every test above
++     * still passing. */
++    { const uint8_t ld[] = { 0x45, 0x8B, 0x4D, 0x10 };        /* mov r9d, [r13+0x10] */
++      const uint8_t cp[] = { 0x83, 0x3B, 0x05 };              /* cmp dword [rbx], 5 */
++      const uint8_t bad[] = { 0xF7, 0x10 };
++      ucontext_t uc;
++      greg_t *g = uc.uc_mcontext.gregs;
++      int i;
++
++      memset(&uc, 0, sizeof uc);
++      for (i = 0; i < NGREG; i++)
++          g[i] = (greg_t)(0x1111111100000000ull | (unsigned)i);
++      g[MMIO_GREG_RIP] = (greg_t)(uintptr_t)ld;
++      g[MMIO_GREG_EFL] = 0x302;                     /* IF | TF | bit 1 */
++      memset(&dev, 0, sizeof dev);
++      dev.next_read = 0xCAFEF00D;
++      CHECK("ucontext load serviced",
++            mmio_emulate_ucontext(&uc, 0x54, NULL, t_read, t_write) == 1);
++      CHECK_U64("ucontext load -> r9 slot", g[MMIO_GREG_R9], 0xCAFEF00D);
++      CHECK_U64("ucontext rip advanced", g[MMIO_GREG_RIP],
++                (uintptr_t)ld + sizeof ld);
++      CHECK_U64("ucontext rax untouched", g[MMIO_GREG_RAX],
++                0x1111111100000000ull | MMIO_GREG_RAX);
++      CHECK_U64("ucontext r8 untouched", g[MMIO_GREG_R8],
++                0x1111111100000000ull | MMIO_GREG_R8);
++
++      g[MMIO_GREG_RIP] = (greg_t)(uintptr_t)cp;
++      dev.next_read = 5;
++      CHECK("ucontext cmp serviced",
++            mmio_emulate_ucontext(&uc, 0x54, NULL, t_read, t_write) == 1);
++      CHECK("ucontext cmp equal -> ZF", (g[MMIO_GREG_EFL] & 0x40) != 0);
++      CHECK_U64("ucontext keeps TF/IF", g[MMIO_GREG_EFL] & 0x300, 0x300);
++
++      g[MMIO_GREG_RIP] = (greg_t)(uintptr_t)bad;
++      CHECK("ucontext unknown opcode refused",
++            mmio_emulate_ucontext(&uc, 0x54, NULL, t_read, t_write) == 0);
++      CHECK_U64("ucontext refused leaves rip", g[MMIO_GREG_RIP],
++                (uintptr_t)bad);
++      CHECK("ucontext ip accessor", mmio_ucontext_ip(&uc) == bad); }
++#endif
+ 
+     if (failures == 0) {
+         printf("mmio_decode: ALL PASS\n");
+@@ -360,3 +411,4 @@ int main(void)
+     printf("mmio_decode: %d FAILURE(S)\n", failures);
+     return 1;
+ }
++#endif /* MMIO_DECODE_X64 */
+diff --git a/tests/usb_ohci_posix/CMakeLists.txt b/tests/usb_ohci_posix/CMakeLists.txt
+index a383b11..e1833fc 100644
+--- a/tests/usb_ohci_posix/CMakeLists.txt
++++ b/tests/usb_ohci_posix/CMakeLists.txt
+@@ -1,8 +1,9 @@
+ cmake_minimum_required(VERSION 3.20)
+ project(usb_ohci_posix_test C)
+ # The OHCI register model behind a real POSIX fault: a PROT_NONE aperture, a
+-# SIGBUS/SIGSEGV handler and the A64 decoder. Needs a POSIX arm64 host;
+-# elsewhere the model stays off by design and the test exits 77 (skipped).
++# SIGBUS/SIGSEGV handler and the A64 decoder (arm64) or the x86-64 one through
++# its ucontext bridge (Linux x86-64). Elsewhere the model stays off by design
++# and the test exits 77 (skipped).
+ if(WIN32)
+     message(FATAL_ERROR "This regression covers the POSIX trap path")
+ endif()
+diff --git a/tests/usb_ohci_posix/test_main.c b/tests/usb_ohci_posix/test_main.c
+index e9adc61..db0ef37 100644
+--- a/tests/usb_ohci_posix/test_main.c
++++ b/tests/usb_ohci_posix/test_main.c
+@@ -8,8 +8,9 @@
+  * aperture stayed plain zeroed memory and xbox_OhciHandleMmio returned 0, so
+  * a title's USB driver found no controller and no pad.
+  *
+- * A host without a trapped-MMIO decoder (anything but arm64 here) keeps the
+- * model off by design; the test checks that it says so and exits 77.
++ * A host without a trapped-MMIO decoder (anything but arm64 and Linux x86-64
++ * here) keeps the model off by design; the test checks that it says so and
++ * exits 77.
+  */
+ #include "xbox_memory_layout.h"
+ #include "ohci.h"
+@@ -97,7 +98,7 @@ int main(int argc, char **argv)
+ 
+     xbox_OhciInit();
+ 
+-#if !defined(__aarch64__)
++#if !defined(__aarch64__) && !(defined(__x86_64__) && defined(__linux__))
+     check(!xbox_OhciOwnsAddress(XBOX_OHCI0_BASE),
+           "no decoder on this host: the model stays off", NULL);
+     printf("\n%d failure(s); trap path not available here (skipped)\n",
+-- 
+2.53.0.windows.2
+

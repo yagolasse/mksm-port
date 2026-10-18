@@ -165,8 +165,9 @@ cmake -S . -B ~/mksm-build/port -G Ninja -DCMAKE_BUILD_TYPE=Release
 ninja -C ~/mksm-build/port -j6          # ~5 min on the Deck, ~0.9 GB peak
 ```
 The system SDL2 replaces the fetched static one. `prof.c`, `setup.c` and `xiso.c` are Win32 only
-(`src/posix_stubs.c` stands in), and the GPU lib isn't built yet (H.5c2c). Pads and the APU need
-the x86-64 POSIX MMIO trap (H.5c2b), so run with `RECOMP_USB=0 RECOMP_AC97_READY=0` for now.
+(`src/posix_stubs.c` stands in), and the GPU lib isn't built yet (H.5c2c). Pads, AC'97 and the
+APU work through the toolkit's x86-64 POSIX MMIO trap (patch 0029, the SIGSEGV handler in
+`main.c` calls `xbox_PosixMmioFault`).
 The exe exports its symbols (`ENABLE_EXPORTS`, for `dladdr` in the crash report), and lifted CRT
 functions with libc names (`write`, `close`, ...) are renamed in `gen/` by the force-included
 `src/recomp_libc_names.h`: without it the toolkit's `close`/`write` calls ran guest code.

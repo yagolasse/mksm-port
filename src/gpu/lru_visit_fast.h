@@ -12,6 +12,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include "qemu/osdep.h"   /* first, as in xemu's files: the shim's typeof (clang-cl) */
 #include "qemu/lru.h"
 
 static inline void mksm_lru_visit_active(Lru *lru, LruNodeVisitorFunc visitor_func,

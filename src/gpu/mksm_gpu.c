@@ -41,6 +41,8 @@
 
 /* shader_patch.c */
 int mksm_shader_patch_install(unsigned surface_scale, unsigned (*nearest_mask)(void));
+/* depth_readback.c */
+int mksm_depth_readback_install(void);
 
 static NV2AState *s_dev;
 static MemoryRegion s_vram;
@@ -194,14 +196,16 @@ int mksm_gpu_init(const MksmGpuMemory *mem, int opengl)
     int snap2d = opengl &&
         mksm_shader_patch_install((unsigned)g_config.display.quality.surface_scale,
                                   nearest_stages);
+    int depth_half = opengl && mksm_depth_readback_install();
     /* One channel, always current: pgraph_method asserts the channel is valid. */
     pgraph_reg_w(&d->pgraph, NV_PGRAPH_CTX_CONTROL, NV_PGRAPH_CTX_CONTROL_CHID);
 
     s_dev = d;
     fprintf(stderr, "[XGPU] PGRAPH set up: vram %zu MiB, ramin %zu KiB, %s renderer, "
-            "vblank %.2f Hz, surface scale %ux%s\n", mem->vram_size >> 20, mem->ramin_size >> 10,
+            "vblank %.2f Hz, surface scale %ux%s%s\n", mem->vram_size >> 20, mem->ramin_size >> 10,
             opengl ? "OpenGL" : "null", s_vblank_hz,
-            (unsigned)g_config.display.quality.surface_scale, snap2d ? ", 2D snap" : "");
+            (unsigned)g_config.display.quality.surface_scale, snap2d ? ", 2D snap" : "",
+            depth_half ? ", depth readback via float" : "");
     return 0;
 }
 

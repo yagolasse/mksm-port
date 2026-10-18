@@ -1137,11 +1137,12 @@ static void player_log_open(void) {}
 
 /* ── WinMain ───────────────────────────────────────────────── */
 
+static void *xbe_data;
+static size_t xbe_size;
+static int mksm_boot(void);
+
 static int mksm_main(void)
 {
-    void *xbe_data = NULL;
-    size_t xbe_size = 0;
-
     /* Double-clicked: the output goes to <base>\last_run.log (B10a). Before setvbuf:
      * freopen resets a stream's buffering. */
     player_log_open();
@@ -1215,6 +1216,25 @@ static int mksm_main(void)
     wbc_ack_start(gpu_init_from_env());
     vblank_start();
 
+#ifdef _WIN32
+    return mksm_boot();
+#else
+    /* POSIX (plan H.5c2c): the toolkit's SDL window (RECOMP_FB_WINDOW) lives on the main
+     * thread, which then pumps its events; the rest of the boot and the game run on a guest
+     * thread of their own (headless, mksm_boot runs here). The memory layout and the GPU init
+     * come first, as on Windows: the GPU init picks the window's present mode, which must be
+     * set before the window opens, and the Xbox ranges must be mapped before SDL, the GL
+     * driver and the audio server take address space (else the contiguous window at base +
+     * 2 GB can be taken). */
+    extern int xbox_HostWindowMain(int (*guest_main)(void));
+    return xbox_HostWindowMain(mksm_boot);
+#endif
+}
+
+/* From the replay / APU / kernel bring-up to the game's entry point: on the thread that runs
+ * the guest. */
+static int mksm_boot(void)
+{
     /* Replay a captured frame instead of booting the game (RECOMP_PB_REPLAY).
      *
      * The normal memory setup has already run (sections mapped, 64 MiB RAM +

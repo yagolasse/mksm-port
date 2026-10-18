@@ -1,15 +1,9 @@
-/* Stand-in for QEMU's qemu/thread.h on Win32 primitives.
+/* Stand-in for QEMU's qemu/thread.h on Win32 primitives (on POSIX: the toolkit's
+ * win32_compat, see host_win32.h).
  * SPDX-License-Identifier: LGPL-2.1-or-later */
 #pragma once
 #include "qemu/osdep.h"
-
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
+#include "host_win32.h"
 
 typedef struct QemuMutex { CRITICAL_SECTION cs; } QemuMutex;
 typedef struct QemuCond { CONDITION_VARIABLE cv; } QemuCond;
@@ -46,11 +40,17 @@ static inline void qemu_event_wait(QemuEvent *e) { WaitForSingleObject(e->h, INF
 typedef struct QemuThreadStart {
     void *(*fn)(void *);
     void *arg;
+    const char *name;   /* POSIX: the thread names itself */
 } QemuThreadStart;
 static DWORD WINAPI qemu_thread_trampoline(LPVOID p)
 {
     QemuThreadStart start = *(QemuThreadStart *)p;
     free(p);
+#ifndef _WIN32
+    if (start.name) {
+        mksm_name_this_thread(start.name);
+    }
+#endif
     start.fn(start.arg);
     return 0;
 }
@@ -60,12 +60,15 @@ static inline void qemu_thread_create(QemuThread *t, const char *name, void *(*f
     QemuThreadStart *start = (QemuThreadStart *)malloc(sizeof(*start));
     start->fn = fn;
     start->arg = arg;
+    start->name = name;
     t->h = CreateThread(NULL, 0, qemu_thread_trampoline, start, 0, NULL);
     assert(t->h);
+#ifdef _WIN32
     wchar_t wname[64];
     if (name && MultiByteToWideChar(CP_UTF8, 0, name, -1, wname, 64)) {
         SetThreadDescription(t->h, wname);   /* for profilers and debuggers */
     }
+#endif
     if (mode == QEMU_THREAD_DETACHED) {
         CloseHandle(t->h);
         t->h = NULL;

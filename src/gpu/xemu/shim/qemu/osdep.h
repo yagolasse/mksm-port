@@ -1,6 +1,7 @@
 /*
  * Minimal stand-in for QEMU's qemu/osdep.h (+ the glib bits it pulls in), enough to build
- * xemu's PGRAPH files unmodified outside QEMU. Built with clang-cl only (GNU extensions).
+ * xemu's PGRAPH files unmodified outside QEMU. Built with clang-cl on Windows, gcc/clang on POSIX
+ * (GNU extensions).
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
@@ -80,10 +81,9 @@ static inline void stq_le_p(void *p, uint64_t v) { memcpy(p, &v, 8); }
 #include "glib.h"
 
 /* qemu/osdep.h file helpers (the GL shader cache) */
-#include <direct.h>
-#include <io.h>
+#include "host_win32.h"
 #define qemu_fopen(path, mode) fopen((path), (mode))
-#define qemu_mkdir(path) _mkdir(path)
+#define qemu_mkdir(path) mksm_mkdir(path)
 #define qemu_unlink(path) _unlink(path)
 
 /* The big QEMU lock: there is no QEMU here, PGRAPH runs on the pushbuffer thread. */

@@ -41,8 +41,10 @@ set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/xboxrecomp" CACHE PATH
 # zlib licence, see NOTICE). OFF = the GDI window, for A/B runs.
 option(MKSM_SDL_WINDOW "Game window through SDL2 (static) instead of GDI" ON)
 if(NOT WIN32)
-    # POSIX (plan H.5c2): the toolkit always uses SDL2 and finds the system's (find_package).
+    # POSIX (plan H.5c2): the toolkit always uses SDL2 and finds the system's (find_package);
+    # found here too so SDL2::SDL2 is visible to src/gpu and the menu (plan H.5c2c).
     set(MKSM_SDL_WINDOW ON)
+    find_package(SDL2 REQUIRED)
 elseif(MKSM_SDL_WINDOW)
     include(FetchContent)
     FetchContent_Declare(SDL2
@@ -228,6 +230,15 @@ if(WIN32 AND MKSM_CLANG_CL AND EXISTS "${MKSM_CLANG_CL}" AND MKSM_NINJA)
     if(NOT MKSM_SDL_WINDOW)
         target_compile_definitions(${PROJECT_NAME} PRIVATE MKSM_GL_WGL=1)
     endif()
+elseif(NOT WIN32)
+    # POSIX (plan H.5c2c): the game's own gcc/clang builds src/gpu as part of this build, with
+    # SDL2 GL contexts (gloffscreen_sdl.c); GL itself is loaded at run time through SDL.
+    add_subdirectory(src/gpu ${CMAKE_BINARY_DIR}/mksm_gpu)
+    add_executable(gpu_link src/gpu/gpu_link.c)
+    target_include_directories(gpu_link PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/gpu)
+    target_link_libraries(gpu_link PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,mksm_gpu>")
+    target_link_libraries(${PROJECT_NAME} PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,mksm_gpu>")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE MKSM_HAVE_GPU=1)
 else()
     message(STATUS "mksm_gpu skipped: set MKSM_CLANG_CL to clang-cl.exe and put ninja on PATH")
 endif()
@@ -254,9 +265,17 @@ if(MKSM_SDL_WINDOW AND TARGET mksm_gpu)
         ${XBOXRECOMP_DIR}/src)
     target_link_libraries(mksm_menu PRIVATE SDL2::SDL2)
     target_compile_definitions(mksm_menu PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
-    target_compile_options(mksm_menu PRIVATE /Z7)
-    target_link_libraries(${PROJECT_NAME} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:mksm_menu>")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:MKSM_HAVE_MENU=1>")
+    if(MSVC)
+        target_compile_options(mksm_menu PRIVATE /Z7)
+        target_link_libraries(${PROJECT_NAME} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:mksm_menu>")
+        target_compile_definitions(${PROJECT_NAME} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:MKSM_HAVE_MENU=1>")
+    else()
+        # imgui_impl_opengl3 loads GL itself (its imgl3w dlopens libGL); mksm_gpu is in every
+        # config on POSIX.
+        target_link_libraries(mksm_menu PRIVATE ${CMAKE_DL_LIBS})
+        target_link_libraries(${PROJECT_NAME} PRIVATE mksm_menu)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE MKSM_HAVE_MENU=1)
+    endif()
 endif()
 
 # ── Tests ───────────────────────────────────────────────────────

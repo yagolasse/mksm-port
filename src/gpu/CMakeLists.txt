@@ -11,11 +11,16 @@ cmake_minimum_required(VERSION 3.24)
 # the plain-C header mksm_gpu.h. Built directly:
 #   cmake -S src/gpu -B build-gpu -G Ninja -DCMAKE_BUILD_TYPE=Release
 #         -DCMAKE_C_COMPILER=<clang-cl.exe>
+#
+# On POSIX (plan H.5c2c) the game's own compiler (gcc or clang) takes the GNU C as it is, so
+# the top-level CMakeLists.txt adds this directory with add_subdirectory instead (so it is not
+# built on its own there): contexts through SDL2 (SDL2::SDL2), and the Win32 primitives of the
+# glue from the toolkit's win32_compat (host_win32.h, its `platform` target).
 # ============================================================================
 
 project(mksm_gpu C)
 
-if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" OR NOT CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
+if(WIN32 AND (NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" OR NOT CMAKE_C_SIMULATE_ID STREQUAL "MSVC"))
     message(FATAL_ERROR "mksm_gpu needs clang-cl (got ${CMAKE_C_COMPILER_ID} "
         "simulating '${CMAKE_C_SIMULATE_ID}': ${CMAKE_C_COMPILER})")
 endif()
@@ -32,7 +37,7 @@ set(GLAD ${CMAKE_CURRENT_SOURCE_DIR}/glad)
 # GL contexts (gloffscreen): SDL2 when the top-level build passes SDL's include dirs (the SDL
 # window, plan B9a2; SDL itself is linked by the game), else WGL on hidden windows.
 set(MKSM_GL_SDL_INCLUDE "" CACHE STRING "SDL2 include dirs (SDL.h, SDL_config.h); empty = WGL")
-if(MKSM_GL_SDL_INCLUDE)
+if(MKSM_GL_SDL_INCLUDE OR NOT WIN32)
     set(MKSM_GLO_SOURCES gloffscreen_sdl.c)
 else()
     set(MKSM_GLO_SOURCES gloffscreen_wgl.c ${GLAD}/src/wgl.c)
@@ -94,7 +99,7 @@ add_library(mksm_gpu STATIC
     $<TARGET_OBJECTS:glad>
     $<TARGET_OBJECTS:xxhash>
 )
-target_include_directories(mksm_gpu PUBLIC
+target_include_directories(mksm_gpu PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/xemu/shim
     ${CMAKE_CURRENT_SOURCE_DIR}/xemu/include
@@ -107,21 +112,35 @@ target_include_directories(mksm_gpu PUBLIC
 if(MKSM_GL_SDL_INCLUDE)
     target_include_directories(mksm_gpu PRIVATE ${MKSM_GL_SDL_INCLUDE})
 endif()
+if(NOT WIN32)
+    target_link_libraries(mksm_gpu PUBLIC platform SDL2::SDL2)
+    target_compile_definitions(mksm_gpu PRIVATE _GNU_SOURCE)   # pthread_setname_np
+endif()
 # xemu builds the GL renderer with CONFIG_OPENGL (pgraph.c's default-renderer choice).
 target_compile_definitions(mksm_gpu PRIVATE CONFIG_OPENGL=1)
-target_compile_definitions(mksm_gpu PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
-# The vendored code is written for GCC/clang on QEMU's warning set; don't drown the build in
-# warnings we are not going to fix in files we keep unmodified.
-target_compile_options(mksm_gpu PRIVATE
-    -Wno-microsoft -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter
-    -Wno-sign-compare -Wno-missing-field-initializers -Wno-gnu-zero-variadic-macro-arguments
-)
-# Asserts stay on, as in xemu (QEMU refuses to build with NDEBUG): they are its consistency
-# checks, and a failed one prints "Assertion failed" (mksm_gpu_init routes it to stderr).
-target_compile_options(mksm_gpu PRIVATE /UNDEBUG)
-# CodeView in each object (no PDB server): the game's link (/DEBUG:FULL) puts these into its PDB,
-# so crash reports and RECOMP_PROF name the renderer's functions.
-target_compile_options(mksm_gpu PRIVATE /Z7)
-target_compile_options(nv2a_vsh_cpu PRIVATE /Z7)
-target_compile_options(nv2a_vsh_cpu PRIVATE -Wno-microsoft)
-target_compile_definitions(nv2a_vsh_cpu PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_definitions(mksm_gpu PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+if(WIN32)
+    # The vendored code is written for GCC/clang on QEMU's warning set; don't drown the build in
+    # warnings we are not going to fix in files we keep unmodified.
+    target_compile_options(mksm_gpu PRIVATE
+        -Wno-microsoft -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter
+        -Wno-sign-compare -Wno-missing-field-initializers -Wno-gnu-zero-variadic-macro-arguments
+    )
+    # Asserts stay on, as in xemu (QEMU refuses to build with NDEBUG): they are its consistency
+    # checks, and a failed one prints "Assertion failed" (mksm_gpu_init routes it to stderr).
+    target_compile_options(mksm_gpu PRIVATE /UNDEBUG)
+    # CodeView in each object (no PDB server): the game's link (/DEBUG:FULL) puts these into its
+    # PDB, so crash reports and RECOMP_PROF name the renderer's functions.
+    target_compile_options(mksm_gpu PRIVATE /Z7)
+    target_compile_options(nv2a_vsh_cpu PRIVATE /Z7)
+    target_compile_options(nv2a_vsh_cpu PRIVATE -Wno-microsoft)
+    target_compile_definitions(nv2a_vsh_cpu PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    # gnu11 (statement expressions, case ranges, typeof); same warning policy as above.
+    set_target_properties(mksm_gpu nv2a_vsh_cpu glad xxhash PROPERTIES
+        C_EXTENSIONS ON POSITION_INDEPENDENT_CODE OFF)
+    target_compile_options(mksm_gpu PRIVATE
+        -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter -Wno-unused-but-set-variable
+        -Wno-sign-compare -Wno-missing-field-initializers -UNDEBUG
+    )
+endif()

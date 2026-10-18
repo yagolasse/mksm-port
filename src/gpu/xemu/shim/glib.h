@@ -18,7 +18,11 @@ typedef unsigned int guint;
 #define g_free(p) free(p)
 #define g_new(type, n) ((type *)malloc(sizeof(type) * (n)))
 #define g_new0(type, n) ((type *)calloc((n), sizeof(type)))
+#ifdef _WIN32
 #define g_strdup(s) _strdup(s)
+#else
+#define g_strdup(s) strdup(s)
+#endif
 static inline void g_autoptr_cleanup_free(void *pp) { free(*(void **)pp); }
 #define g_autofree __attribute__((cleanup(g_autoptr_cleanup_free)))
 static inline gchar *g_strdup_vprintf(const gchar *fmt, va_list ap)
@@ -83,7 +87,7 @@ static inline GString *g_string_new_take(gchar *init)
 }
 static inline GString *g_string_new(const gchar *init)
 {
-    return g_string_new_take(_strdup(init ? init : ""));
+    return g_string_new_take(g_strdup(init ? init : ""));
 }
 static inline GString *g_string_append_len(GString *s, const gchar *val, size_t len)
 {

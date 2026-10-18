@@ -146,8 +146,10 @@ static unsigned nearest_stages(void)
 int mksm_gpu_init(const MksmGpuMemory *mem, int opengl)
 {
     /* xemu runs with asserts on; report them on stderr, not in a message box that would
-     * block a headless run. */
+     * block a headless run (POSIX asserts always print there). */
+#ifdef _WIN32
     _set_error_mode(_OUT_TO_STDERR);
+#endif
 
     /* Real glGetError checks (epoxy/gl.h shim) only on request: they stall the driver. */
     const char *glcheck = getenv("RECOMP_PB_GPU_GLCHECK");
@@ -725,6 +727,9 @@ static DWORD WINAPI present_thread(LPVOID unused)
     glActiveTexture(GL_TEXTURE0);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     s_win.fns.gpu_present(1);
+#ifndef _WIN32
+    mksm_name_this_thread("gpu present");
+#endif
     InterlockedExchange(&s_win.up, 1);
     fprintf(stderr, "[XGPU] presenting into the game window from thread %lu (%s filter)\n",
             GetCurrentThreadId(), filter == GL_NEAREST ? "nearest" : "linear");

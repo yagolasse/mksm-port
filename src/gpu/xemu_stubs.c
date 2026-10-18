@@ -17,7 +17,7 @@
 #include "xxhash.h"
 #include <epoxy/gl.h>
 
-#include <direct.h>
+#include "host_win32.h"
 
 /* xemu's settings, only the fields PGRAPH and the GL renderer read. No on-disk shader cache:
  * shaders are generated and compiled at run time (a cache can come with 2.H.8). */
@@ -52,12 +52,26 @@ const char *xemu_settings_get_base_path(void)
 {
     static char path[MAX_PATH];
     if (!path[0]) {
+#ifdef _WIN32
         const char *base = getenv("LOCALAPPDATA");
         if (base && snprintf(path, sizeof(path), "%s\\mksm-pc\\", base) < (int)sizeof(path)) {
-            _mkdir(path);
+            mksm_mkdir(path);
         } else {
             strcpy(path, ".\\");
         }
+#else
+        /* $XDG_CACHE_HOME/mksm-pc/, else ~/.cache/mksm-pc/ */
+        const char *xdg = getenv("XDG_CACHE_HOME"), *home = getenv("HOME");
+        int n = xdg && *xdg ? snprintf(path, sizeof(path), "%s/", xdg)
+              : home && *home ? snprintf(path, sizeof(path), "%s/.cache/", home) : -1;
+        if (n > 0 && n < (int)sizeof(path) - 16) {
+            mksm_mkdir(path);
+            strcat(path, "mksm-pc/");
+            mksm_mkdir(path);
+        } else {
+            strcpy(path, "./");
+        }
+#endif
     }
     return path;
 }

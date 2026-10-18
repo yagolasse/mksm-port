@@ -16,7 +16,9 @@
 
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#ifdef _WIN32
 #include <windows.h>
+#endif
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,16 +50,20 @@ static void init_sdl(void)
     if (done) {
         return;
     }
+#ifdef _WIN32
     typedef DPI_AWARENESS_CONTEXT (WINAPI *set_thread_dpi_fn)(DPI_AWARENESS_CONTEXT);
     set_thread_dpi_fn set_dpi = (set_thread_dpi_fn)(void *)GetProcAddress(
         GetModuleHandleW(L"user32.dll"), "SetThreadDpiAwarenessContext");
     DPI_AWARENESS_CONTEXT prev_dpi =
         set_dpi ? set_dpi(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) : NULL;
+#endif
     SDL_SetMainReady();
     int rc = SDL_InitSubSystem(SDL_INIT_VIDEO);
+#ifdef _WIN32
     if (set_dpi && prev_dpi) {
         set_dpi(prev_dpi);
     }
+#endif
     if (rc != 0) {
         fatal("SDL_InitSubSystem(SDL_INIT_VIDEO)");
     }

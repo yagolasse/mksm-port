@@ -165,9 +165,20 @@ cmake -S . -B ~/mksm-build/port -G Ninja -DCMAKE_BUILD_TYPE=Release
 ninja -C ~/mksm-build/port -j6          # ~5 min on the Deck, ~0.9 GB peak
 ```
 The system SDL2 replaces the fetched static one. `prof.c`, `setup.c` and `xiso.c` are Win32 only
-(`src/posix_stubs.c` stands in), and the GPU lib isn't built yet (H.5c2c). Pads, AC'97 and the
-APU work through the toolkit's x86-64 POSIX MMIO trap (patch 0029, the SIGSEGV handler in
-`main.c` calls `xbox_PosixMmioFault`).
+(`src/posix_stubs.c` stands in). Pads, AC'97 and the APU work through the toolkit's x86-64 POSIX
+MMIO trap (patch 0029, the SIGSEGV handler in `main.c` calls `xbox_PosixMmioFault`).
+The GPU lib (plan H.5c2c) is built by the same gcc as part of the build (`add_subdirectory(src/gpu)`,
+no ExternalProject), in every config, with SDL2 GL contexts (`gloffscreen_sdl.c`; GL is loaded
+through SDL at run time, nothing links libGL). The glue's Win32 calls (events, threads,
+interlocked, waitable timers) come from the toolkit's `win32_compat` (target `platform`) through
+`src/gpu/host_win32.h`; xemu's files stay unmodified. The menu (`mksm_menu`, ImGui) is linked too.
+With the window (`RECOMP_FB_WINDOW=1`) the toolkit's `xbox_HostWindowMain` keeps the main thread
+for the SDL window and its events and runs the rest of the boot on a guest thread: `main.c` splits
+at `mksm_boot`, after the memory layout and the GPU init (the window's present mode must be set
+before it opens, and the Xbox ranges must be mapped before SDL/Mesa/PipeWire take address space:
+the other order lost the contiguous window at base + 2 GB and crashed). Headless runs stay on the
+main thread. File names on the disc are matched case-sensitively on Linux for now (the movies in
+`front/movies/*.sfd` don't open; plan H.5c2d).
 The exe exports its symbols (`ENABLE_EXPORTS`, for `dladdr` in the crash report), and lifted CRT
 functions with libc names (`write`, `close`, ...) are renamed in `gen/` by the force-included
 `src/recomp_libc_names.h`: without it the toolkit's `close`/`write` calls ran guest code.

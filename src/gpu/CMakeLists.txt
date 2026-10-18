@@ -117,6 +117,14 @@ if(NOT WIN32)
     target_link_libraries(mksm_gpu PUBLIC platform SDL2::SDL2)
     target_compile_definitions(mksm_gpu PRIVATE _GNU_SOURCE)   # pthread_setname_np
 endif()
+# texture.c's cache walks go through lru_visit_fast.h (the used nodes only, not all 65536 hash
+# bins; plan 2.7c1), forced in so the xemu file stays unmodified.
+if(WIN32)
+    set(MKSM_LRU_FI /FI${CMAKE_CURRENT_SOURCE_DIR}/lru_visit_fast.h)
+else()
+    set(MKSM_LRU_FI -include ${CMAKE_CURRENT_SOURCE_DIR}/lru_visit_fast.h)
+endif()
+set_source_files_properties(${XEMU_NV2A}/pgraph/gl/texture.c PROPERTIES COMPILE_OPTIONS "${MKSM_LRU_FI}")
 # xemu builds the GL renderer with CONFIG_OPENGL (pgraph.c's default-renderer choice).
 target_compile_definitions(mksm_gpu PRIVATE CONFIG_OPENGL=1)
 target_compile_definitions(mksm_gpu PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)

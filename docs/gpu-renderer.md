@@ -152,6 +152,14 @@ touches them. Here guest RAM is a file mapping viewed at the base and at every m
   (or on its first check, or after `memory_region_set_client_dirty`). The vertex client keeps the
   plain once-per-kick answer. `RECOMP_PB_GPU_DIRTY=kick` turns the hash off for A/B runs; the
   `[XGPU]` line counts `tex pages hashed` / `changed`.
+- **The walk itself (plan 2.7c1)**: what made each walk expensive was not the 512 nodes but
+  `lru_visit_active` (`qemu/lru.h`), which loops over all 65,536 hash bins (~1 MB of list heads)
+  to find them. In a level ~1.5-2k texture ranges a second really change (render targets read
+  back, textures the CPU rewrites), so the walks stay. `src/gpu/lru_visit_fast.h` is
+  force-included into `gl/texture.c` only (CMake `-include` / `/FI`, the xemu file unmodified) and
+  walks the cache's `global` list instead, visiting the used nodes: the same set, in another
+  order, which the texture visitor doesn't depend on. Method thread 32% → 27% on a Ryzen 5600,
+  72% → 67% on the Steam Deck with more frames drawn.
 - Page protection on every view (writes caught in the VEH) is still the precise option if a
   title writes resources without a kick in between; not needed so far.
 - Surface downloads: at flip behind a debug flag (keeps `RECOMP_FB_DUMP` working), and on CPU

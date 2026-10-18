@@ -209,8 +209,17 @@ primary monitor; `[SETTINGS] wrote`). `RECOMP_SETTINGS=0` skips it (the run scri
 smoke test default to 0, so dev runs keep the Xbox look), `=1` or unset = `<base>\settings.ini`,
 anything else = that path (handy for tests: a missing path is written fresh).
 The menu edits it (B7b2, `menu.cpp`): its copy starts from `mksm_settings_file()` (the file as
-read at start); live items are saved at once (`mksm_settings_save`: temp file + replace, unknown
-`key=value` lines kept; they apply at the next start until B7c), scale/aspect/wide stay pending
+read at start); live items apply at once and are saved (`mksm_settings_save`: temp file +
+replace, unknown `key=value` lines kept). Live (B7c, `apply_live` in `menu.cpp`, each setter
+safe from the present thread): `mksm_manual_set_hud_edges` / `mksm_manual_set_movie_zoom`
+(`recomp_manual.c`; the movie zoom takes a spin lock with the movie start/end hooks so a menu
+change can't leave the zoom on after a movie), `mksm_gpu_set_filter` (the present's sampler),
+the toolkit's `mcpx_apu_set_volume` (patch 0027: XAudio2 master / waveOut / SDL2) and
+`xbox_FramebufferWindowSetFullscreen` (patch 0026: posted to the window thread; Alt+Enter reads
+the window's flags). The menu follows `xbox_FramebufferWindowIsFullscreen` on every present, so
+Alt+Enter saves `fullscreen=` too (`[MENU] fullscreen=N saved (Alt+Enter)`). Logs: `[HUD] edges
+on/off (live)`, `[MOVIE] zoom on/off, Gauntlet on/off (live): now up to Z`, `[XGPU] present filter
+nearest/linear (live)`, `[APU] volume V`, `[FBWIN] fullscreen on/off`. Scale/aspect/wide stay pending
 until "Apply and restart" (confirm popup) saves and calls `mksm_settings_restart`: it drops the
 variables the file set (`mksm_settings_env_from_file`) and the derived ones registered with
 `mksm_settings_derived_env` (`RECOMP_SAVE_DIR`) from the process environment, starts the exe

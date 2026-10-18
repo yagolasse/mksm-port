@@ -1,0 +1,214 @@
+From dc0d53dd9862a80f21096c74d8b6f66577877565 Mon Sep 17 00:00:00 2001
+From: The FBC Agent <thefbcspecialagent@gmail.com>
+Date: Sat, 17 Oct 2026 23:21:03 -0300
+Subject: [PATCH] apu: live output volume (mcpx_apu_set_volume)
+
+A setter for a title's overlay, from any thread, for all three outputs:
+the XAudio2 master voice, the waveOut fallback and the SDL2 backend (which
+now also honours RECOMP_APU_VOLUME, scaling a copy of each period below
+full volume). A value set before the device is up replaces the env var.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01EkvFM8CqCHfqeNrU5QvbYk
+---
+ src/apu/apu.h         |  5 +++++
+ src/apu/apu_core.c    | 23 ++++++++++++++++++++---
+ src/apu/apu_sdl2.c    | 29 +++++++++++++++++++++++++++++
+ src/apu/apu_xaudio2.c | 25 +++++++++++++++++++++----
+ src/apu/apu_xaudio2.h |  4 ++++
+ 5 files changed, 79 insertions(+), 7 deletions(-)
+
+diff --git a/src/apu/apu.h b/src/apu/apu.h
+index 89ae7a4..fad9c23 100644
+--- a/src/apu/apu.h
++++ b/src/apu/apu.h
+@@ -39,6 +39,11 @@ int apu_env_on(const char *name);
+  * (before init it only sets the flag). */
+ void mcpx_apu_set_host_paused(int on);
+ 
++/* Output volume 0..1 (RECOMP_APU_VOLUME at start), from any thread, any
++ * time: the samples the device plays next use it; set before the device is
++ * up, it replaces RECOMP_APU_VOLUME there. 0 = silent, the APU still runs. */
++void mcpx_apu_set_volume(float vol);
++
+ /* Play a 440Hz test tone through the APU pipeline to verify audio output.
+  * Directly programs a voice without going through DirectSound. */
+ void mcpx_apu_play_test_tone(MCPXAPUState *d);
+diff --git a/src/apu/apu_core.c b/src/apu/apu_core.c
+index 79c7e9b..c9af018 100644
+--- a/src/apu/apu_core.c
++++ b/src/apu/apu_core.c
+@@ -432,6 +432,20 @@ typedef struct {
+ } WaveOutState;
+ 
+ static WaveOutState g_waveout = { 0 };
++/* mcpx_apu_set_volume's value; < 0 = never called (RECOMP_APU_VOLUME). */
++static volatile float g_volume = -1.0f;
++
++void mcpx_apu_set_volume(float vol)
++{
++    vol = vol < 0.0f ? 0.0f : vol > 1.0f ? 1.0f : vol;
++    g_volume = vol;
++    xa2_set_volume(vol);    /* also kept for xa2_init */
++    if (!xa2_is_active() && g_waveout.initialized) {
++        DWORD v = (DWORD)(vol * 0xFFFF);
++        waveOutSetVolume(g_waveout.hwo, v | (v << 16));
++    }
++    fprintf(stderr, "[APU] volume %.2f\n", vol);
++}
+ 
+ void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
+ {
+@@ -493,10 +507,13 @@ void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
+     }
+ 
+     {
+-        /* RECOMP_APU_VOLUME, as for XAudio2 (both channels, 16 bits each) */
++        /* RECOMP_APU_VOLUME, as for XAudio2 (both channels, 16 bits each);
++         * mcpx_apu_set_volume before this wins */
+         const char *e = getenv("RECOMP_APU_VOLUME");
+-        if (e && *e) {
+-            double vol = atof(e);
++        double vol = g_volume;
++        if (vol >= 0 || (e && *e)) {
++            if (vol < 0)
++                vol = atof(e);
+             DWORD v = (DWORD)((vol < 0 ? 0 : vol > 1 ? 1 : vol) * 0xFFFF);
+             waveOutSetVolume(g_waveout.hwo, v | (v << 16));
+         }
+diff --git a/src/apu/apu_sdl2.c b/src/apu/apu_sdl2.c
+index 5de6b8a..cb1809f 100644
+--- a/src/apu/apu_sdl2.c
++++ b/src/apu/apu_sdl2.c
+@@ -48,6 +48,14 @@ static unsigned  g_underruns;
+ static uint64_t  g_samples_queued;  /* samples handed to the queue, ever */
+ static int       g_dry;
+ static int64_t   g_underrun_logged_ms;
++/* Volume as SDL's mix volume 0..SDL_MIX_MAXVOLUME (max = samples as is). */
++static SDL_atomic_t g_mix_volume = { SDL_MIX_MAXVOLUME };
++static SDL_atomic_t g_volume_set;   /* xa2_set_volume came before init */
++
++static int mix_volume(double vol)
++{
++    return (int)((vol < 0 ? 0 : vol > 1 ? 1 : vol) * SDL_MIX_MAXVOLUME + 0.5);
++}
+ 
+ static int env_int(const char *name, int def, int lo, int hi)
+ {
+@@ -78,6 +86,10 @@ int xa2_init(void)
+                             SDLA_BUF_SAMPLES_MIN, SDLA_BUF_SAMPLES_MAX);
+     g_num_bufs = env_int("RECOMP_AUDIO_BUF_COUNT", SDLA_NUM_BUFS_DEFAULT,
+                          SDLA_NUM_BUFS_MIN, SDLA_NUM_BUFS_MAX);
++    /* RECOMP_APU_VOLUME, as for XAudio2 */
++    e = getenv("RECOMP_APU_VOLUME");
++    if (e && *e && !SDL_AtomicGet(&g_volume_set))
++        SDL_AtomicSet(&g_mix_volume, mix_volume(atof(e)));
+ 
+     /* SDL installs SIGINT/SIGTERM handlers that only post SDL_QUIT, which
+      * nothing reads in a headless run; keep the default handlers so Ctrl-C
+@@ -166,7 +178,18 @@ int xa2_is_active(void)
+  * unbounded and pacing by queue depth holds it at the marks. */
+ int xa2_submit_samples(const int16_t *samples, int num_samples)
+ {
++    static int16_t scaled[SDLA_BUF_SAMPLES_MAX * SDLA_CHANNELS];
++    int vol = SDL_AtomicGet(&g_mix_volume);
++
+     if (!g_initialized || !g_dev || num_samples <= 0) return 0;
++    /* Below full volume, queue a scaled copy (the APU frame thread is the
++     * only caller, so one static buffer does). */
++    if (vol < SDL_MIX_MAXVOLUME && num_samples <= SDLA_BUF_SAMPLES_MAX) {
++        Uint32 n = (Uint32)num_samples * SDLA_CHANNELS * sizeof(int16_t);
++        memset(scaled, 0, n);
++        SDL_MixAudioFormat((Uint8 *)scaled, (const Uint8 *)samples, AUDIO_S16SYS, n, vol);
++        samples = scaled;
++    }
+     if (SDL_QueueAudio(g_dev, samples,
+                        (Uint32)num_samples * SDLA_CHANNELS * sizeof(int16_t)) != 0) {
+         fprintf(stderr, "[SDL2] SDL_QueueAudio failed: %s\n", SDL_GetError());
+@@ -221,6 +244,12 @@ void xa2_expect_drain(void)
+     g_dry = 1;
+ }
+ 
++void xa2_set_volume(float vol)
++{
++    SDL_AtomicSet(&g_mix_volume, mix_volume(vol));
++    SDL_AtomicSet(&g_volume_set, 1);
++}
++
+ void xa2_set_paused(int on)
+ {
+     if (!g_initialized || !g_dev) return;
+diff --git a/src/apu/apu_xaudio2.c b/src/apu/apu_xaudio2.c
+index 8547fdc..12c7326 100644
+--- a/src/apu/apu_xaudio2.c
++++ b/src/apu/apu_xaudio2.c
+@@ -66,6 +66,8 @@ static unsigned  g_xa2_underruns;
+ static int       g_xa2_dry;
+ static ULONGLONG g_xa2_underrun_logged;
+ static int                     g_xa2_initialized = 0;
++/* xa2_set_volume's value; < 0 = never called (RECOMP_APU_VOLUME, else 1). */
++static volatile float          g_xa2_volume = -1.0f;
+ static int                     g_xa2_frames_written = 0;
+ 
+ int xa2_init(void)
+@@ -117,16 +119,21 @@ int xa2_init(void)
+     }
+ 
+     /* RECOMP_APU_VOLUME=<0..1>: master volume (0 = silent, e.g. for
+-     * unattended test runs; the pipeline and its stats still run). */
++     * unattended test runs; the pipeline and its stats still run). A
++     * xa2_set_volume made before init wins. */
+     {
+         const char *e = getenv("RECOMP_APU_VOLUME");
+-        if (e && *e) {
+-            float vol = (float)atof(e);
++        float vol = g_xa2_volume;
++        if (vol >= 0.0f || (e && *e)) {
++            int from_env = vol < 0.0f;
++            if (from_env)
++                vol = (float)atof(e);
+             if (vol < 0.0f) vol = 0.0f;
+             if (vol > 1.0f) vol = 1.0f;
+             IXAudio2Voice_SetVolume((IXAudio2Voice *)g_xa2_master, vol,
+                                     XAUDIO2_COMMIT_NOW);
+-            fprintf(stderr, "[XA2] master volume %.2f (RECOMP_APU_VOLUME)\n", vol);
++            fprintf(stderr, "[XA2] master volume %.2f%s\n", vol,
++                    from_env ? " (RECOMP_APU_VOLUME)" : "");
+         }
+     }
+ 
+@@ -279,6 +286,16 @@ void xa2_set_paused(int on)
+         IXAudio2SourceVoice_Start(g_xa2_source, 0, XAUDIO2_COMMIT_NOW);
+ }
+ 
++/* XAudio2's voice calls may come from any thread (not from its callbacks,
++ * which this file doesn't use). */
++void xa2_set_volume(float vol)
++{
++    g_xa2_volume = vol;
++    if (g_xa2_initialized && g_xa2_master)
++        IXAudio2Voice_SetVolume((IXAudio2Voice *)g_xa2_master, vol,
++                                XAUDIO2_COMMIT_NOW);
++}
++
+ unsigned xa2_underruns(void)
+ {
+     return g_xa2_underruns;
+diff --git a/src/apu/apu_xaudio2.h b/src/apu/apu_xaudio2.h
+index 9a3c94b..cb4c8cf 100644
+--- a/src/apu/apu_xaudio2.h
++++ b/src/apu/apu_xaudio2.h
+@@ -44,6 +44,10 @@ void xa2_expect_drain(void);
+  * samples stay queued and play on from the same spot (a host pause). */
+ void xa2_set_paused(int on);
+ 
++/* Output volume 0..1, any thread; set before xa2_init it replaces
++ * RECOMP_APU_VOLUME there. */
++void xa2_set_volume(float vol);
++
+ /* Pacing marks in samples for count buffers of buf_samples, fed one period
+  * (period samples) at a time. A period is submitted only while queued <
+  * high, so high is capped where that period could fill a buffer the voice
+-- 
+2.53.0.windows.2
+

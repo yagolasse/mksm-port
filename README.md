@@ -23,7 +23,7 @@ Work in progress. Windows x64 is the only host tested so far.
 | Further levels, full playthrough | not tested yet |
 | Internal resolution 1x-4x | working (`RECOMP_PB_GPU_SCALE`) |
 | Widescreen | experimental (`RECOMP_ASPECT=16:9`, `RECOMP_ASPECT_WIDE=1`) |
-| Settings menu (F1) | edits the settings (saved to `settings.ini`), Apply and restart, FPS counter, pauses the game; changes apply on the next start for now |
+| Settings menu (F1) | edits the settings (saved to `settings.ini`), Apply and restart, FPS counter, pauses the game; scale/aspect/wide apply on restart, the rest at once |
 | Settings file | `settings.ini` read at start, monitor-based defaults on first start; written by the menu |
 | Native Linux build | started, paused |
 
@@ -126,11 +126,13 @@ its first argument (it then logs nothing: it's a GUI program).
   Back+Start or B closes it; arrows/Space or the d-pad/A move around it and change a value). It
   edits the settings file (below): resolution scale, aspect and wide picture are held as
   "pending restart" until **Apply and restart** (asks first: progress since the last save is
-  lost; the game then starts again by itself) or **Revert**; the other changes are saved at once
-  and apply on the next start for now. A setting given by an environment variable is shown as
+  lost; the game then starts again by itself) or **Revert**; the others (HUD at the edges,
+  movie zoom, scaling filter, volume, fullscreen) take effect at once and are saved (the volume
+  is heard once the menu is closed: the sound is paused while it is open). A setting given by an environment variable is shown as
   "set by ..." and can't be changed there. "Show FPS" toggles a counter. The game
   (and its sound, movies included) is paused while the menu is open and picks up where it was.
-- **Alt+Enter** toggles borderless fullscreen.
+- **Alt+Enter** toggles borderless fullscreen; with a settings file the new state is saved, as
+  the menu's Fullscreen box does.
 - **F9** captures / releases the mouse when the mouse+keyboard pad is on (`RECOMP_MKB=1`). The
   mouse is captured only while the game window has focus and the settings menu is closed
   (Alt-Tab or F1 gives the pointer back). Mouse: left/right button = right/left trigger, wheel or

@@ -574,6 +574,14 @@ void mksm_gpu_set_movie_zoom(float max_zoom)
     InterlockedExchange(&s_movie_zoom, max_zoom > 1.0f ? bits : 0);
 }
 
+/* 1 nearest, 0 linear, -1 = not set yet (RECOMP_PB_GPU_FILTER, read by the present thread). */
+static volatile LONG s_filter = -1;
+
+void mksm_gpu_set_filter(int nearest)
+{
+    InterlockedExchange(&s_filter, nearest != 0);
+}
+
 static volatile LONG s_side_mask;
 
 void mksm_gpu_set_side_mask(int on)
@@ -705,7 +713,9 @@ static DWORD WINAPI present_thread(LPVOID unused)
     glBindVertexArray(vao);
     /* A sampler object, so the textures' own filter state doesn't matter. */
     const char *f = getenv("RECOMP_PB_GPU_FILTER");
-    GLint filter = f && strcmp(f, "nearest") == 0 ? GL_NEAREST : GL_LINEAR;
+    InterlockedCompareExchange(&s_filter, f && strcmp(f, "nearest") == 0, -1);
+    LONG filter_set = s_filter;
+    GLint filter = filter_set ? GL_NEAREST : GL_LINEAR;
     glGenSamplers(1, &sampler);
     glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, filter);
     glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, filter);
@@ -735,6 +745,14 @@ static DWORD WINAPI present_thread(LPVOID unused)
         LeaveCriticalSection(&s_win.lock);
         if (i < 0) {
             continue;
+        }
+        if (s_filter != filter_set) {    /* mksm_gpu_set_filter (the settings menu) */
+            filter_set = s_filter;
+            filter = filter_set ? GL_NEAREST : GL_LINEAR;
+            glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, filter);
+            glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, filter);
+            fprintf(stderr, "[XGPU] present filter %s (live)\n",
+                    filter_set ? "nearest" : "linear");
         }
         if (s_win.slot[i].fence) {
             glWaitSync(s_win.slot[i].fence, 0, GL_TIMEOUT_IGNORED);

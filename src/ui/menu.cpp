@@ -1,5 +1,6 @@
 /*
- * The in-game settings menu (plan 4.6; B7a1: up, toggles, shows the current values).
+ * The in-game settings menu (plan 4.6; B7a1: up, toggles, shows the current values; B7b2 edits;
+ * B7c: the non-restart options apply at once).
  *
  * Dear ImGui (external/imgui, unmodified) with its SDL2 and OpenGL3 backends, drawn by
  * mksm_gpu's present thread over the game frame (mksm_gpu_set_overlay), so it costs nothing
@@ -47,11 +48,17 @@ extern "C" {
 typedef int (*xbox_fb_event_hook_fn)(const void *sdl_event);
 void xbox_FramebufferWindowSetEventHook(xbox_fb_event_hook_fn hook);
 void *xbox_FramebufferWindowSdl(void);
+void xbox_FramebufferWindowSetFullscreen(int on);
+int xbox_FramebufferWindowIsFullscreen(void);
 void xbox_InputKeysClear(void);
 /* toolkit src/apu/apu.h */
 void mcpx_apu_set_host_paused(int on);
+void mcpx_apu_set_volume(float vol);
 /* toolkit src/input/mkb_input.h */
 void mkb_set_overlay(int open);
+/* recomp_manual.c (B7c) */
+void mksm_manual_set_hud_edges(int on);
+void mksm_manual_set_movie_zoom(int on, int gauntlet);
 }
 
 namespace {
@@ -306,8 +313,9 @@ void feed_pad(ImGuiIO &io)
 /* ── Settings (B7b2; present thread only) ─────────────────────────
  *
  * g_saved is the file as it is on disk (settings.c's copy at the first open), g_edit what the
- * menu shows. A live item's change is saved at once (it takes effect at the next start until
- * B7c makes it live); a restart item's change stays pending in g_edit until "Apply and
+ * menu shows. A live item's change takes effect at once (apply_live, B7c) and is saved when no
+ * widget is held; Alt+Enter saves the fullscreen item too (sync_fullscreen, also while the menu
+ * is closed). A restart item's change stays pending in g_edit until "Apply and
  * restart" saves the file and relaunches the exe, or "Revert" drops it. An item whose variable
  * the user set in the environment wins over the file (settings.h), so it is shown, not edited. */
 MksmSettings g_saved, g_edit;
@@ -356,10 +364,48 @@ bool any_pending(void)
     return false;
 }
 
-void set_edit(int id, const char *v)
+void store_edit(int id, const char *v)
 {
     snprintf(g_edit.value[id], sizeof(g_edit.value[id]), "%s", v);
     g_edit.present[id] = 1;
+}
+
+/* B7c: a live item takes effect now, read with its env var reader's own rule. Each setter is
+ * safe from this thread: the fullscreen switch is posted to the window's thread, the rest are
+ * atomics read where they are used. */
+void apply_live(int id)
+{
+    const char *v = shown(id);
+    switch (id) {
+    case MKSM_SET_HUD_EDGES:
+        mksm_manual_set_hud_edges(v[0] != '0');
+        break;
+    case MKSM_SET_MOVIE_ZOOM:
+    case MKSM_SET_GAUNTLET_ZOOM:
+        mksm_manual_set_movie_zoom(shown(MKSM_SET_MOVIE_ZOOM)[0] != '0',
+                                   shown(MKSM_SET_GAUNTLET_ZOOM)[0] != '0');
+        break;
+    case MKSM_SET_FILTER:
+        mksm_gpu_set_filter(strcmp(v, "nearest") == 0);
+        break;
+    case MKSM_SET_VOLUME:
+        mcpx_apu_set_volume((float)atof(v));
+        break;
+    case MKSM_SET_FULLSCREEN:
+        xbox_FramebufferWindowSetFullscreen(v[0] != '0');
+        break;
+    default:
+        break;
+    }
+}
+
+/* From an editable widget (never a user-set item): stored, and a live item applied. */
+void set_edit(int id, const char *v)
+{
+    store_edit(id, v);
+    if (!is_restart(id)) {
+        apply_live(id);
+    }
 }
 
 void load_settings(void)
@@ -390,6 +436,34 @@ void save_live(void)
     if (changed) {
         mksm_settings_save(&g_saved);
     }
+}
+
+/* The window's fullscreen state, followed on every present (menu open or not; user,
+ * 2026-10-17: Alt+Enter is saved like the checkbox). A change the menu didn't make (Alt+Enter)
+ * goes to the menu's copy and the file at once; the checkbox's own change arrives a moment after
+ * its request and already matches. Not with a user-set RECOMP_FB_FULLSCREEN or no file. */
+int g_fullscreen_seen = -1;
+
+void sync_fullscreen(void)
+{
+    int fs = xbox_FramebufferWindowIsFullscreen();
+    if (fs == g_fullscreen_seen) {
+        return;
+    }
+    g_fullscreen_seen = fs;
+    if (!g_loaded) {
+        load_settings();
+    }
+    const char *v = fs ? "1" : "0";
+    if (!g_have_file || user_env(MKSM_SET_FULLSCREEN) ||
+        (shown(MKSM_SET_FULLSCREEN)[0] != '0') == (fs != 0)) {
+        return;
+    }
+    store_edit(MKSM_SET_FULLSCREEN, v);
+    snprintf(g_saved.value[MKSM_SET_FULLSCREEN], sizeof(g_saved.value[0]), "%s", v);
+    g_saved.present[MKSM_SET_FULLSCREEN] = 1;
+    mksm_settings_save(&g_saved);
+    fprintf(stderr, "[MENU] fullscreen=%s saved (Alt+Enter)\n", v);
 }
 
 /* Label | widget | note. Returns whether the widget may be edited. */
@@ -549,8 +623,7 @@ void draw_menu(unsigned width, unsigned height)
         static const char *const filters[] = { "linear", "nearest" };
         static const char *const filter_names[] = { "Smooth", "Sharp (nearest)" };
         bool wide = strcmp(shown(MKSM_SET_ASPECT), "4:3") != 0;
-        SDL_Window *win = static_cast<SDL_Window *>(xbox_FramebufferWindowSdl());
-        bool fullscreen = win && (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP);
+        bool fullscreen = xbox_FramebufferWindowIsFullscreen() != 0;
         char size[64];
         snprintf(size, sizeof(size), "%ux%u%s", width, height, fullscreen ? ", fullscreen" : "");
 
@@ -569,13 +642,13 @@ void draw_menu(unsigned width, unsigned height)
             ImGui::EndDisabled();
             row_combo(MKSM_SET_FILTER, "Scaling filter", filters, filter_names, 2);
             row_volume(MKSM_SET_VOLUME, "Volume");
-            row_check(MKSM_SET_FULLSCREEN, "Start fullscreen");
+            row_check(MKSM_SET_FULLSCREEN, "Fullscreen");
             const char *sd = shown(MKSM_SET_SAVE_DIR);
             row_text("Save folder", *sd ? sd : "default", "edit settings.ini");
             row_text("Window", size, "Alt+Enter");
             ImGui::EndTable();
         }
-        ImGui::TextDisabled("Other changes are saved now and apply on the next start.");
+        ImGui::TextDisabled("Other changes apply now and are saved.");
         ImGui::Spacing();
         bool fps = g_show_fps.load();
         if (ImGui::Checkbox("Show FPS", &fps)) {
@@ -650,6 +723,7 @@ unsigned overlay(unsigned width, unsigned height, int new_frame)
             g_fps_frames = 0;
         }
     }
+    sync_fullscreen();
     bool open = g_open.load(), fps = g_show_fps.load();
     if (!open && !fps) {
         if (g_was_open) {

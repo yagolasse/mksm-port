@@ -92,6 +92,11 @@ void mksm_gpu_set_output_aspect(float aspect);
  * Any thread; the next presented frame uses it. */
 void mksm_gpu_set_movie_zoom(float max_zoom);
 
+/* The window present's scaling filter (plan B7c, the settings menu): 1 = nearest, 0 = linear.
+ * Any thread; the next present (also an overlay redraw) uses it. Until called,
+ * RECOMP_PB_GPU_FILTER (nearest|linear, default linear) is read when the present starts. */
+void mksm_gpu_set_filter(int nearest);
+
 /* on = 1: a frame wider than 640 gets the columns outside its centred 640 cleared to black at
  * the flip, in the surface itself (plan 4.2, B5b2: the game's menus have art beyond the 640
  * they were made for, which a 4:3 screen never showed). Any thread; the next flip uses it. */

@@ -1,0 +1,103 @@
+From d1b1ac9e2fddf75e0d835ef6f519ebe0dc8a7608 Mon Sep 17 00:00:00 2001
+From: The FBC Agent <thefbcspecialagent@gmail.com>
+Date: Sun, 18 Oct 2026 12:07:44 -0300
+Subject: [PATCH] linux: CreateWaitableTimerExW in win32_compat, test stubs for
+ our hooks
+
+The precise KTIMER thread calls CreateWaitableTimerExW (high-resolution
+timer), which the POSIX compat layer lacked, so libxbox_kernel failed to
+build on Linux. Add it (MANUAL_RESET honoured, HIGH_RESOLUTION a no-op)
+with the CREATE_WAITABLE_TIMER_* and TIMER_ALL_ACCESS constants.
+
+The apu_lifecycle/apu_monitor tests stub the xa2_* backend; the host
+pause and live volume setters were missing, so the linker pulled in the
+real backend object and hit duplicate symbols. nv2a_ffp_backend now
+stubs the pushbuffer capture hooks nv2a_pb_exec.c calls.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01EkvFM8CqCHfqeNrU5QvbYk
+---
+ src/platform/win32_compat.c                    | 8 ++++++++
+ src/platform/win32_compat.h                    | 4 ++++
+ tests/apu_lifecycle/test_main.c                | 2 ++
+ tests/apu_monitor/test_main.c                  | 2 ++
+ tests/nv2a_ffp_backend/nv2a_ffp_backend_test.c | 3 +++
+ 5 files changed, 19 insertions(+)
+
+diff --git a/src/platform/win32_compat.c b/src/platform/win32_compat.c
+index 9c2937f..a16035f 100644
+--- a/src/platform/win32_compat.c
++++ b/src/platform/win32_compat.c
+@@ -1008,6 +1008,14 @@ HANDLE CreateWaitableTimerW(LPSECURITY_ATTRIBUTES sa, BOOL manualReset, LPCWSTR
+     return (HANDLE)o;
+ }
+ 
++/* Timed waits here are already nanosecond pthread waits, so HIGH_RESOLUTION
++ * adds nothing; only MANUAL_RESET changes behaviour. */
++HANDLE CreateWaitableTimerExW(LPSECURITY_ATTRIBUTES sa, LPCWSTR name, DWORD flags, DWORD access)
++{
++    (void)access;
++    return CreateWaitableTimerW(sa, (flags & CREATE_WAITABLE_TIMER_MANUAL_RESET) != 0, name);
++}
++
+ BOOL SetWaitableTimer(HANDLE h, const LARGE_INTEGER *dueTime, LONG period,
+                       PTIMERAPCROUTINE completion, PVOID arg, BOOL resume)
+ {
+diff --git a/src/platform/win32_compat.h b/src/platform/win32_compat.h
+index 478c53f..b2befe3 100644
+--- a/src/platform/win32_compat.h
++++ b/src/platform/win32_compat.h
+@@ -191,6 +191,10 @@ BOOL   TrySubmitThreadpoolCallback(PTP_SIMPLE_CALLBACK callback,
+ /* ---- Waitable timers --------------------------------------------------- */
+ typedef VOID (*PTIMERAPCROUTINE)(PVOID arg, DWORD lowValue, DWORD highValue);
+ HANDLE CreateWaitableTimerW(LPSECURITY_ATTRIBUTES sa, BOOL manualReset, LPCWSTR name);
++#define CREATE_WAITABLE_TIMER_MANUAL_RESET    0x00000001
++#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
++#define TIMER_ALL_ACCESS                      0x001F0003
++HANDLE CreateWaitableTimerExW(LPSECURITY_ATTRIBUTES sa, LPCWSTR name, DWORD flags, DWORD access);
+ BOOL   SetWaitableTimer(HANDLE h, const LARGE_INTEGER *dueTime, LONG period,
+                         PTIMERAPCROUTINE completion, PVOID arg, BOOL resume);
+ BOOL   CancelWaitableTimer(HANDLE h);
+diff --git a/tests/apu_lifecycle/test_main.c b/tests/apu_lifecycle/test_main.c
+index 67ea977..15d1ae4 100644
+--- a/tests/apu_lifecycle/test_main.c
++++ b/tests/apu_lifecycle/test_main.c
+@@ -41,6 +41,8 @@ unsigned xa2_underruns(void)   { return 0; }
+ int  xa2_queued_samples(void)  { return 0; }
+ uint64_t xa2_samples_played(void) { return 0; }
+ void xa2_expect_drain(void)    {}
++void xa2_set_paused(int on)    { (void)on; }
++void xa2_set_volume(float vol) { (void)vol; }
+ int  xa2_submit_samples(const int16_t *s, int n) { (void)s; (void)n; return 1; }
+ 
+ #define FAKE_RAM   (256u << 10)
+diff --git a/tests/apu_monitor/test_main.c b/tests/apu_monitor/test_main.c
+index 88a786d..fa6d57c 100644
+--- a/tests/apu_monitor/test_main.c
++++ b/tests/apu_monitor/test_main.c
+@@ -44,6 +44,8 @@ unsigned xa2_underruns(void) { return 0; }
+ uint64_t xa2_samples_played(void) { return dev_head; }
+ int  xa2_queued_samples(void) { return (int)(dev_tail - dev_head); }
+ void xa2_expect_drain(void)  {}
++void xa2_set_paused(int on)    { (void)on; }
++void xa2_set_volume(float vol) { (void)vol; }
+ int  xa2_submit_samples(const int16_t *s, int n)
+ {
+     got_calls++;
+diff --git a/tests/nv2a_ffp_backend/nv2a_ffp_backend_test.c b/tests/nv2a_ffp_backend/nv2a_ffp_backend_test.c
+index 877698d..d30aa50 100644
+--- a/tests/nv2a_ffp_backend/nv2a_ffp_backend_test.c
++++ b/tests/nv2a_ffp_backend/nv2a_ffp_backend_test.c
+@@ -40,6 +40,9 @@ void xbox_FramebufferWindowStart(void) {}
+ void xbox_FramebufferWindowFrameStats(uint32_t draws) { (void)draws; }
+ void xbox_FramebufferWindowPresent(uint32_t va, uint32_t pitch) { (void)va; (void)pitch; }
+ void xbox_Nv2aFrameCounterFlip(void) {}
++void nv2a_pb_capture_method(uint32_t subch, uint32_t method, uint32_t param)
++{ (void)subch; (void)method; (void)param; }
++void nv2a_pb_capture_flip(void) {}
+ 
+ static volatile uint32_t s_pgraph_400b10;
+ volatile uint32_t *xbox_Nv2aRegPtr(uint32_t offset)
+-- 
+2.53.0.windows.2
+

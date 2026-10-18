@@ -26,7 +26,7 @@ Work in progress. Windows x64 is the only host tested so far.
 | Settings menu (F1) | edits the settings (saved to `settings.ini`), Apply and restart, FPS counter, pauses the game; scale/aspect/wide apply on restart, the rest at once |
 | Settings file | `settings.ini` read at start, monitor-based defaults on first start; written by the menu |
 | First-start setup | asks for the disc image or game folder once, checks the version, extracts an image |
-| Native Linux build | started, paused |
+| Native Linux build | toolkit builds and passes its tests on Linux (WSL); the game itself not yet |
 
 Expect crashes and glitches. Bug reports are welcome; please include the log (`../logs/` from the run
 scripts, else `%LOCALAPPDATA%\mksm_recomp\last_run.log`; see [Run](#run)), never game files.

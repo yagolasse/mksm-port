@@ -38,6 +38,8 @@
 #include <stdbool.h>
 #include <string.h>
 #include <math.h>
+#include <io.h>
+#include <fcntl.h>
 
 /* xboxrecomp runtime headers */
 #include <xbox/xboxrecomp.h>
@@ -732,6 +734,135 @@ static void migrate_legacy_saves(void)
     }
 }
 
+/* ── Built-in run defaults (plan B10a) ─────────────────────── */
+
+/* What the run scripts set for the game to run, as the exe's own defaults, so a
+ * double-clicked exe runs as tools/run.sh does. Applied after the settings file
+ * (environment > settings.ini > this table), only where the variable isn't set at
+ * all: an empty value counts as set (RECOMP_APU_EP_ALIVE= / RECOMP_PB_WALK= are the
+ * A/B "off"). presence: the toolkit only checks that the variable exists, so 0 or
+ * empty must remove it. MKSM_DEFAULTS=0 skips the table (the bare toolkit, e.g. for
+ * a capture replay). */
+typedef struct EnvDefault {
+    const char *name;
+    const char *value;
+    bool presence;
+} EnvDefault;
+
+static const EnvDefault k_env_defaults[] = {
+    { "RECOMP_PB_EXEC",         "1",          true  },  /* D3D init waits for the GPU */
+    { "RECOMP_PB_GPU",          "1",          false },  /* xemu's PGRAPH draws */
+    { "RECOMP_FB_WINDOW",       "1",          true  },  /* the game window */
+    { "RECOMP_USB",             "1",          true  },  /* emulated OHCI: the pads */
+    { "RECOMP_KEYBOARD",        "1",          false },  /* keyboard on pad 1 */
+    { "RECOMP_AC97_READY",      "1",          true  },  /* codec ready + emulated APU */
+    { "RECOMP_APU_DSP_ACK",     "auto",       false },  /* (the toolkit's default too) */
+    { "RECOMP_APU_EP_ALIVE",    "0xFE85A018", false },  /* plan 2.7a6 */
+    { "RECOMP_HEAP_RECLAIM",    "1",          true  },  /* contiguous arena reuse */
+    { "RECOMP_TITLE_KEVENTS",   "1",          false },  /* host events for title events */
+    { "RECOMP_PB_WALK",         "dma",        false },  /* plan H.5a */
+    { "RECOMP_AUDIO_BUF_COUNT", "8",          false },  /* 85 ms, plan H.5a */
+};
+
+/* 0 = unset, 1 = set (value in buf, may be empty). Reads the process environment
+ * block, which tells an empty variable from a missing one. */
+static int env_state(const char *name, char *buf, DWORD cap)
+{
+    DWORD n;
+    SetLastError(0);
+    n = GetEnvironmentVariableA(name, buf, cap);
+    if (n == 0) {
+        buf[0] = '\0';
+        return GetLastError() == ERROR_ENVVAR_NOT_FOUND ? 0 : 1;
+    }
+    if (n >= cap)
+        buf[0] = '\0';          /* too long for us: only "set" matters then */
+    return 1;
+}
+
+static void apply_env_defaults(void)
+{
+    const char *skip = getenv("MKSM_DEFAULTS");
+    char val[64];
+
+    if (skip && strcmp(skip, "0") == 0) {
+        fprintf(stderr, "[ENV] built-in defaults skipped (MKSM_DEFAULTS=0)\n");
+        return;
+    }
+    for (size_t i = 0; i < sizeof(k_env_defaults) / sizeof(k_env_defaults[0]); i++) {
+        const EnvDefault *d = &k_env_defaults[i];
+        if (!env_state(d->name, val, sizeof(val))) {
+            _putenv_s(d->name, d->value);
+            /* A relaunch (settings menu) works it out again, like a file value. */
+            mksm_settings_derived_env(d->name);
+            fprintf(stderr, "[ENV] %s=%s (default)\n", d->name, d->value);
+        } else if (d->presence && (!val[0] || strcmp(val, "0") == 0)) {
+            /* getenv (the CRT's copy) no longer has it, so the toolkit sees off; the
+             * process block keeps 0, so a relaunched child is off too. */
+            _putenv_s(d->name, "");
+            SetEnvironmentVariableA(d->name, "0");
+            fprintf(stderr, "[ENV] %s off\n", d->name);
+        }
+    }
+}
+
+/* ── Player log (plan B10a) ────────────────────────────────── */
+
+/* Started from Explorer, a GUI-subsystem exe has nowhere to print: stdout/stderr
+ * then go to %LOCALAPPDATA%\mksm_recomp\last_run.log (the one before kept as
+ * last_run.old.log). A pipe or a file (the run scripts, smoke_test.py) is left
+ * alone. A settings relaunch inherits the handle and writes on into the same file. */
+static bool std_redirected(DWORD which)
+{
+    HANDLE h = GetStdHandle(which);
+    DWORD type;
+    if (!h || h == INVALID_HANDLE_VALUE)
+        return false;
+    type = GetFileType(h);
+    return type == FILE_TYPE_DISK || type == FILE_TYPE_PIPE;
+}
+
+static void attach_stream(FILE *s, int fd)
+{
+    FILE *tmp;
+    /* No handle at start: the CRT stream has no descriptor; give it one to replace. */
+    if (_fileno(s) < 0 && freopen_s(&tmp, "NUL", "w", s) != 0)
+        return;
+    _dup2(fd, _fileno(s));
+}
+
+static void player_log_open(void)
+{
+    char dir[MAX_PATH], path[MAX_PATH], old[MAX_PATH];
+    HANDLE h;
+    int fd;
+
+    if (std_redirected(STD_OUTPUT_HANDLE) || std_redirected(STD_ERROR_HANDLE))
+        return;
+    if (FAILED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, dir)))
+        return;
+    snprintf(path, MAX_PATH, "%s\\" SAVE_DIR_NAME, dir);
+    CreateDirectoryA(path, NULL);
+    snprintf(old, MAX_PATH, "%s\\last_run.old.log", path);
+    snprintf(dir, MAX_PATH, "%s", path);
+    snprintf(path, MAX_PATH, "%s\\last_run.log", dir);
+    MoveFileExA(path, old, MOVEFILE_REPLACE_EXISTING);  /* none yet, or in use: fine */
+    h = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE)
+        return;
+    fd = _open_osfhandle((intptr_t)h, _O_WRONLY | _O_TEXT);
+    if (fd < 0) {
+        CloseHandle(h);
+        return;
+    }
+    SetStdHandle(STD_OUTPUT_HANDLE, h);   /* GetStdHandle users, and a settings relaunch */
+    SetStdHandle(STD_ERROR_HANDLE, h);
+    attach_stream(stdout, fd);
+    attach_stream(stderr, fd);
+    /* fd stays open for the process lifetime: it owns h. */
+}
+
 /* ── WinMain ───────────────────────────────────────────────── */
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
@@ -745,7 +876,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     (void)lpCmdLine;
     (void)nCmdShow;
 
-    /* Unbuffered output for immediate visibility during debugging */
+    /* Double-clicked: the output goes to <base>\last_run.log (B10a). Before setvbuf:
+     * freopen resets a stream's buffering. */
+    player_log_open();
+    /* Unbuffered output for immediate visibility during debugging (and so a crash
+     * leaves the whole log on disk) */
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
@@ -767,6 +902,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* The settings file before anything reads the variables it sets (plan B7b1). */
     resolve_base_dir();
     mksm_settings_load(g_base_dir);
+    /* The run scripts' defaults, where neither the environment nor the file set them (B10a). */
+    apply_env_defaults();
     if (!load_xbe(g_xbe_path, &xbe_data, &xbe_size)) {
         fprintf(stderr, "Failed to load %s\n", g_xbe_path);
         MessageBoxA(NULL, "Failed to load default.xbe.\n"

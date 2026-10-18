@@ -27,8 +27,8 @@ Work in progress. Windows x64 is the only host tested so far.
 | Settings file | `settings.ini` read at start, monitor-based defaults on first start; written by the menu |
 | Native Linux build | started, paused |
 
-Expect crashes and glitches. Bug reports are welcome; please include the log from `../logs/`
-(see [Run](#run)), never game files.
+Expect crashes and glitches. Bug reports are welcome; please include the log (`../logs/` from the run
+scripts, else `%LOCALAPPDATA%\mksm_recomp\last_run.log`; see [Run](#run)), never game files.
 
 ## What's included
 
@@ -111,9 +111,12 @@ binary, so you produce it yourself from your own copy (step 3 below).
 tools/run.sh            # Git Bash; tools/run.bat from cmd
 ```
 
-The scripts set the needed defaults, use `../game_files` as the game folder and write a log to
-`../logs/run_<timestamp>.log`. The exe can also be started directly with the game folder as
-its first argument (it then logs nothing: it's a GUI program).
+The scripts use `../game_files` as the game folder and write a log to
+`../logs/run_<timestamp>.log`. The exe can also be started directly (double-clicked, or with
+the game folder as its first argument; without one it looks for `game\` next to where it is
+started): the switches the game needs to run (GPU path, game window, pads, sound) are built in,
+and with nowhere to print (no redirect) it writes its log to
+`%LOCALAPPDATA%\mksm_recomp\last_run.log` (the run before it: `last_run.old.log`).
 
 ### Keys and controllers
 
@@ -196,9 +199,9 @@ tools\run.bat
 | `RECOMP_MOVIE_ZOOM_GAUNTLET=1` | off | also zoom the Gauntlet trailer (cuts the top and bottom of its full-frame shots) |
 | **Sound** | | |
 | `RECOMP_APU_VOLUME=<0..1>` | 1 | output volume (0 = silent) |
-| `RECOMP_AUDIO_BUF_COUNT=<n>` | 8 (run scripts) | audio buffers of ~10.7 ms; raise it if the sound crackles |
+| `RECOMP_AUDIO_BUF_COUNT=<n>` | 8 | audio buffers of ~10.7 ms; raise it if the sound crackles |
 | **Input** | | |
-| `RECOMP_KEYBOARD=0` | on (run scripts) | turn the keyboard pad off |
+| `RECOMP_KEYBOARD=0` | on | turn the keyboard pad off |
 | `RECOMP_MKB=1` | off | mouse+keyboard pad on pad 1 (mouse = right stick); F9 captures the mouse |
 | `RECOMP_MKB_SENS`, `_DZ`, `_ACC`, `_FULL`, `_INVERT_Y=1`, `_SWAP_STICKS=1` | | mouse sensitivity, dead-zone floor, acceleration, full-throw speed, inverted Y, mouse on the left stick. Also read from `mkb.ini` next to the exe (`sens=`, `dz=`, ...; `RECOMP_MKB_INI` names another file) |
 | **Files** | | |
@@ -207,8 +210,9 @@ tools\run.bat
 | `RECOMP_SETTINGS=0`, `=1`, `=<path>` | `0` in the run scripts, else the file | skip `settings.ini`, use it, or use another file |
 | `MKSM_EXE`, `MKSM_LOG` | `build/Release/mksm_recomp.exe`, `../logs/run_<timestamp>.log` | run scripts only: which exe to run, where to log |
 
-The run scripts also set switches the game needs to run (GPU path, game window, USB pads,
-audio); leave those alone. `CLAUDE.md` documents them, the pipeline and the debugging switches.
+The switches the game needs to run (GPU path, game window, USB pads, audio) are on by default,
+in the exe and the run scripts; leave those alone (`0` turns one off, e.g. `RECOMP_FB_WINDOW=0`
+for a headless run). `CLAUDE.md` documents them, the pipeline and the debugging switches.
 
 ## Repository map
 

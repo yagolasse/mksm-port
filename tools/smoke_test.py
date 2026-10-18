@@ -74,6 +74,8 @@ RUN_ENV = {
     "RECOMP_APU_DSP_ACK": "auto",
     "RECOMP_HEAP_RECLAIM": "1",
     "RECOMP_TITLE_KEVENTS": "1",
+    # Headless: the exe opens its window by default since plan B10a (0 = off).
+    "RECOMP_FB_WINDOW": "0",
 }
 
 # The 1.12c pad script: Start through the title, brightness and main menu,

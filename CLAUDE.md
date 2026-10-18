@@ -148,9 +148,24 @@ an object nothing references, and a plain link drops it ("No available renderer"
 ## Run
 The exe takes the extracted game folder (holding `default.xbe`) from its first argument, else
 `MKSM_GAME_DIR`, else `game\` in the working directory (`resolve_game_dir` in `src/main.c`).
-It's a GUI-subsystem exe, so stdout only appears when redirected. Use a run script, which
-defaults to `../game_files` and logs to `../logs/run_<timestamp>.log`, and turns on the GPU path and the
-game window (`RECOMP_PB_GPU=1`, `RECOMP_FB_WINDOW=1`; `=0` turns either off):
+It's a GUI-subsystem exe: with stdout/stderr not a file or a pipe (double-clicked, or a NUL /
+console handle) `player_log_open` (`main.c`, plan B10a) sends both to
+`%LOCALAPPDATA%\mksm_recomp\last_run.log` (the previous one renamed `last_run.old.log`; a
+settings relaunch inherits the handle and keeps writing to it). The switches the game needs are
+built in since B10a (`k_env_defaults` / `apply_env_defaults` in `main.c`, right after the settings
+file: environment > `settings.ini` > table, filled only where a variable is unset; an empty value
+counts as set, so `RECOMP_APU_EP_ALIVE=` / `RECOMP_PB_WALK=` stay the A/B "off"): `RECOMP_PB_EXEC`,
+`_PB_GPU`, `_FB_WINDOW`, `_USB`, `_KEYBOARD`, `_AC97_READY`, `_APU_DSP_ACK=auto`,
+`_APU_EP_ALIVE=0xFE85A018`, `_HEAP_RECLAIM`, `_TITLE_KEVENTS`, `_PB_WALK=dma`,
+`_AUDIO_BUF_COUNT=8` (`[ENV] X=V (default)` per filled one). Five of them the toolkit only checks
+for presence (`_PB_EXEC`, `_FB_WINDOW`, `_USB`, `_AC97_READY`, `_HEAP_RECLAIM`): there `0` or
+empty means off, done by removing it from the CRT environment (what `getenv` reads) and leaving
+`0` in the process block (what a relaunched child inherits; `[ENV] X off`). The filled ones are
+registered with `mksm_settings_derived_env`, so Apply and restart works them out again.
+`MKSM_DEFAULTS=0` skips the table (the bare toolkit: e.g. a capture replay). The run scripts
+still set the same values (a log then has no `(default)` lines) and pass `0` for off. Use a run
+script, which defaults to `../game_files` and logs to `../logs/run_<timestamp>.log`
+(`RECOMP_PB_GPU=0` / `RECOMP_FB_WINDOW=0` turn the GPU path / the window off):
 ```bash
 tools/run.sh                                  # MKSM_GAME_DIR / MKSM_EXE / MKSM_LOG override
 RECOMP_WATCHDOG_SECS=10 timeout 60 tools/run.sh
@@ -185,8 +200,9 @@ exports the HWND, a "GPU presents" switch (no GDI blit) and the client size in p
 the GPU path uses them (plan 2.6b), so `RECOMP_FB_DUMP` sees only an occasional sampled frame
 there: use `RECOMP_PB_GPU_DUMP`, or `RECOMP_PB_GPU_PRESENT=pbo`.
 `tools/run.bat` is the cmd twin (same defaults and overrides). It writes the log without a live
-console view and prints the last 40 lines on exit; in cmd, turn `RECOMP_AC97_READY` off with `0`
-(empty means unset there). Keep the two scripts' defaults in sync.
+console view and prints the last 40 lines on exit; in cmd, turn a switch off with `0` (empty
+means unset there). Keep the two scripts' defaults in sync. The smoke test sets
+`RECOMP_FB_WINDOW=0` (headless; unset would open the window now).
 The failure path for a missing XBE shows a MessageBox, which blocks an unattended run.
 Saves and settings (plan B7b1): `main.c` passes the toolkit a title-specific base dir,
 `%LOCALAPPDATA%\mksm_recomp` (`resolve_base_dir`): the emulated hard disk (`Partition0-5.img`,

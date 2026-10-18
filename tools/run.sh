@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Run the recompiled exe against an extracted game folder and capture its output.
 # tools/run.bat is the Windows (cmd) twin: keep the defaults of the two scripts in sync.
-# tools/smoke_test.py (RUN_ENV) uses the same defaults too, except the two display ones
-# (RECOMP_PB_GPU, RECOMP_FB_WINDOW): it runs headless on the software executor unless --gpu.
+# tools/smoke_test.py (RUN_ENV) uses the same defaults too, except RECOMP_FB_WINDOW=0
+# (headless).
 #
 # The exe is a GUI-subsystem program, so its printf/stderr output only goes
-# somewhere when redirected; this script pipes both into a log file.
+# somewhere when redirected; this script pipes both into a log file (started
+# without a redirect it writes %LOCALAPPDATA%\mksm_recomp\last_run.log).
+# The exe has the defaults below built in (plan B10a, applied where a variable
+# is unset); the script still sets them so a log shows what the run used.
 #
 # Usage: tools/run.sh [extra exe args...]
 #
@@ -19,7 +22,7 @@
 #      RECOMP_SETTINGS defaults to 0: dev runs ignore the player's settings.ini
 #                    (no file = the Xbox look); 1 = use it, <path> = that file.
 #      Toolkit vars such as RECOMP_WATCHDOG_SECS / RECOMP_AC97_READY pass through.
-#      RECOMP_PB_EXEC defaults to 1: boot needs the pushbuffer executor, since
+#      RECOMP_PB_EXEC defaults to 1 (0 turns it off): boot needs the pushbuffer executor, since
 #      D3D init waits for the GPU to report progress.
 #      RECOMP_AC97_READY defaults to 1 (0 or empty turns it off): reports the
 #      AC'97 codec and brings up the emulated APU. Without it DirectSoundCreate
@@ -68,19 +71,15 @@ if [ ! -f "$EXE" ]; then
 fi
 
 export RECOMP_PB_EXEC="${RECOMP_PB_EXEC-1}"
+# RECOMP_AC97_READY, _USB, _HEAP_RECLAIM, _FB_WINDOW, _PB_EXEC: the toolkit only checks that
+# they exist; the exe turns 0 into "not there" and fills an unset one with its default (on,
+# plan B10a), so "off" is passed as 0 (empty becomes 0 here: an empty variable may not reach it).
 RECOMP_AC97_READY="${RECOMP_AC97_READY-1}"
-# The runtime only checks that the variable exists, so "off" means unset.
-if [ -z "$RECOMP_AC97_READY" ] || [ "$RECOMP_AC97_READY" = 0 ]; then
-    unset RECOMP_AC97_READY
-else
-    export RECOMP_AC97_READY
-fi
+[ -n "$RECOMP_AC97_READY" ] || RECOMP_AC97_READY=0
+export RECOMP_AC97_READY
 RECOMP_USB="${RECOMP_USB-1}"
-if [ -z "$RECOMP_USB" ] || [ "$RECOMP_USB" = 0 ]; then
-    unset RECOMP_USB
-else
-    export RECOMP_USB
-fi
+[ -n "$RECOMP_USB" ] || RECOMP_USB=0
+export RECOMP_USB
 export RECOMP_KEYBOARD="${RECOMP_KEYBOARD-1}"
 export RECOMP_APU_DSP_ACK="${RECOMP_APU_DSP_ACK-auto}"
 export RECOMP_APU_EP_ALIVE="${RECOMP_APU_EP_ALIVE-0xFE85A018}"
@@ -91,21 +90,15 @@ export RECOMP_PB_WALK="${RECOMP_PB_WALK-dma}"
 # several times a second in movies and the level (plan H.5a).
 export RECOMP_AUDIO_BUF_COUNT="${RECOMP_AUDIO_BUF_COUNT-8}"
 RECOMP_HEAP_RECLAIM="${RECOMP_HEAP_RECLAIM-1}"
-if [ -z "$RECOMP_HEAP_RECLAIM" ] || [ "$RECOMP_HEAP_RECLAIM" = 0 ]; then
-    unset RECOMP_HEAP_RECLAIM
-else
-    export RECOMP_HEAP_RECLAIM
-fi
+[ -n "$RECOMP_HEAP_RECLAIM" ] || RECOMP_HEAP_RECLAIM=0
+export RECOMP_HEAP_RECLAIM
 export RECOMP_TITLE_KEVENTS="${RECOMP_TITLE_KEVENTS-1}"
 export RECOMP_TITLE_KEVENTS_SKIP="${RECOMP_TITLE_KEVENTS_SKIP-}"
 export RECOMP_PB_GPU="${RECOMP_PB_GPU-1}"
 export RECOMP_SETTINGS="${RECOMP_SETTINGS-0}"
 RECOMP_FB_WINDOW="${RECOMP_FB_WINDOW-1}"
-if [ -z "$RECOMP_FB_WINDOW" ] || [ "$RECOMP_FB_WINDOW" = 0 ]; then
-    unset RECOMP_FB_WINDOW
-else
-    export RECOMP_FB_WINDOW
-fi
+[ -n "$RECOMP_FB_WINDOW" ] || RECOMP_FB_WINDOW=0
+export RECOMP_FB_WINDOW
 
 mkdir -p "$(dirname "$LOG")"
 LOG="$(cd "$(dirname "$LOG")" && pwd)/$(basename "$LOG")"

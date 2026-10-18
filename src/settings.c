@@ -153,7 +153,7 @@ void mksm_settings_defaults(MksmSettings *s, unsigned width, unsigned height)
 static char g_path[MAX_PATH];
 static unsigned char g_from_file[MKSM_SET_COUNT];
 static MksmSettings g_file;         /* valid while g_path[0] */
-static const char *g_derived[8];
+static const char *g_derived[32];
 static int g_derived_count;
 
 const char *mksm_settings_path(void) { return g_path; }

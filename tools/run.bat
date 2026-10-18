@@ -1,12 +1,15 @@
 @echo off
 rem Run the recompiled exe against an extracted game folder and capture its output.
 rem Windows (cmd) twin of tools/run.sh: keep the defaults of the two scripts in sync.
-rem tools/smoke_test.py (RUN_ENV) uses the same defaults too, except the two display ones
-rem (RECOMP_PB_GPU, RECOMP_FB_WINDOW): it runs headless on the software executor unless --gpu.
+rem tools/smoke_test.py (RUN_ENV) uses the same defaults too, except RECOMP_FB_WINDOW=0
+rem (headless).
 rem
 rem The exe is a GUI-subsystem program, so its printf/stderr output only goes
 rem somewhere when redirected; this script writes both into a log file and
-rem prints the tail of it when the game exits. For a live view, run in another
+rem prints the tail of it when the game exits (started without a redirect it
+rem writes %LOCALAPPDATA%\mksm_recomp\last_run.log). The exe has the defaults
+rem below built in (plan B10a, applied where a variable is unset); the script
+rem still sets them so a log shows what the run used. For a live view, run in another
 rem window:  powershell Get-Content -Wait <log>
 rem
 rem Usage: tools\run.bat [extra exe args...]
@@ -21,7 +24,7 @@ rem                    settings.ini stay in %LOCALAPPDATA%\mksm_recomp.
 rem      RECOMP_SETTINGS defaults to 0: dev runs ignore the player's settings.ini
 rem                    (no file = the Xbox look); 1 = use it, <path> = that file.
 rem      Toolkit vars such as RECOMP_WATCHDOG_SECS pass through.
-rem      RECOMP_PB_EXEC defaults to 1: boot needs the pushbuffer executor, since
+rem      RECOMP_PB_EXEC defaults to 1 (0 turns it off): boot needs the pushbuffer executor, since
 rem      D3D init waits for the GPU to report progress.
 rem      RECOMP_AC97_READY defaults to 1 (0 turns it off; cmd can't tell empty
 rem      from unset): reports the AC'97 codec and brings up the emulated APU.
@@ -79,12 +82,12 @@ if not exist "%EXE%" (
     exit /b 1
 )
 
+rem RECOMP_AC97_READY, _USB, _HEAP_RECLAIM, _FB_WINDOW, _PB_EXEC: the toolkit only checks that
+rem they exist; the exe turns 0 into "not there" and fills an unset one with its default
+rem (on, plan B10a), so 0 is passed through as "off".
 if not defined RECOMP_PB_EXEC set "RECOMP_PB_EXEC=1"
 if not defined RECOMP_AC97_READY set "RECOMP_AC97_READY=1"
-rem The runtime only checks that the variable exists, so "off" means unset.
-if "%RECOMP_AC97_READY%"=="0" set "RECOMP_AC97_READY="
 if not defined RECOMP_USB set "RECOMP_USB=1"
-if "%RECOMP_USB%"=="0" set "RECOMP_USB="
 if not defined RECOMP_KEYBOARD set "RECOMP_KEYBOARD=1"
 if not defined RECOMP_SETTINGS set "RECOMP_SETTINGS=0"
 if not defined RECOMP_APU_DSP_ACK set "RECOMP_APU_DSP_ACK=auto"
@@ -94,11 +97,9 @@ if not defined RECOMP_PB_WALK set "RECOMP_PB_WALK=dma"
 rem 8 x 512-sample device buffers (85 ms); the toolkit's 4 (43 ms) ran dry several times a second.
 if not defined RECOMP_AUDIO_BUF_COUNT set "RECOMP_AUDIO_BUF_COUNT=8"
 if not defined RECOMP_HEAP_RECLAIM set "RECOMP_HEAP_RECLAIM=1"
-if "%RECOMP_HEAP_RECLAIM%"=="0" set "RECOMP_HEAP_RECLAIM="
 if not defined RECOMP_TITLE_KEVENTS set "RECOMP_TITLE_KEVENTS=1"
 if not defined RECOMP_PB_GPU set "RECOMP_PB_GPU=1"
 if not defined RECOMP_FB_WINDOW set "RECOMP_FB_WINDOW=1"
-if "%RECOMP_FB_WINDOW%"=="0" set "RECOMP_FB_WINDOW="
 
 for %%I in ("%LOG%") do if not exist "%%~dpI" mkdir "%%~dpI"
 echo exe:  %EXE%

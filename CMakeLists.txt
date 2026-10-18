@@ -40,7 +40,10 @@ set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/xboxrecomp" CACHE PATH
 # SDL2 is built from its source here and linked static (one exe, no SDL2.dll;
 # zlib licence, see NOTICE). OFF = the GDI window, for A/B runs.
 option(MKSM_SDL_WINDOW "Game window through SDL2 (static) instead of GDI" ON)
-if(MKSM_SDL_WINDOW)
+if(NOT WIN32)
+    # POSIX (plan H.5c2): the toolkit always uses SDL2 and finds the system's (find_package).
+    set(MKSM_SDL_WINDOW ON)
+elseif(MKSM_SDL_WINDOW)
     include(FetchContent)
     FetchContent_Declare(SDL2
         GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
@@ -73,19 +76,29 @@ add_subdirectory(${XBOXRECOMP_DIR} ${CMAKE_BINARY_DIR}/xboxrecomp)
 # time, so a newly generated file (an extra chunk, recomp_stubs_unresolved.c)
 # is silently left out of the build and shows up as unresolved externals.
 file(GLOB RECOMP_GEN_SOURCES CONFIGURE_DEPENDS "src/recomp/gen/*.c")
+if(NOT WIN32)
+    # Lifted CRT functions named like libc's (write, close, ...) would take over the toolkit's
+    # libc calls on POSIX: rename them in the generated code (src/recomp_libc_names.h).
+    set_source_files_properties(${RECOMP_GEN_SOURCES} PROPERTIES COMPILE_OPTIONS
+        "-include;${CMAKE_CURRENT_SOURCE_DIR}/src/recomp_libc_names.h")
+endif()
 
 # Core game sources
 set(GAME_SOURCES
     src/main.c
-    src/prof.c
     src/settings.c
-    src/setup.c
-    src/xiso.c
     src/recomp_manual.c
     # Add game-specific sources here, e.g.:
     # src/asset_loader.c
     # src/custom_renderer.c
 )
+if(WIN32)
+    list(APPEND GAME_SOURCES src/prof.c src/setup.c src/xiso.c)
+else()
+    # POSIX (plan H.5c2a): the profiler, the first-launch setup and the disc extractor are
+    # Win32 for now; src/posix_stubs.c stands in for them.
+    list(APPEND GAME_SOURCES src/posix_stubs.c)
+endif()
 
 # The recomp pipeline also generates a dispatch header and function declarations.
 # These are included by the generated .c files:
@@ -109,20 +122,28 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 )
 
 # Windows SDK libraries needed at link time
-target_link_libraries(${PROJECT_NAME} PRIVATE
-    d3d11
-    dxgi
-    dxguid
-    xinput
-    winmm
-    # Lets the fault handler resolve the host RIP back to the generated
-    # function's symbol, i.e. to the guest function that faulted.
-    dbghelp
-    # CNG hashes for the default.xbe version check (src/xiso.c, B10b1).
-    bcrypt
-    # The first-launch setup's progress window (src/setup.c, B10b2).
-    comctl32
-)
+if(WIN32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        d3d11
+        dxgi
+        dxguid
+        xinput
+        winmm
+        # Lets the fault handler resolve the host RIP back to the generated
+        # function's symbol, i.e. to the guest function that faulted.
+        dbghelp
+        # CNG hashes for the default.xbe version check (src/xiso.c, B10b1).
+        bcrypt
+        # The first-launch setup's progress window (src/setup.c, B10b2).
+        comctl32
+    )
+else()
+    # dladdr names the faulting function in the crash report (src/main.c); -rdynamic puts the
+    # generated sub_XXXXXXXX symbols in the dynamic table it reads.
+    find_package(Threads REQUIRED)
+    target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m)
+    set_target_properties(${PROJECT_NAME} PROPERTIES ENABLE_EXPORTS ON)
+endif()
 
 # MSVC-specific: large address aware, increase section limit for big generated files
 if(MSVC)
@@ -155,7 +176,7 @@ endif()
 set(MKSM_CLANG_CL "C:/clang+llvm-18.1.8-x86_64-pc-windows-msvc/bin/clang-cl.exe" CACHE FILEPATH
     "clang-cl for the GPU renderer library (src/gpu); empty or missing skips it")
 find_program(MKSM_NINJA ninja)
-if(MKSM_CLANG_CL AND EXISTS "${MKSM_CLANG_CL}" AND MKSM_NINJA)
+if(WIN32 AND MKSM_CLANG_CL AND EXISTS "${MKSM_CLANG_CL}" AND MKSM_NINJA)
     include(ExternalProject)
     set(MKSM_GPU_BIN "${CMAKE_BINARY_DIR}/mksm_gpu")
     set(MKSM_GPU_LIB "${MKSM_GPU_BIN}/mksm_gpu.lib")
@@ -258,10 +279,12 @@ target_include_directories(settings_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 add_test(NAME settings COMMAND settings_test)
 # xiso: the XDVDFS reader/extractor and the CNG hashes on synthetic images (B10b1);
 # `xiso_test --extract <image> <dir>` extracts a real image (dev use, the B10b1 gate).
-add_executable(xiso_test tests/xiso_test.c src/xiso.c)
-target_include_directories(xiso_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(xiso_test PRIVATE bcrypt shell32)
-add_test(NAME xiso COMMAND xiso_test)
+if(WIN32)
+    add_executable(xiso_test tests/xiso_test.c src/xiso.c)
+    target_include_directories(xiso_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(xiso_test PRIVATE bcrypt shell32)
+    add_test(NAME xiso COMMAND xiso_test)
+endif()
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
     set(MKSM_GAME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../game_files" CACHE PATH

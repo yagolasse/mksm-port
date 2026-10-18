@@ -149,10 +149,87 @@ void mksm_settings_defaults(MksmSettings *s, unsigned width, unsigned height)
     set_value(s, MKSM_SET_GAME_DIR, "");
 }
 
+/* ── The file in use (platform parts first) ───────────────────── */
+
 #ifdef _WIN32
 #include <windows.h>
 
-static char g_path[MAX_PATH];
+#define SETTINGS_PATH_MAX MAX_PATH
+#define SETTINGS_SEP "\\"
+
+static int env_set(const char *name, const char *value) { return _putenv_s(name, value); }
+static int env_name_eq(const char *a, const char *b) { return _stricmp(a, b) == 0; }
+static unsigned long os_error(void) { return GetLastError(); }
+static void make_dir(const char *dir) { CreateDirectoryA(dir, NULL); }
+
+static void full_path(const char *in, char *out, size_t cap)
+{
+    if (!GetFullPathNameA(in, (DWORD)cap, out, NULL))
+        snprintf(out, cap, "%s", in);
+}
+
+/* tmp over path; 0 = done (tmp removed either way). */
+static int replace_file(const char *tmp, const char *path)
+{
+    if (MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING))
+        return 0;
+    DeleteFileA(tmp);
+    return -1;
+}
+
+/* The primary monitor's mode in physical pixels (ENUM_CURRENT_SETTINGS, whatever the DPI
+ * awareness); 0 = unknown. */
+static int monitor_size(unsigned *w, unsigned *h)
+{
+    DEVMODEA dm = { .dmSize = sizeof(dm) };
+    if (!EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &dm) || !dm.dmPelsHeight)
+        return 0;
+    *w = dm.dmPelsWidth;
+    *h = dm.dmPelsHeight;
+    return 1;
+}
+#else
+#include <errno.h>
+#include <limits.h>
+#include <strings.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#define SETTINGS_PATH_MAX PATH_MAX
+#define SETTINGS_SEP "/"
+
+static int env_set(const char *name, const char *value) { return setenv(name, value, 1); }
+static int env_name_eq(const char *a, const char *b) { return strcmp(a, b) == 0; }
+static unsigned long os_error(void) { return (unsigned long)errno; }
+static void make_dir(const char *dir) { mkdir(dir, 0755); }
+
+static void full_path(const char *in, char *out, size_t cap)
+{
+    char cwd[PATH_MAX];
+    if (in[0] != '/' && getcwd(cwd, sizeof(cwd)))
+        snprintf(out, cap, "%s/%s", cwd, in);
+    else
+        snprintf(out, cap, "%s", in);
+}
+
+static int replace_file(const char *tmp, const char *path)
+{
+    if (rename(tmp, path) == 0)
+        return 0;
+    remove(tmp);
+    return -1;
+}
+
+/* Not known before the window opens (SDL isn't up yet): the 640x480 defaults. */
+static int monitor_size(unsigned *w, unsigned *h)
+{
+    (void)w;
+    (void)h;
+    return 0;
+}
+#endif
+
+static char g_path[SETTINGS_PATH_MAX];
 static unsigned char g_from_file[MKSM_SET_COUNT];
 static MksmSettings g_file;         /* valid while g_path[0] */
 static const char *g_derived[32];
@@ -170,7 +247,7 @@ void mksm_settings_derived_env(const char *env)
 int mksm_settings_env_from_file(const char *env)
 {
     for (int i = 0; i < MKSM_SET_COUNT; i++)
-        if (g_from_file[i] && _stricmp(defs[i].env, env) == 0)
+        if (g_from_file[i] && env_name_eq(defs[i].env, env))
             return 1;
     return 0;
 }
@@ -196,7 +273,7 @@ static char *read_text(const char *path)
 
 static int write_file(const char *path, const MksmSettings *s)
 {
-    char out[8192], tmp[MAX_PATH + 8];
+    char out[8192], tmp[SETTINGS_PATH_MAX + 8];
     size_t n = mksm_settings_format(s, out, sizeof(out));
     FILE *f;
     if (n >= sizeof(out))
@@ -207,15 +284,11 @@ static int write_file(const char *path, const MksmSettings *s)
         return -1;
     if (fwrite(out, 1, n, f) != n) {
         fclose(f);
-        DeleteFileA(tmp);
+        remove(tmp);
         return -1;
     }
     fclose(f);
-    if (!MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) {
-        DeleteFileA(tmp);
-        return -1;
-    }
-    return 0;
+    return replace_file(tmp, path);
 }
 
 int mksm_settings_save(const MksmSettings *s)
@@ -223,7 +296,7 @@ int mksm_settings_save(const MksmSettings *s)
     if (!g_path[0])
         return -1;
     if (write_file(g_path, s) != 0) {
-        fprintf(stderr, "[SETTINGS] could not write %s (error %lu)\n", g_path, GetLastError());
+        fprintf(stderr, "[SETTINGS] could not write %s (error %lu)\n", g_path, os_error());
         return -1;
     }
     if (s != &g_file)
@@ -232,6 +305,9 @@ int mksm_settings_save(const MksmSettings *s)
     return 0;
 }
 
+/* ── Relaunch (settings menu) ──────────────────────────────── */
+
+#ifdef _WIN32
 /* A relaunched process (mksm_settings_restart) waits for its parent to be gone: the parent
  * still holds the disk images, the audio device and the window when it starts us. */
 static void wait_for_parent(void)
@@ -304,6 +380,52 @@ int mksm_settings_restart(void)
     TerminateProcess(GetCurrentProcess(), 0);
     return -1;
 }
+#else
+/* POSIX: the exe replaces itself (execv keeps the pid, the working dir and the std fds), so
+ * there is no parent to wait for; the old process's threads, window and audio device go with
+ * the exec. The marker only tells the new process it was relaunched. */
+static void wait_for_parent(void)
+{
+    if (!getenv("MKSM_RESTART_PARENT"))
+        return;
+    unsetenv("MKSM_RESTART_PARENT");
+    fprintf(stderr, "[SETTINGS] restarted\n");
+}
+
+int mksm_settings_restart(void)
+{
+    static char cmdline[8192];
+    char *argv[64];
+    int argc = 0;
+    size_t n;
+    FILE *f = fopen("/proc/self/cmdline", "rb");
+
+    if (!f)
+        return -1;
+    n = fread(cmdline, 1, sizeof(cmdline) - 1, f);
+    fclose(f);
+    cmdline[n] = '\0';
+    for (size_t i = 0; i < n && argc < 63; i += strlen(cmdline + i) + 1)
+        argv[argc++] = cmdline + i;
+    argv[argc] = NULL;
+
+    for (int i = 0; i < MKSM_SET_COUNT; i++)
+        if (g_from_file[i])
+            unsetenv(defs[i].env);
+    for (int i = 0; i < g_derived_count; i++)
+        unsetenv(g_derived[i]);
+    setenv("MKSM_RESTART_PARENT", "1", 1);
+    fprintf(stderr, "[SETTINGS] restarting\n");
+    fflush(stdout);
+    fflush(stderr);
+    execv("/proc/self/exe", argv);
+    fprintf(stderr, "[SETTINGS] restart failed (errno %d)\n", errno);
+    unsetenv("MKSM_RESTART_PARENT");
+    return -1;
+}
+#endif
+
+/* ── Load ──────────────────────────────────────────────────── */
 
 void mksm_settings_load(const char *base_dir)
 {
@@ -317,12 +439,10 @@ void mksm_settings_load(const char *base_dir)
         fprintf(stderr, "[SETTINGS] skipped (RECOMP_SETTINGS=0)\n");
         return;
     }
-    if (e && *e && strcmp(e, "1") != 0) {
-        if (!GetFullPathNameA(e, MAX_PATH, g_path, NULL))
-            snprintf(g_path, MAX_PATH, "%s", e);
-    } else {
-        snprintf(g_path, MAX_PATH, "%s\\settings.ini", base_dir);
-    }
+    if (e && *e && strcmp(e, "1") != 0)
+        full_path(e, g_path, sizeof(g_path));
+    else
+        snprintf(g_path, sizeof(g_path), "%s" SETTINGS_SEP "settings.ini", base_dir);
 
     text = read_text(g_path);
     if (text) {
@@ -331,17 +451,12 @@ void mksm_settings_load(const char *base_dir)
         fprintf(stderr, "[SETTINGS] read %s%s\n", g_path,
                 bad ? " (some lines not understood, ignored)" : "");
     } else {
-        /* First start: defaults that follow the primary monitor. ENUM_CURRENT_SETTINGS
-         * reports its mode in physical pixels, whatever the DPI awareness. */
-        DEVMODEA dm = { .dmSize = sizeof(dm) };
+        /* First start: defaults that follow the primary monitor. */
         unsigned w = 640, h = 480;
         int ok;
-        if (EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &dm) && dm.dmPelsHeight) {
-            w = dm.dmPelsWidth;
-            h = dm.dmPelsHeight;
-        }
+        monitor_size(&w, &h);
         mksm_settings_defaults(&s, w, h);
-        CreateDirectoryA(base_dir, NULL);
+        make_dir(base_dir);
         ok = write_file(g_path, &s) == 0;
         fprintf(stderr, "[SETTINGS] %s %s (monitor %ux%u: scale %s, aspect %s)\n",
                 ok ? "wrote" : "could not write", g_path, w, h,
@@ -357,10 +472,9 @@ void mksm_settings_load(const char *base_dir)
                     defs[i].key, defs[i].env, s.value[i]);
             continue;
         }
-        if (_putenv_s(defs[i].env, s.value[i]) == 0) {
+        if (env_set(defs[i].env, s.value[i]) == 0) {
             g_from_file[i] = 1;
             fprintf(stderr, "[SETTINGS] %s=%s\n", defs[i].key, s.value[i]);
         }
     }
 }
-#endif

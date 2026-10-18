@@ -64,7 +64,6 @@ void mksm_settings_aspect_for(unsigned width, unsigned height, char *out, size_t
 /* The defaults a new file gets, for a monitor of width x height physical pixels. */
 void mksm_settings_defaults(MksmSettings *s, unsigned width, unsigned height);
 
-#ifdef _WIN32
 /* At start, before anything reads the variables: resolves the file under base_dir, writes it
  * with the monitor defaults if it is missing, and exports its values. Logs [SETTINGS]. */
 void mksm_settings_load(const char *base_dir);
@@ -85,7 +84,6 @@ void mksm_settings_derived_env(const char *env);
  * one. The new process waits for this one to be gone before it opens anything
  * (MKSM_RESTART_PARENT). Returns only if the new process couldn't be started (-1). */
 int mksm_settings_restart(void);
-#endif
 
 #ifdef __cplusplus
 }

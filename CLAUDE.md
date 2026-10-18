@@ -20,6 +20,9 @@ statically recompiling the retail `default.xbe` to C with
 ## Layout
 - `CMakeLists.txt`: game executable `mksm_recomp`; pulls in the toolkit via `add_subdirectory`
 - `src/main.c`: host entry: loads the XBE, maps Xbox memory, inits kernel/bridge, calls the guest entry `0x000F40CA`
+- `src/posix_stubs.c`: Linux stand-ins for `prof.c`, `setup.c` and `xiso.c` (plan H.5c2a; log a line, do nothing)
+- `src/recomp_libc_names.h`: force-included into `gen/*.c` on POSIX; renames lifted CRT functions that share a
+  libc name (see Build)
 - `src/prof.c`: `RECOMP_PROF` sampling profiler (all threads, symbolized from the PDB; see Debugging)
 - `src/settings.c`: the player settings file (`settings.ini`, plan B7b1; see Saves and settings):
   INI parse/write, monitor defaults, exports the keys as the env vars they stand for. Its C unit
@@ -154,6 +157,19 @@ into `build/mksm_gpu/mksm_gpu.lib` (always Release, `/MD`) and imported as targe
 folder actually holds clang 22.1.8) and `ninja` on PATH, else it is skipped with a status message.
 The game links it in non-Debug configs only (`MKSM_HAVE_GPU`; the lib is `/MD`). Link it with `$<LINK_LIBRARY:WHOLE_ARCHIVE,mksm_gpu>`: the null renderer registers from a constructor in
 an object nothing references, and a plain link drops it ("No available renderer", then a crash).
+
+Linux (plan H.5c2; on the Steam Deck in the `sotc-dev` distrobox, Arch: gcc, cmake, ninja, SDL2,
+epoxy, OpenSSL, ffmpeg from the system):
+```bash
+cmake -S . -B ~/mksm-build/port -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja -C ~/mksm-build/port -j6          # ~5 min on the Deck, ~0.9 GB peak
+```
+The system SDL2 replaces the fetched static one. `prof.c`, `setup.c` and `xiso.c` are Win32 only
+(`src/posix_stubs.c` stands in), and the GPU lib isn't built yet (H.5c2c). Pads and the APU need
+the x86-64 POSIX MMIO trap (H.5c2b), so run with `RECOMP_USB=0 RECOMP_AC97_READY=0` for now.
+The exe exports its symbols (`ENABLE_EXPORTS`, for `dladdr` in the crash report), and lifted CRT
+functions with libc names (`write`, `close`, ...) are renamed in `gen/` by the force-included
+`src/recomp_libc_names.h`: without it the toolkit's `close`/`write` calls ran guest code.
 ## Run
 The exe takes the extracted game folder (holding `default.xbe`) from its first argument, else
 `MKSM_GAME_DIR` (or `settings.ini`'s `game_dir=`, which sets it), else `game\` in the working

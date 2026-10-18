@@ -21,7 +21,23 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#ifdef _WIN32
 #include <intrin.h>    /* _InterlockedExchange, _mm_pause (plan B7c live options) */
+#define MKSM_THREAD_LOCAL __declspec(thread)
+#else
+/* POSIX (plan H.5c2a): the same intrinsics from GCC's builtins. */
+#include <strings.h>
+#include <time.h>
+#include <immintrin.h> /* _mm_pause */
+#define _stricmp strcasecmp
+#define MKSM_THREAD_LOCAL __thread
+#define _InterlockedExchange(p, v) __atomic_exchange_n((p), (v), __ATOMIC_SEQ_CST)
+#define _InterlockedCompareExchange(p, x, c) __extension__({                         \
+        __typeof__(+*(p)) mksm_cmp_ = (c);                                              \
+        __atomic_compare_exchange_n((p), &mksm_cmp_, (x), 0, __ATOMIC_SEQ_CST,         \
+                                    __ATOMIC_SEQ_CST);                                 \
+        mksm_cmp_; })
+#endif
 
 /* ── ICALL trace ring buffer ───────────────────────────────── */
 
@@ -120,7 +136,16 @@ static recomp_func_t resolve_ilt_thunk(uint32_t xbox_va)
 #include <stdlib.h>
 
 extern void sub_00319DF0(void);
+#ifdef _WIN32
 __declspec(dllimport) unsigned long long __stdcall GetTickCount64(void);
+#else
+static unsigned long long GetTickCount64(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long long)ts.tv_sec * 1000u + (unsigned long long)ts.tv_nsec / 1000000u;
+}
+#endif
 
 static void counted_audio_tick(void)
 {
@@ -176,7 +201,7 @@ static int audio_tick_stats(void)
  * `--exclude-manual src/recomp_manual.c` so the generated function calls them first. Direct
  * calls in the lifted code don't go through recomp_lookup_manual, so an override there would
  * miss them. */
-extern __declspec(thread) uint32_t g_ecx, g_esp;
+extern MKSM_THREAD_LOCAL uint32_t g_ecx, g_esp;
 
 #define GUEST_U8(va)  (*(volatile uint8_t *)((uintptr_t)(va) + g_xbox_mem_offset))
 #define GUEST_U32(va) (*(volatile uint32_t *)((uintptr_t)(va) + g_xbox_mem_offset))

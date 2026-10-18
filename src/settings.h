@@ -27,6 +27,7 @@ enum {
     MKSM_SET_VOLUME,        /* RECOMP_APU_VOLUME      0..1 */
     MKSM_SET_FULLSCREEN,    /* RECOMP_FB_FULLSCREEN   0/1 */
     MKSM_SET_SAVE_DIR,      /* MKSM_SAVE_DIR          folder for UDATA/TDATA */
+    MKSM_SET_GAME_DIR,      /* MKSM_GAME_DIR          the game folder (first-launch setup, B10b2) */
     MKSM_SET_COUNT
 };
 

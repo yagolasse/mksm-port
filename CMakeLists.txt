@@ -79,6 +79,7 @@ set(GAME_SOURCES
     src/main.c
     src/prof.c
     src/settings.c
+    src/setup.c
     src/xiso.c
     src/recomp_manual.c
     # Add game-specific sources here, e.g.:
@@ -119,6 +120,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     dbghelp
     # CNG hashes for the default.xbe version check (src/xiso.c, B10b1).
     bcrypt
+    # The first-launch setup's progress window (src/setup.c, B10b2).
+    comctl32
 )
 
 # MSVC-specific: large address aware, increase section limit for big generated files

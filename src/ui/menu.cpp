@@ -324,13 +324,13 @@ char g_restart_error[96];
 
 /* What an empty value means: the variable unset, the built-in default (README Run section). */
 const char *const kBuiltin[MKSM_SET_COUNT] = {
-    "1", "4:3", "0", "1", "1", "0", "linear", "1", "0", "",
+    "1", "4:3", "0", "1", "1", "0", "linear", "1", "0", "", "",
 };
 
 bool is_restart(int id)
 {
     return id == MKSM_SET_SCALE || id == MKSM_SET_ASPECT || id == MKSM_SET_WIDE ||
-           id == MKSM_SET_SAVE_DIR;
+           id == MKSM_SET_SAVE_DIR || id == MKSM_SET_GAME_DIR;
 }
 
 /* The user's own variable for this item, or NULL (one the file set doesn't count). */
@@ -645,6 +645,8 @@ void draw_menu(unsigned width, unsigned height)
             row_check(MKSM_SET_FULLSCREEN, "Fullscreen");
             const char *sd = shown(MKSM_SET_SAVE_DIR);
             row_text("Save folder", *sd ? sd : "default", "edit settings.ini");
+            const char *gd = shown(MKSM_SET_GAME_DIR);
+            row_text("Game folder", *gd ? gd : "default", "edit settings.ini");
             row_text("Window", size, "Alt+Enter");
             ImGui::EndTable();
         }

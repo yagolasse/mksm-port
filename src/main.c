@@ -15,7 +15,8 @@
  *
  * Customize this file for your game:
  *   - Set YOUR_GAME_ENTRY_POINT to the XBE entry point address
- *   - The game dir comes from argv[1], MKSM_GAME_DIR, or "game" (see resolve_game_dir)
+ *   - The game dir comes from argv[1], MKSM_GAME_DIR (or settings.ini's game_dir=), or
+ *     "game"; else the first-launch setup asks for it (see resolve_game_dir)
  *   - Add any CRT global pre-initialization your game needs
  *   - Customize the VEH handler for game-specific crash diagnosis
  *
@@ -47,6 +48,7 @@
 
 #include "prof.h"
 #include "settings.h"
+#include "setup.h"
 
 /*
  * If xboxrecomp.h is not an umbrella header in your setup, include
@@ -88,8 +90,10 @@ extern ptrdiff_t g_xbox_mem_offset;
 
 /* Game directory: the extracted disc root, holding default.xbe and the
  * data files. Taken from the first command-line argument, else the
- * MKSM_GAME_DIR environment variable, else "game" in the working
- * directory. Made absolute by resolve_game_dir(). */
+ * MKSM_GAME_DIR environment variable (or the settings file's game_dir=),
+ * else "game" in the working directory. Made absolute by resolve_game_dir().
+ * Without a default.xbe there (and no argument / variable of the user's),
+ * the first-launch setup asks for the disc (src/setup.c, plan B10b2). */
 #define DEFAULT_GAME_DIR        "game"
 
 static char g_game_dir[MAX_PATH];
@@ -620,16 +624,16 @@ static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
 
 /* ── Game directory ────────────────────────────────────────── */
 
-static void resolve_game_dir(void)
-{
-    const char *dir = DEFAULT_GAME_DIR;
-    const char *env = getenv("MKSM_GAME_DIR");
-    size_t len;
+typedef enum GameDirFrom {
+    GAME_DIR_ARG,       /* argv[1] */
+    GAME_DIR_ENV,       /* MKSM_GAME_DIR set by the user */
+    GAME_DIR_FILE,      /* settings.ini's game_dir= */
+    GAME_DIR_DEFAULT,   /* "game" in the working directory */
+} GameDirFrom;
 
-    if (__argc > 1 && __argv[1][0])
-        dir = __argv[1];
-    else if (env && env[0])
-        dir = env;
+static void set_game_dir(const char *dir)
+{
+    size_t len;
 
     if (!GetFullPathNameA(dir, MAX_PATH, g_game_dir, NULL))
         snprintf(g_game_dir, MAX_PATH, "%s", dir);
@@ -640,6 +644,23 @@ static void resolve_game_dir(void)
         g_game_dir[--len] = '\0';
 
     snprintf(g_xbe_path, MAX_PATH, "%s\\default.xbe", g_game_dir);
+}
+
+/* After mksm_settings_load: its game_dir= arrives as MKSM_GAME_DIR. */
+static GameDirFrom resolve_game_dir(void)
+{
+    const char *env = getenv("MKSM_GAME_DIR");
+
+    if (__argc > 1 && __argv[1][0]) {
+        set_game_dir(__argv[1]);
+        return GAME_DIR_ARG;
+    }
+    if (env && env[0]) {
+        set_game_dir(env);
+        return mksm_settings_env_from_file("MKSM_GAME_DIR") ? GAME_DIR_FILE : GAME_DIR_ENV;
+    }
+    set_game_dir(DEFAULT_GAME_DIR);
+    return GAME_DIR_DEFAULT;
 }
 
 /* ── Base and save directories ─────────────────────────────── */
@@ -654,11 +675,19 @@ static void trim_dir(char *dir)
 static void resolve_base_dir(void)
 {
     char base[MAX_PATH];
+    char *slash;
 
-    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, base)))
+    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, base))) {
         snprintf(g_base_dir, MAX_PATH, "%s\\" SAVE_DIR_NAME, base);
-    else
-        snprintf(g_base_dir, MAX_PATH, "%s\\" SAVE_DIR_NAME, g_game_dir);
+    } else {
+        /* Next to the exe (the game dir isn't known yet: settings.ini may name it). */
+        DWORD n = GetModuleFileNameA(NULL, base, MAX_PATH);
+        if (n && n < MAX_PATH && (slash = strrchr(base, '\\')) != NULL)
+            *slash = '\0';
+        else
+            snprintf(base, MAX_PATH, ".");
+        snprintf(g_base_dir, MAX_PATH, "%s\\" SAVE_DIR_NAME, base);
+    }
     trim_dir(g_base_dir);
 }
 
@@ -897,13 +926,26 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     prof_start_from_env();
 
     /* Step 1: Load XBE */
-    resolve_game_dir();
-    printf("Game dir: %s\n", g_game_dir);
-    /* The settings file before anything reads the variables it sets (plan B7b1). */
+    /* The settings file before anything reads the variables it sets (plan B7b1), the game
+     * dir included (game_dir=, B10b2). */
     resolve_base_dir();
     mksm_settings_load(g_base_dir);
     /* The run scripts' defaults, where neither the environment nor the file set them (B10a). */
     apply_env_defaults();
+    {
+        GameDirFrom from = resolve_game_dir();
+        /* Nothing the user named: ask for the disc once (B10b2). A folder the user gave by
+         * argument or variable is theirs to fix (the message below). */
+        if ((from == GAME_DIR_FILE || from == GAME_DIR_DEFAULT)
+                && GetFileAttributesA(g_xbe_path) == INVALID_FILE_ATTRIBUTES) {
+            char picked[MAX_PATH];
+            fprintf(stderr, "[SETUP] no default.xbe in %s: first-launch setup\n", g_game_dir);
+            if (!mksm_setup_run(g_base_dir, picked, sizeof(picked)))
+                return 1;
+            set_game_dir(picked);
+        }
+    }
+    printf("Game dir: %s\n", g_game_dir);
     if (!load_xbe(g_xbe_path, &xbe_data, &xbe_size)) {
         fprintf(stderr, "Failed to load %s\n", g_xbe_path);
         MessageBoxA(NULL, "Failed to load default.xbe.\n"
@@ -913,6 +955,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         return 1;
     }
     printf("XBE loaded: %zu bytes\n", xbe_size);
+    mksm_setup_log_xbe(g_xbe_path);     /* a different build is logged, not refused */
 
     /* Step 2: Initialize Xbox memory layout */
     printf("Initializing Xbox memory layout...\n");

@@ -30,6 +30,7 @@ static void test_parse(void)
         "volume=0.5\n"
         "volume=0.25\n"            /* last wins */
         "save_dir = D:\\My Saves\\mksm \n"
+        "game_dir=C:\\Games\\mksm\\game\n"
         "fullscreen=\n"             /* present, empty */
         "bogus=1\n"                 /* unknown */
         "no equals sign\n"
@@ -41,6 +42,8 @@ static void test_parse(void)
     CHECK(strcmp(s.value[MKSM_SET_VOLUME], "0.25") == 0, "volume '%s'", s.value[MKSM_SET_VOLUME]);
     CHECK(strcmp(s.value[MKSM_SET_SAVE_DIR], "D:\\My Saves\\mksm") == 0, "save_dir '%s'",
           s.value[MKSM_SET_SAVE_DIR]);
+    CHECK(strcmp(s.value[MKSM_SET_GAME_DIR], "C:\\Games\\mksm\\game") == 0, "game_dir '%s'",
+          s.value[MKSM_SET_GAME_DIR]);
     CHECK(strcmp(s.value[MKSM_SET_FILTER], "nearest") == 0, "filter '%s'", s.value[MKSM_SET_FILTER]);
     CHECK(s.present[MKSM_SET_FULLSCREEN] && !s.value[MKSM_SET_FULLSCREEN][0], "fullscreen empty");
     CHECK(!s.present[MKSM_SET_WIDE], "wide not present");

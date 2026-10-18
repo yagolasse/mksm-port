@@ -25,6 +25,7 @@ Work in progress. Windows x64 is the only host tested so far.
 | Widescreen | experimental (`RECOMP_ASPECT=16:9`, `RECOMP_ASPECT_WIDE=1`) |
 | Settings menu (F1) | edits the settings (saved to `settings.ini`), Apply and restart, FPS counter, pauses the game; scale/aspect/wide apply on restart, the rest at once |
 | Settings file | `settings.ini` read at start, monitor-based defaults on first start; written by the menu |
+| First-start setup | asks for the disc image or game folder once, checks the version, extracts an image |
 | Native Linux build | started, paused |
 
 Expect crashes and glitches. Bug reports are welcome; please include the log (`../logs/` from the run
@@ -113,10 +114,20 @@ tools/run.sh            # Git Bash; tools/run.bat from cmd
 
 The scripts use `../game_files` as the game folder and write a log to
 `../logs/run_<timestamp>.log`. The exe can also be started directly (double-clicked, or with
-the game folder as its first argument; without one it looks for `game\` next to where it is
-started): the switches the game needs to run (GPU path, game window, pads, sound) are built in,
+the game folder as its first argument; without one it uses `MKSM_GAME_DIR`, then the settings
+file's `game_dir`, then `game\` next to where it is started): the switches the game needs to
+run (GPU path, game window, pads, sound) are built in,
 and with nowhere to print (no redirect) it writes its log to
 `%LOCALAPPDATA%\mksm_recomp\last_run.log` (the run before it: `last_run.old.log`).
+
+**First start:** when none of those holds the game, the exe asks for it once. Pick either the
+disc image (`.iso`; a trimmed xiso or a full disc dump) or `default.xbe` in a folder with the
+extracted disc. The game's `default.xbe` must be the USA/Europe Xbox release (checked by its
+SHA-256; another version is refused with a message). An image is extracted once, with a
+progress window (about 4 GB, a minute or two; Cancel deletes the partial
+copy), into `%LOCALAPPDATA%\mksm_recomp\game`. The folder is then saved as `game_dir` in the
+settings file, so the next start goes straight in. To change it later, edit or clear
+`game_dir` (cleared, the earlier extract in `mksm_recomp\game` is found again).
 
 ### Keys and controllers
 
@@ -167,6 +178,7 @@ edited by hand while the game isn't running:
 | `volume` | `RECOMP_APU_VOLUME` | 0..1 |
 | `fullscreen` | `RECOMP_FB_FULLSCREEN` | 0/1 |
 | `save_dir` | `MKSM_SAVE_DIR` | a folder for the saves (e.g. a cloud-synced one) |
+| `game_dir` | `MKSM_GAME_DIR` | the game folder (written by the first-start setup) |
 
 Saves (`UDATA`/`TDATA`) go to `%LOCALAPPDATA%\mksm_recomp\saves` unless `save_dir` /
 `MKSM_SAVE_DIR` names another folder; the emulated hard disk and `settings.ini` stay in

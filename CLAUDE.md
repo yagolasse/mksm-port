@@ -24,8 +24,10 @@ statically recompiling the retail `default.xbe` to C with
 - `src/settings.c`: the player settings file (`settings.ini`, plan B7b1; see Saves and settings):
   INI parse/write, monitor defaults, exports the keys as the env vars they stand for. Its C unit
   test is `tests/settings_test.c` (CTest `settings`; `tests/test_settings.py` runs the built exe)
-- `src/xiso.c`: XDVDFS reader/extractor in C (plan B10b1, for B10b2's first-launch setup; linked
-  but not called yet): opens a trimmed xiso or a full disc image (tries the partition offsets of
+- `src/setup.c`: first-launch setup (plan B10b2, `mksm_setup_run`): intro box, `IFileOpenDialog`
+  (a disc image, or `default.xbe` in an extracted folder), the version check, the extract on a
+  worker thread under a Win32 progress window with Cancel, `game_dir=` saved; see Run
+- `src/xiso.c`: XDVDFS reader/extractor in C (plan B10b1, used by `src/setup.c`): opens a trimmed xiso or a full disc image (tries the partition offsets of
   `tools/xiso.py`), walks with bounds/name/depth checks, extracts with progress + free-space check,
   SHA-256/SHA-1 via CNG (`bcrypt`), `mksm_xbe_is_known` = the retail `default.xbe` hash. Unit test
   `tests/xiso_test.c` (CTest `xiso`, synthetic in-memory images incl. a file past 4 GB;
@@ -154,7 +156,22 @@ The game links it in non-Debug configs only (`MKSM_HAVE_GPU`; the lib is `/MD`).
 an object nothing references, and a plain link drops it ("No available renderer", then a crash).
 ## Run
 The exe takes the extracted game folder (holding `default.xbe`) from its first argument, else
-`MKSM_GAME_DIR`, else `game\` in the working directory (`resolve_game_dir` in `src/main.c`).
+`MKSM_GAME_DIR` (or `settings.ini`'s `game_dir=`, which sets it), else `game\` in the working
+directory (`resolve_game_dir` in `src/main.c`, after `mksm_settings_load`). When the folder came
+from the file or the default and has no `default.xbe`, `mksm_setup_run` (`src/setup.c`, plan
+B10b2) asks for the disc: first `<dir>\game` is tried quietly (an earlier extract; `<dir>` = the
+settings file's folder, `%LOCALAPPDATA%\mksm_recomp` unless `RECOMP_SETTINGS=<path>` moves it),
+then an intro box and the file picker (an image, or any `.xbe` = its folder). `default.xbe`'s
+SHA-256 must be `mksm_xbe_is_known`, else "different version" and pick again. An image is
+checked (hash, free space, `<dir>\game` not there yet), extracted into `<dir>\game.partial` on a
+worker thread (progress window; Cancel / close deletes the partial folder, exit 1), renamed to
+`game`. The folder is saved as `game_dir=` (`[SETUP] game_dir=... saved`; not with
+`RECOMP_SETTINGS=0`). A folder from the argument or a user-set `MKSM_GAME_DIR` gets the old
+MessageBox instead. Every boot logs `[SETUP] default.xbe is the retail ... build` or `is NOT`
+(logged, not refused). Paths stay ANSI in `main.c`; a picked path that doesn't fit the code page
+is refused with a message. `MKSM_SETUP_PICK=<path>` (tests, debug only) takes that path instead
+of the dialogs: no message boxes (`[SETUP]` lines only), a refused path exits 1 at once; the
+progress window still shows (its class is `mksm_setup_progress`).
 It's a GUI-subsystem exe: with stdout/stderr not a file or a pipe (double-clicked, or a NUL /
 console handle) `player_log_open` (`main.c`, plan B10a) sends both to
 `%LOCALAPPDATA%\mksm_recomp\last_run.log` (the previous one renamed `last_run.old.log`; a
@@ -210,7 +227,8 @@ there: use `RECOMP_PB_GPU_DUMP`, or `RECOMP_PB_GPU_PRESENT=pbo`.
 console view and prints the last 40 lines on exit; in cmd, turn a switch off with `0` (empty
 means unset there). Keep the two scripts' defaults in sync. The smoke test sets
 `RECOMP_FB_WINDOW=0` (headless; unset would open the window now).
-The failure path for a missing XBE shows a MessageBox, which blocks an unattended run.
+The failure path for a missing XBE shows a MessageBox (a folder given by argument / variable) or
+the first-launch setup's dialogs (none given), which block an unattended run.
 Saves and settings (plan B7b1): `main.c` passes the toolkit a title-specific base dir,
 `%LOCALAPPDATA%\mksm_recomp` (`resolve_base_dir`): the emulated hard disk (`Partition0-5.img`,
 sparse, caches) and `settings.ini`. The saves (`UDATA\4d570029`, `TDATA`) go to their own folder,
@@ -225,7 +243,8 @@ can be deleted.
 `settings.ini` (`src/settings.c`, read first thing in `WinMain`, before anything reads the
 variables): each key stands for an env var (`scale` = `RECOMP_PB_GPU_SCALE`, `aspect`, `wide`,
 `hud_edges`, `movie_zoom`, `gauntlet_zoom`, `filter`, `volume`, `fullscreen`, `save_dir` =
-`MKSM_SAVE_DIR`; table in `README.md`) and is `_putenv_s`'d unless that variable is already set
+`MKSM_SAVE_DIR`, `game_dir` = `MKSM_GAME_DIR` (B10b2; restart-only in the menu, shown not
+edited); table in `README.md`) and is `_putenv_s`'d unless that variable is already set
 (`[SETTINGS] key=value` / `... is set, file value ... not used`), so the readers stay as they
 are. Missing file = written with the monitor defaults (D3 (2): `EnumDisplaySettings` of the
 primary monitor; `[SETTINGS] wrote`). `RECOMP_SETTINGS=0` skips it (the run scripts and the

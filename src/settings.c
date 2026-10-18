@@ -20,6 +20,7 @@ static const struct {
     [MKSM_SET_VOLUME]        = { "volume",        "RECOMP_APU_VOLUME" },
     [MKSM_SET_FULLSCREEN]    = { "fullscreen",    "RECOMP_FB_FULLSCREEN" },
     [MKSM_SET_SAVE_DIR]      = { "save_dir",      "MKSM_SAVE_DIR" },
+    [MKSM_SET_GAME_DIR]      = { "game_dir",      "MKSM_GAME_DIR" },
 };
 
 const char *mksm_settings_key(int id) { return id >= 0 && id < MKSM_SET_COUNT ? defs[id].key : NULL; }
@@ -87,7 +88,7 @@ size_t mksm_settings_format(const MksmSettings *s, char *buf, size_t cap)
 {
     static const char header[] =
         "; Mortal Kombat: Shaolin Monks (recomp) settings. One key=value per line.\n"
-        "; An environment variable that is set (RECOMP_..., MKSM_SAVE_DIR) overrides its key.\n"
+        "; An environment variable that is set (RECOMP_..., MKSM_SAVE_DIR, MKSM_GAME_DIR) overrides its key.\n"
         "; scale, aspect and wide apply on restart. Empty value = the built-in default.\n";
     size_t len = 0;
     int n;
@@ -145,6 +146,7 @@ void mksm_settings_defaults(MksmSettings *s, unsigned width, unsigned height)
     set_value(s, MKSM_SET_VOLUME, "1");
     set_value(s, MKSM_SET_FULLSCREEN, "1");
     set_value(s, MKSM_SET_SAVE_DIR, "");
+    set_value(s, MKSM_SET_GAME_DIR, "");
 }
 
 #ifdef _WIN32

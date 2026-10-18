@@ -80,6 +80,7 @@ statically recompiling the retail `default.xbe` to C with
 - `tools/wavscan.py`: scans a `RECOMP_AUDIO_WAV` recording (older logs: `RECOMP_APU_WAV`) for noise bursts, clicks, repeated/dropped blocks, clipping; `--excerpt START,DUR out.wav` cuts a clip
 - `tools/voicedump.py`: reads a `RECOMP_APU_VOICE_DUMP` (per-voice samples): summary, stale-ring repeats, one voice as WAV. Two formats: our old record dump (with buffer offsets), and toolkit v0.14's raw s16 stereo 48 kHz files (`.raw`, one per voice, `=all` writes `<file>.<voice>.raw`): level, zero-crossing rate, exact copies of earlier output
 - `tools/profsum.py`: summarizes `RECOMP_PROF` run logs: per-thread CPU % + top functions, level fps per `[XGPU]` interval, medians over several logs (A/B runs)
+- `tools/perf_profile.py`: the Linux counterpart (`perf` on a smoke pad run: per-thread CPU % + top symbols; see Debugging)
 - `tools/stub_audit.py`: sorts `gen/recomp_stubs_unresolved.c` into real code vs. decoded data (writes `seeds/stubs.json`)
 - `docs/`: generic notes on how the port works (`gpu-renderer.md`: design of the GPU renderer, a port of xemu's PGRAPH + OpenGL backend)
 - `tests/`: unit tests for `tools/*.py` on synthetic inputs (no game data), see Testing
@@ -454,6 +455,16 @@ idle machine (no game running: a background game cut the level from 60 to 12-32 
 symbol contains the text (who calls it). The report takes a few seconds; end the window well before the
 watchdog (`62000,15000` for the pad level). The 0xC0000374 exits seen while it printed were a prof.c
 bug (a start routine resolved after the per-symbol arrays were sized), fixed in 2.H.8c2a.
+**Linux** (`prof.c` is Win32 only; plan 2.7b): `MKSM_EXE=~/mksm-build/port/mksm_recomp python3
+tools/perf_profile.py --runs 3` runs the smoke pad checkpoint, attaches `perf record` (DWARF call
+graphs) for the same 62 s + 15 s window, takes each thread's CPU time from `/proc/<pid>/task` and
+writes `../logs/perfprof_<stamp>.{data,txt}` (per thread: CPU %, top self symbols from `perf report`,
+the outermost frames of its unwound stacks), medians over the runs. `--report X.data` re-summarizes a
+recording. Needs `perf_event_paranoid` <= 2. POSIX threads aren't named (`xbox_name_thread` is a no-op
+there), so they show the process name except Mesa's (`gl0` = glthread, `gdrv0` = the driver thread);
+the self symbols say which is which (method thread: `pgraph_*`/`pb_consume`; guest main:
+`sub_003C8490`...). Call chains (root/incl lines) are best effort: perf 7.1's DWARF unwinder fails
+("No such process") for most threads; CPU % and self symbols don't need it.
 Headroom runs with `RECOMP_PB_GPU_VBLANK=0` don't work with the pad script: uncapped menus and movie
 run too fast for its time-based steps and it misses the movie skip.
 `RECOMP_WBC_ACK` (plan 2.H.8b): a thread acks D3D's kickoff flush wait at once instead of the ack

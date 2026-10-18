@@ -23,8 +23,8 @@ Work in progress. Windows x64 is the only host tested so far.
 | Further levels, full playthrough | not tested yet |
 | Internal resolution 1x-4x | working (`RECOMP_PB_GPU_SCALE`) |
 | Widescreen | experimental (`RECOMP_ASPECT=16:9`, `RECOMP_ASPECT_WIDE=1`) |
-| Settings menu (F1) | started: shows the settings, FPS counter, pauses the game; no changes yet |
-| Settings file | `settings.ini` read at start, monitor-based defaults on first start; edited by hand for now |
+| Settings menu (F1) | edits the settings (saved to `settings.ini`), Apply and restart, FPS counter, pauses the game; changes apply on the next start for now |
+| Settings file | `settings.ini` read at start, monitor-based defaults on first start; written by the menu |
 | Native Linux build | started, paused |
 
 Expect crashes and glitches. Bug reports are welcome; please include the log from `../logs/`
@@ -123,8 +123,12 @@ its first argument (it then logs nothing: it's a GUI program).
   Backspace = Back, Z/X/A/S = A/B/X/Y, Q/E = white/black, 1/3 = triggers, numpad 8/2/4/6 = left
   stick, I/J/K/L = right stick, Shift/Ctrl = stick clicks.
 - **F1**, or **Back+Start** pressed together on a controller, opens the settings menu (Esc, F1,
-  Back+Start or B closes it; arrows/Enter or the d-pad/A move around it). For now it shows the
-  current settings and the variables that set them, and has a "Show FPS" counter. The game
+  Back+Start or B closes it; arrows/Space or the d-pad/A move around it and change a value). It
+  edits the settings file (below): resolution scale, aspect and wide picture are held as
+  "pending restart" until **Apply and restart** (asks first: progress since the last save is
+  lost; the game then starts again by itself) or **Revert**; the other changes are saved at once
+  and apply on the next start for now. A setting given by an environment variable is shown as
+  "set by ..." and can't be changed there. "Show FPS" toggles a counter. The game
   (and its sound, movies included) is paused while the menu is open and picks up where it was.
 - **Alt+Enter** toggles borderless fullscreen.
 - **F9** captures / releases the mouse when the mouse+keyboard pad is on (`RECOMP_MKB=1`). The
@@ -143,7 +147,8 @@ Without the variable the exe uses the file, and writes it on its first start wit
 the main monitor: borderless fullscreen, internal scale = monitor height / 480 rounded (1080p →
 2x, 1200 and 1440 → 3x, 2160 → 4x), the monitor's aspect with the wide frame, HUD at the edges,
 movie zoom on. One `key=value` per line (`;` starts a comment, an empty value = the built-in
-default); for now the menu only shows the values, edit the file and restart:
+default). The settings menu (F1) writes it (keys it doesn't know are kept); it can also be
+edited by hand while the game isn't running:
 
 | Key | Variable it sets | Values |
 |---|---|---|

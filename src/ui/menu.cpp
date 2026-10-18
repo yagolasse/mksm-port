@@ -16,8 +16,8 @@
  *   present thread (mksm_gpu.c): overlay() runs ImGui's frame with the present context
  *                  current; while open it asks for a redraw every 16 ms (no new frame needed).
  *
- * B7a1 shows the settings read-only (from the environment variables they are set with today,
- * README Run section); B7b adds the settings file. While open the game is frozen (B7a2):
+ * The settings come from settings.ini (src/settings.c, B7b1) and are edited here (B7b2, see
+ * the Settings section below). While open the game is frozen (B7a2):
  * mksm_gpu holds the method thread at the next flip and the toolkit's APU stops (no frames, the
  * audio device paused where it is).
  */
@@ -32,6 +32,7 @@
 
 #include "input/xinput_xbox.h"    /* toolkit: XBOX_INPUT_STATE, xbox_InputSetFilter */
 #include "mksm_gpu.h"
+#include "settings.h"
 
 #include <atomic>
 #include <cmath>
@@ -302,19 +303,191 @@ void feed_pad(ImGuiIO &io)
     axis(ImGuiKey_GamepadLStickDown, -g.sThumbLY);
 }
 
-const char *env_or(const char *name, const char *fallback)
+/* ── Settings (B7b2; present thread only) ─────────────────────────
+ *
+ * g_saved is the file as it is on disk (settings.c's copy at the first open), g_edit what the
+ * menu shows. A live item's change is saved at once (it takes effect at the next start until
+ * B7c makes it live); a restart item's change stays pending in g_edit until "Apply and
+ * restart" saves the file and relaunches the exe, or "Revert" drops it. An item whose variable
+ * the user set in the environment wins over the file (settings.h), so it is shown, not edited. */
+MksmSettings g_saved, g_edit;
+bool g_have_file, g_loaded;
+char g_restart_error[96];
+
+/* What an empty value means: the variable unset, the built-in default (README Run section). */
+const char *const kBuiltin[MKSM_SET_COUNT] = {
+    "1", "4:3", "0", "1", "1", "0", "linear", "1", "0", "",
+};
+
+bool is_restart(int id)
 {
-    const char *e = getenv(name);
-    return e && *e ? e : fallback;
+    return id == MKSM_SET_SCALE || id == MKSM_SET_ASPECT || id == MKSM_SET_WIDE ||
+           id == MKSM_SET_SAVE_DIR;
 }
 
-bool env_on(const char *name, bool fallback)
+/* The user's own variable for this item, or NULL (one the file set doesn't count). */
+const char *user_env(int id)
 {
-    const char *e = getenv(name);
-    return e && *e ? *e != '0' : fallback;
+    const char *name = mksm_settings_env(id);
+    const char *v = getenv(name);
+    return v && !mksm_settings_env_from_file(name) ? v : NULL;
 }
 
-void row(const char *label, const char *value, const char *source)
+/* The value shown: the user's variable, else the edited file value, else the default. */
+const char *shown(int id)
+{
+    const char *u = user_env(id);
+    const char *v = u ? u : g_have_file ? g_edit.value[id] : "";
+    return *v ? v : kBuiltin[id];
+}
+
+bool pending(int id)
+{
+    return g_have_file && is_restart(id) && strcmp(g_edit.value[id], g_saved.value[id]) != 0;
+}
+
+bool any_pending(void)
+{
+    for (int i = 0; i < MKSM_SET_COUNT; i++) {
+        if (pending(i)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void set_edit(int id, const char *v)
+{
+    snprintf(g_edit.value[id], sizeof(g_edit.value[id]), "%s", v);
+    g_edit.present[id] = 1;
+}
+
+void load_settings(void)
+{
+    const MksmSettings *f = mksm_settings_file();
+    g_have_file = f != nullptr;
+    if (f) {
+        g_saved = *f;
+        g_edit = *f;
+    }
+    g_loaded = true;
+}
+
+/* Live items that changed go to the file (not while a slider is held). */
+void save_live(void)
+{
+    if (!g_have_file || ImGui::IsAnyItemActive()) {
+        return;
+    }
+    bool changed = false;
+    for (int i = 0; i < MKSM_SET_COUNT; i++) {
+        if (!is_restart(i) && strcmp(g_edit.value[i], g_saved.value[i]) != 0) {
+            snprintf(g_saved.value[i], sizeof(g_saved.value[i]), "%s", g_edit.value[i]);
+            g_saved.present[i] = 1;
+            changed = true;
+        }
+    }
+    if (changed) {
+        mksm_settings_save(&g_saved);
+    }
+}
+
+/* Label | widget | note. Returns whether the widget may be edited. */
+bool row_begin(int id, const char *label)
+{
+    ImGui::TableNextRow();
+    ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    ImGui::TableNextColumn();
+    ImGui::PushID(id);
+    ImGui::SetNextItemWidth(170.0f * g_ui_scale);
+    bool editable = g_have_file && !user_env(id);
+    ImGui::BeginDisabled(!editable);
+    return editable;
+}
+
+void row_end(int id, bool needs_wide = false)
+{
+    ImGui::EndDisabled();
+    ImGui::PopID();
+    ImGui::TableNextColumn();
+    if (user_env(id)) {
+        ImGui::TextDisabled("set by %s", mksm_settings_env(id));
+    } else if (pending(id)) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "pending restart");
+    } else if (is_restart(id)) {
+        ImGui::TextDisabled("on restart");
+    } else if (needs_wide && strcmp(shown(MKSM_SET_ASPECT), "4:3") == 0) {
+        ImGui::TextDisabled("needs a wide aspect");
+    }
+}
+
+void row_combo(int id, const char *label, const char *const *values, const char *const *names,
+               int count)
+{
+    row_begin(id, label);
+    const char *cur = shown(id);
+    const char *cur_name = cur;
+    for (int i = 0; i < count; i++) {
+        if (strcmp(cur, values[i]) == 0) {
+            cur_name = names[i];
+        }
+    }
+    if (ImGui::BeginCombo("##v", cur_name)) {
+        for (int i = 0; i < count; i++) {
+            bool sel = strcmp(cur, values[i]) == 0;
+            if (ImGui::Selectable(names[i], sel)) {
+                set_edit(id, values[i]);
+            }
+            if (sel) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    row_end(id);
+}
+
+void row_check(int id, const char *label, bool needs_wide = false)
+{
+    row_begin(id, label);
+    bool on = shown(id)[0] != '0';
+    if (ImGui::Checkbox("##v", &on)) {
+        set_edit(id, on ? "1" : "0");
+    }
+    row_end(id, needs_wide);
+}
+
+/* A slider in 5% steps (user, 2026-10-17): the slider runs over the step index, its text is the
+ * percentage. Left/right (keys or d-pad) step it while it has the focus, without activating it
+ * first as ImGui's own slider nav wants; nothing else sits left or right of it in the table. */
+void row_volume(int id, const char *label)
+{
+    row_begin(id, label);
+    int idx = (int)std::lround(atof(shown(id)) * 20.0);
+    idx = idx < 0 ? 0 : idx > 20 ? 20 : idx;
+    const int before = idx;
+    char text[16];
+    snprintf(text, sizeof(text), idx ? "%d%%%%" : "Off", idx * 5);
+    ImGui::SliderInt("##v", &idx, 0, 20, text, ImGuiSliderFlags_AlwaysClamp);
+    if (ImGui::IsItemFocused() && !ImGui::IsItemActive()) {    /* disabled = never focused */
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) {
+            idx = idx > 0 ? idx - 1 : 0;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) {
+            idx = idx < 20 ? idx + 1 : 20;
+        }
+    }
+    if (idx != before) {
+        char v[16];
+        snprintf(v, sizeof(v), "%g", idx / 20.0);
+        set_edit(id, v);
+    }
+    row_end(id);
+}
+
+void row_text(const char *label, const char *value, const char *note)
 {
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
@@ -322,7 +495,37 @@ void row(const char *label, const char *value, const char *source)
     ImGui::TableNextColumn();
     ImGui::TextUnformatted(value);
     ImGui::TableNextColumn();
-    ImGui::TextDisabled("%s", source);
+    ImGui::TextDisabled("%s", note);
+}
+
+void draw_restart_popup(void)
+{
+    if (!ImGui::BeginPopupModal("Apply and restart?", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        return;
+    }
+    ImGui::TextUnformatted("The game restarts with the new settings.");
+    ImGui::TextUnformatted("Progress since the last save is lost.");
+    ImGui::Spacing();
+    if (ImGui::Button("Restart")) {
+        /* The live changes are in g_edit too. */
+        if (mksm_settings_save(&g_edit) != 0) {
+            snprintf(g_restart_error, sizeof(g_restart_error), "Could not write the settings file");
+        } else {
+            g_saved = g_edit;
+            fprintf(stderr, "[MENU] apply and restart\n");
+            mksm_settings_restart();    /* returns only on failure */
+            snprintf(g_restart_error, sizeof(g_restart_error),
+                     "Saved, but could not restart: start the game again");
+        }
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SetItemDefaultFocus();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 void draw_menu(unsigned width, unsigned height)
@@ -334,43 +537,45 @@ void draw_menu(unsigned width, unsigned height)
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove |
                                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings |
                                    ImGuiWindowFlags_AlwaysAutoResize;
+    if (!g_loaded) {
+        load_settings();
+    }
     bool open = true;
     if (ImGui::Begin("Settings", &open, flags)) {
-        /* What the options are set to, read where the game reads them (the environment). */
-        bool aspect_set = getenv("RECOMP_ASPECT") && *getenv("RECOMP_ASPECT");
+        static const char *const scales[] = { "1", "2", "3", "4" };
+        static const char *const scale_names[] = { "1x (640x480)", "2x", "3x", "4x" };
+        static const char *const aspects[] = { "4:3", "16:10", "16:9", "21:9" };
+        static const char *const aspect_names[] = { "4:3 (Xbox)", "16:10", "16:9", "21:9" };
+        static const char *const filters[] = { "linear", "nearest" };
+        static const char *const filter_names[] = { "Smooth", "Sharp (nearest)" };
+        bool wide = strcmp(shown(MKSM_SET_ASPECT), "4:3") != 0;
         SDL_Window *win = static_cast<SDL_Window *>(xbox_FramebufferWindowSdl());
         bool fullscreen = win && (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP);
-        char scale[32], vol[32], size[48];
-        snprintf(scale, sizeof(scale), "%sx", env_or("RECOMP_PB_GPU_SCALE", "1"));
-        const char *v = getenv("RECOMP_APU_VOLUME");
-        if (v && *v) {
-            snprintf(vol, sizeof(vol), "%.0f%%", atof(v) * 100.0);
-        } else {
-            snprintf(vol, sizeof(vol), "100%%");
-        }
-        snprintf(size, sizeof(size), "%ux%u", width, height);
+        char size[64];
+        snprintf(size, sizeof(size), "%ux%u%s", width, height, fullscreen ? ", fullscreen" : "");
 
-        ImGui::TextDisabled("Read-only for now: set with the environment variables shown");
-        ImGui::Spacing();
+        if (!g_have_file) {
+            ImGui::TextDisabled("No settings file (RECOMP_SETTINGS=0): shown, not editable");
+            ImGui::Spacing();
+        }
         if (ImGui::BeginTable("values", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit)) {
-            row("Resolution scale", scale, "RECOMP_PB_GPU_SCALE *");
-            row("Aspect", env_or("RECOMP_ASPECT", "4:3"), "RECOMP_ASPECT *");
-            row("Wide buffer", aspect_set && env_on("RECOMP_ASPECT_WIDE", false) ? "on" : "off",
-                "RECOMP_ASPECT_WIDE *");
-            row("HUD at edges", aspect_set && env_on("RECOMP_HUD_EDGES", true) ? "on" : "off",
-                "RECOMP_HUD_EDGES");
-            row("Movie zoom", aspect_set && env_on("RECOMP_MOVIE_ZOOM", true) ? "on" : "off",
-                "RECOMP_MOVIE_ZOOM");
-            row("Gauntlet zoom",
-                aspect_set && env_on("RECOMP_MOVIE_ZOOM_GAUNTLET", false) ? "on" : "off",
-                "RECOMP_MOVIE_ZOOM_GAUNTLET");
-            row("Present filter", env_or("RECOMP_PB_GPU_FILTER", "linear"), "RECOMP_PB_GPU_FILTER");
-            row("Volume", vol, "RECOMP_APU_VOLUME");
-            row("Fullscreen", fullscreen ? "on" : "off", "Alt+Enter");
-            row("Window", size, "");
+            row_combo(MKSM_SET_SCALE, "Resolution scale", scales, scale_names, 4);
+            row_combo(MKSM_SET_ASPECT, "Aspect", aspects, aspect_names, 4);
+            ImGui::BeginDisabled(!wide);
+            row_check(MKSM_SET_WIDE, "Wide picture", true);
+            row_check(MKSM_SET_HUD_EDGES, "HUD at the edges", true);
+            row_check(MKSM_SET_MOVIE_ZOOM, "Zoom letterboxed movies", true);
+            row_check(MKSM_SET_GAUNTLET_ZOOM, "Zoom the Gauntlet trailer", true);
+            ImGui::EndDisabled();
+            row_combo(MKSM_SET_FILTER, "Scaling filter", filters, filter_names, 2);
+            row_volume(MKSM_SET_VOLUME, "Volume");
+            row_check(MKSM_SET_FULLSCREEN, "Start fullscreen");
+            const char *sd = shown(MKSM_SET_SAVE_DIR);
+            row_text("Save folder", *sd ? sd : "default", "edit settings.ini");
+            row_text("Window", size, "Alt+Enter");
             ImGui::EndTable();
         }
-        ImGui::TextDisabled("* applies on restart");
+        ImGui::TextDisabled("Other changes are saved now and apply on the next start.");
         ImGui::Spacing();
         bool fps = g_show_fps.load();
         if (ImGui::Checkbox("Show FPS", &fps)) {
@@ -378,13 +583,34 @@ void draw_menu(unsigned width, unsigned height)
         }
         ImGui::Spacing();
         ImGui::Separator();
+        bool pend = any_pending();
+        ImGui::BeginDisabled(!pend);
+        if (ImGui::Button("Apply and restart")) {
+            ImGui::OpenPopup("Apply and restart?");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Revert")) {
+            for (int i = 0; i < MKSM_SET_COUNT; i++) {
+                if (is_restart(i)) {
+                    set_edit(i, g_saved.value[i]);
+                    g_edit.present[i] = g_saved.present[i];
+                }
+            }
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
         if (ImGui::Button("Close")) {
             open = false;
         }
         ImGui::SameLine();
         ImGui::TextDisabled("F1 / Esc / Back+Start / B");
+        if (g_restart_error[0]) {
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", g_restart_error);
+        }
+        draw_restart_popup();
     }
     ImGui::End();
+    save_live();
     /* B closes it too, unless a popup or an active widget takes it first. */
     if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) && !ImGui::IsAnyItemActive() &&
         !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {

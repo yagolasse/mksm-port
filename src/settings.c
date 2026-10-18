@@ -72,6 +72,9 @@ int mksm_settings_parse(MksmSettings *s, const char *text)
         *p = '\0';
         int id = mksm_settings_find(k);
         if (id < 0) {
+            size_t used = strlen(s->extra), need = strlen(k) + strlen(v) + 2;
+            if (used + need < sizeof(s->extra))
+                snprintf(s->extra + used, sizeof(s->extra) - used, "%s=%s\n", k, v);
             bad++;
             continue;
         }
@@ -97,6 +100,11 @@ size_t mksm_settings_format(const MksmSettings *s, char *buf, size_t cap)
             continue;
         n = snprintf(len < cap ? buf + len : NULL, len < cap ? cap - len : 0, "%s=%s\n",
                      defs[i].key, s->value[i]);
+        len += n > 0 ? (size_t)n : 0;
+    }
+    if (s->extra[0]) {
+        n = snprintf(len < cap ? buf + len : NULL, len < cap ? cap - len : 0,
+                     "; Not known to this build, kept as written:\n%s", s->extra);
         len += n > 0 ? (size_t)n : 0;
     }
     return len;
@@ -144,8 +152,18 @@ void mksm_settings_defaults(MksmSettings *s, unsigned width, unsigned height)
 
 static char g_path[MAX_PATH];
 static unsigned char g_from_file[MKSM_SET_COUNT];
+static MksmSettings g_file;         /* valid while g_path[0] */
+static const char *g_derived[8];
+static int g_derived_count;
 
 const char *mksm_settings_path(void) { return g_path; }
+const MksmSettings *mksm_settings_file(void) { return g_path[0] ? &g_file : NULL; }
+
+void mksm_settings_derived_env(const char *env)
+{
+    if (g_derived_count < (int)(sizeof(g_derived) / sizeof(g_derived[0])))
+        g_derived[g_derived_count++] = env;
+}
 
 int mksm_settings_env_from_file(const char *env)
 {
@@ -174,12 +192,124 @@ static char *read_text(const char *path)
     return buf;
 }
 
+static int write_file(const char *path, const MksmSettings *s)
+{
+    char out[8192], tmp[MAX_PATH + 8];
+    size_t n = mksm_settings_format(s, out, sizeof(out));
+    FILE *f;
+    if (n >= sizeof(out))
+        return -1;
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    f = fopen(tmp, "wb");
+    if (!f)
+        return -1;
+    if (fwrite(out, 1, n, f) != n) {
+        fclose(f);
+        DeleteFileA(tmp);
+        return -1;
+    }
+    fclose(f);
+    if (!MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) {
+        DeleteFileA(tmp);
+        return -1;
+    }
+    return 0;
+}
+
+int mksm_settings_save(const MksmSettings *s)
+{
+    if (!g_path[0])
+        return -1;
+    if (write_file(g_path, s) != 0) {
+        fprintf(stderr, "[SETTINGS] could not write %s (error %lu)\n", g_path, GetLastError());
+        return -1;
+    }
+    if (s != &g_file)
+        g_file = *s;
+    fprintf(stderr, "[SETTINGS] saved %s\n", g_path);
+    return 0;
+}
+
+/* A relaunched process (mksm_settings_restart) waits for its parent to be gone: the parent
+ * still holds the disk images, the audio device and the window when it starts us. */
+static void wait_for_parent(void)
+{
+    const char *e = getenv("MKSM_RESTART_PARENT");
+    DWORD pid = e ? (DWORD)strtoul(e, NULL, 10) : 0;
+    HANDLE h;
+    if (!e)
+        return;
+    _putenv_s("MKSM_RESTART_PARENT", "");    /* not passed on again */
+    h = pid ? OpenProcess(SYNCHRONIZE, FALSE, pid) : NULL;
+    if (h) {
+        DWORD r = WaitForSingleObject(h, 15000);
+        CloseHandle(h);
+        fprintf(stderr, "[SETTINGS] restarted (old process %lu %s)\n", (unsigned long)pid,
+                r == WAIT_OBJECT_0 ? "gone" : "still there after 15 s");
+    } else {
+        fprintf(stderr, "[SETTINGS] restarted\n");
+    }
+}
+
+static HANDLE inheritable(DWORD which, STARTUPINFOW *si)
+{
+    HANDLE h = GetStdHandle(which);
+    if (!h || h == INVALID_HANDLE_VALUE ||
+        !SetHandleInformation(h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT))
+        return NULL;
+    si->dwFlags |= STARTF_USESTDHANDLES;
+    return h;
+}
+
+int mksm_settings_restart(void)
+{
+    WCHAR exe[MAX_PATH], *cmd;
+    STARTUPINFOW si = { .cb = sizeof(si) };
+    PROCESS_INFORMATION pi;
+    char pid[16];
+    DWORD n = GetModuleFileNameW(NULL, exe, MAX_PATH);
+
+    if (!n || n >= MAX_PATH)
+        return -1;
+    /* The child inherits the process environment (SetEnvironmentVariable's, not the CRT's
+     * copy): take out what the file and its derived values put there; the user's own stay. */
+    for (int i = 0; i < MKSM_SET_COUNT; i++)
+        if (g_from_file[i])
+            SetEnvironmentVariableA(defs[i].env, NULL);
+    for (int i = 0; i < g_derived_count; i++)
+        SetEnvironmentVariableA(g_derived[i], NULL);
+    snprintf(pid, sizeof(pid), "%lu", (unsigned long)GetCurrentProcessId());
+    SetEnvironmentVariableA("MKSM_RESTART_PARENT", pid);
+
+    /* The same log (the run scripts redirect stdout/stderr to a file). */
+    si.hStdInput = inheritable(STD_INPUT_HANDLE, &si);
+    si.hStdOutput = inheritable(STD_OUTPUT_HANDLE, &si);
+    si.hStdError = inheritable(STD_ERROR_HANDLE, &si);
+    cmd = _wcsdup(GetCommandLineW());    /* CreateProcessW may write to it */
+    if (!cmd || !CreateProcessW(exe, cmd, NULL, NULL, (si.dwFlags & STARTF_USESTDHANDLES) != 0,
+                                0, NULL, NULL, &si, &pi)) {
+        fprintf(stderr, "[SETTINGS] restart failed (error %lu)\n", GetLastError());
+        free(cmd);
+        SetEnvironmentVariableA("MKSM_RESTART_PARENT", NULL);
+        return -1;
+    }
+    fprintf(stderr, "[SETTINGS] restarting (new process %lu)\n", (unsigned long)pi.dwProcessId);
+    fflush(stdout);
+    fflush(stderr);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    /* As the window's close does: no atexit/DLL teardown under running guest threads. */
+    TerminateProcess(GetCurrentProcess(), 0);
+    return -1;
+}
+
 void mksm_settings_load(const char *base_dir)
 {
     const char *e = getenv("RECOMP_SETTINGS");
     MksmSettings s;
     char *text;
 
+    wait_for_parent();
     g_path[0] = '\0';
     if (e && strcmp(e, "0") == 0) {
         fprintf(stderr, "[SETTINGS] skipped (RECOMP_SETTINGS=0)\n");
@@ -203,24 +333,19 @@ void mksm_settings_load(const char *base_dir)
          * reports its mode in physical pixels, whatever the DPI awareness. */
         DEVMODEA dm = { .dmSize = sizeof(dm) };
         unsigned w = 640, h = 480;
-        char out[2048];
-        FILE *f;
+        int ok;
         if (EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &dm) && dm.dmPelsHeight) {
             w = dm.dmPelsWidth;
             h = dm.dmPelsHeight;
         }
         mksm_settings_defaults(&s, w, h);
-        mksm_settings_format(&s, out, sizeof(out));
         CreateDirectoryA(base_dir, NULL);
-        f = fopen(g_path, "wb");
-        if (f) {
-            fputs(out, f);
-            fclose(f);
-        }
+        ok = write_file(g_path, &s) == 0;
         fprintf(stderr, "[SETTINGS] %s %s (monitor %ux%u: scale %s, aspect %s)\n",
-                f ? "wrote" : "could not write", g_path, w, h,
+                ok ? "wrote" : "could not write", g_path, w, h,
                 s.value[MKSM_SET_SCALE], s.value[MKSM_SET_ASPECT]);
     }
+    g_file = s;
 
     for (int i = 0; i < MKSM_SET_COUNT; i++) {
         if (!s.present[i] || !s.value[i][0])

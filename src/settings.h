@@ -32,9 +32,12 @@ enum {
 
 #define MKSM_SET_VALUE_MAX 260
 
+#define MKSM_SET_EXTRA_MAX 1024
+
 typedef struct MksmSettings {
     char value[MKSM_SET_COUNT][MKSM_SET_VALUE_MAX];
     unsigned char present[MKSM_SET_COUNT];  /* key seen (or set), even with an empty value */
+    char extra[MKSM_SET_EXTRA_MAX];         /* unknown key=value lines, kept on rewrite */
 } MksmSettings;
 
 const char *mksm_settings_key(int id);
@@ -43,10 +46,12 @@ int mksm_settings_find(const char *key);    /* id, or -1 */
 
 /* Parses INI text into s (cleared first): key=value per line, spaces around both trimmed,
  * ';' / '#' comments and [sections] skipped, the last of a repeated key wins. Returns the
- * number of lines it couldn't use (unknown keys, no '='). */
+ * number of lines it couldn't use (unknown keys, no '='); unknown key=value lines are kept in
+ * s->extra (as far as they fit) so a rewrite doesn't lose them (a newer build's keys, typos). */
 int mksm_settings_parse(MksmSettings *s, const char *text);
 
-/* The file text for s: a comment header, then every present key in table order.
+/* The file text for s: a comment header, then every present key in table order, then the
+ * unknown lines (s->extra).
  * Returns the length (like snprintf: may exceed cap, then the text is cut). */
 size_t mksm_settings_format(const MksmSettings *s, char *buf, size_t cap);
 
@@ -66,6 +71,19 @@ void mksm_settings_load(const char *base_dir);
  * relaunch can drop those and the menu can tell them from the user's own, B7b2). */
 const char *mksm_settings_path(void);
 int mksm_settings_env_from_file(const char *env);
+/* The file's contents as read (or written fresh) at start, updated by mksm_settings_save;
+ * NULL when the file is skipped. For the menu (B7b2), one thread. */
+const MksmSettings *mksm_settings_file(void);
+/* Writes s to the file in use (a temp file, then replaced). 0 = written. Logs [SETTINGS]. */
+int mksm_settings_save(const MksmSettings *s);
+/* A variable the port set itself from a file value (e.g. RECOMP_SAVE_DIR from save_dir=):
+ * a relaunch drops it too, so the new process works it out again. */
+void mksm_settings_derived_env(const char *env);
+/* Starts the exe again (same path, command line, working dir, std handles) without the
+ * variables that came from the file, so the new process reads the file afresh, and ends this
+ * one. The new process waits for this one to be gone before it opens anything
+ * (MKSM_RESTART_PARENT). Returns only if the new process couldn't be started (-1). */
+int mksm_settings_restart(void);
 #endif
 
 #ifdef __cplusplus

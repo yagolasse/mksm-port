@@ -223,7 +223,8 @@ if(MKSM_SDL_WINDOW AND TARGET mksm_gpu)
         ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
     )
     target_include_directories(mksm_menu PRIVATE
-        ${IMGUI_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src/gpu ${XBOXRECOMP_DIR}/src)
+        ${IMGUI_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/gpu
+        ${XBOXRECOMP_DIR}/src)
     target_link_libraries(mksm_menu PRIVATE SDL2::SDL2)
     target_compile_definitions(mksm_menu PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
     target_compile_options(mksm_menu PRIVATE /Z7)

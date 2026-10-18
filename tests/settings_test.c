@@ -44,6 +44,16 @@ static void test_parse(void)
     CHECK(strcmp(s.value[MKSM_SET_FILTER], "nearest") == 0, "filter '%s'", s.value[MKSM_SET_FILTER]);
     CHECK(s.present[MKSM_SET_FULLSCREEN] && !s.value[MKSM_SET_FULLSCREEN][0], "fullscreen empty");
     CHECK(!s.present[MKSM_SET_WIDE], "wide not present");
+    CHECK(strcmp(s.extra, "bogus=1\n") == 0, "extra '%s'", s.extra);
+    /* Unknown lines survive a rewrite (B7b2: the menu saves the file). */
+    {
+        MksmSettings t;
+        char buf[4096];
+        mksm_settings_format(&s, buf, sizeof(buf));
+        CHECK(mksm_settings_parse(&t, buf) == 1, "rewrite bad lines");
+        CHECK(strcmp(t.extra, "bogus=1\n") == 0, "rewritten extra '%s'", t.extra);
+        CHECK(strcmp(t.value[MKSM_SET_SAVE_DIR], s.value[MKSM_SET_SAVE_DIR]) == 0, "rewrite save_dir");
+    }
     CHECK(mksm_settings_parse(&s, "") == 0 && !s.present[MKSM_SET_SCALE], "empty text");
     CHECK(mksm_settings_parse(&s, NULL) == 0, "NULL text");
 }

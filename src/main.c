@@ -726,8 +726,10 @@ static void migrate_legacy_saves(void)
         g_save_dir_toolkit = false;
         fprintf(stderr, "[SAVE] the game folder's saves stay in use there\n");
     }
-    if (g_save_dir_toolkit)
+    if (g_save_dir_toolkit) {
         _putenv_s("RECOMP_SAVE_DIR", g_save_dir);
+        mksm_settings_derived_env("RECOMP_SAVE_DIR");  /* worked out again after a restart */
+    }
 }
 
 /* ── WinMain ───────────────────────────────────────────────── */

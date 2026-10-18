@@ -42,7 +42,7 @@ statically recompiling the retail `default.xbe` to C with
   (RAMHT lookup, acks the NOP-notify and flip-stall waits, presents the last-drawn surface at the
   flip and paces flips to 59.94 Hz); `mksm_gpu.h` = the plain-C interface for
   cl-built code. Licenses: `LICENSE` (GPL-3.0, the combined work), `LICENSES/`, `NOTICE` (file → license)
-- `src/ui/`: the settings menu (`menu.cpp`, plan 4.6/B7a1; C++, cl-built lib `mksm_menu`, linked
+- `src/ui/`: the settings menu (`menu.cpp`, plan 4.6/B7a1, editable since B7b2; C++, cl-built lib `mksm_menu`, linked
   with the SDL window + GPU in non-Debug configs, `MKSM_HAVE_MENU`): Dear ImGui with its SDL2 and
   OpenGL3 backends, drawn by `mksm_gpu.c`'s present thread through `mksm_gpu_set_overlay`
 - `external/imgui/`: Dear ImGui 1.91.9b, the core files and the sdl2/opengl3 backends copied
@@ -208,8 +208,16 @@ are. Missing file = written with the monitor defaults (D3 (2): `EnumDisplaySetti
 primary monitor; `[SETTINGS] wrote`). `RECOMP_SETTINGS=0` skips it (the run scripts and the
 smoke test default to 0, so dev runs keep the Xbox look), `=1` or unset = `<base>\settings.ini`,
 anything else = that path (handy for tests: a missing path is written fresh).
-`mksm_settings_env_from_file` tells which variables came from the file (a relaunch must drop
-those, B7b2).
+The menu edits it (B7b2, `menu.cpp`): its copy starts from `mksm_settings_file()` (the file as
+read at start); live items are saved at once (`mksm_settings_save`: temp file + replace, unknown
+`key=value` lines kept; they apply at the next start until B7c), scale/aspect/wide stay pending
+until "Apply and restart" (confirm popup) saves and calls `mksm_settings_restart`: it drops the
+variables the file set (`mksm_settings_env_from_file`) and the derived ones registered with
+`mksm_settings_derived_env` (`RECOMP_SAVE_DIR`) from the process environment, starts the exe
+again with the same command line, working dir and std handles (same log) and
+`MKSM_RESTART_PARENT=<pid>`, then terminates; the new process waits for that pid to be gone
+before it reads the file (`[SETTINGS] restarting (new process N)` / `restarted (old process N
+gone)`). A variable the user set shows as "set by ..." and isn't editable.
 
 ## Testing
 Unit tests for the Python tools (stdlib `unittest`, pytest also runs them; `stub_audit` needs

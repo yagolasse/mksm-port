@@ -331,7 +331,8 @@ flag, cinematic camera, letterbox bars, fade) and at movie start/end.
 With the wide buffer the HUD sits at the screen edges (plan B5d2, `RECOMP_HUD_EDGES=0` keeps
 it at its 4:3 place in the centre 640): `recomp_manual.c` records the HUD manager's elements
 as the game builds them, moves each left/right piece by ∓(W-640)/2 for its draw (centred ones
-stay) and moves the text an element's callback queues the same way.
+stay) and moves the text an element's callback queues the same way. The pause menu's map
+lives in the same manager (layout flags 0x600B4..0x600B6, plan B5f) and is kept centred.
 `RECOMP_HUD_LOG=1` (plan B5d1) logs every 300th sprite flush: the drawn sprites (position, size,
 anchor flags, HUD side) and the next frame's queued text and rect quads with the HUD element
 whose callback queued them (`[HUD]` lines).

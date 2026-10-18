@@ -494,7 +494,8 @@ static void wide_shift_rect_args(void)
  * - The HUD manager (built by 0x000921D0) keeps its elements, one sprite each, in a pointer
  *   array (mgr +0, 128 slots). Elements come from layout tables (0x00091240, thiscall ecx = mgr,
  *   the table first) or per player (0x000914F0); the wrapper below remembers the centred ones:
- *   made from the bottom-bar or popup tables, or placed at x 320.
+ *   made from the bottom-bar or popup tables, placed at x 320, or the pause map's pieces
+ *   (plan B5f: same manager, flags 0x600B4..0x600B6, placed in the menu's "Map Display" box).
  * - Side of the others: the sprite's x (+0xC0, 640 space) at the draw vs 320. The draw
  *   (0x0011D000, cdecl entry; sprite at entry +8) gets the x moved for the call.
  * - The HUD text is queued by the elements' per-frame callbacks (run by 0x001B6900 through
@@ -562,12 +563,18 @@ static int hud_side(uint32_t s)
     return x < 320.0f ? -1 : x > 320.0f ? 1 : 0;
 }
 
-/* Elements from a layout table (0x38-byte rows, x at +8). */
+/* Elements from a layout table (0x38-byte rows, x at +8; thiscall: table, layer, flags).
+ * Centred: the bottom bar 0x004EC2C8, the popup 0x004EC878, rows at x 320, and the pause
+ * map (flags 0x600B5 backdrop, 0x600B6 rooms of area 0x0059E3AC, 0x600B4 the no-map picture;
+ * the HUD's own are 0x600B2). The map's rooms are replaced on each area change
+ * (0x0008B0F0 frees them), so entries no longer in the list are dropped. */
 extern void sub_00091240_gen(void);
 void sub_00091240(void)
 {
     uint32_t mgr = g_ecx, table = GUEST_U32(g_esp + 4u), list, before[HUD_SLOTS];
-    int centred_table = table == 0x004EC2C8u || table == 0x004EC878u;
+    uint32_t flags = GUEST_U32(g_esp + 12u);
+    int centred_table = table == 0x004EC2C8u || table == 0x004EC878u ||
+                        (flags >= 0x000600B4u && flags <= 0x000600B6u);
     unsigned i, j;
     list = hud_va_ok(mgr) ? GUEST_U32(mgr) : 0;
     if (!hud_va_ok(list)) {
@@ -580,6 +587,14 @@ void sub_00091240(void)
     for (i = 0; i < HUD_SLOTS; i++)
         before[i] = GUEST_U32(list + 4u * i);
     sub_00091240_gen();
+    for (j = 0; j < hud_ncentred;) {    /* forget freed elements */
+        for (i = 0; i < HUD_SLOTS && GUEST_U32(list + 4u * i) != hud_centred[j]; i++)
+            ;
+        if (i == HUD_SLOTS)
+            hud_centred[j] = hud_centred[--hud_ncentred];
+        else
+            j++;
+    }
     for (i = 0; i < HUD_SLOTS; i++) {
         uint32_t s = GUEST_U32(list + 4u * i);
         if (!s || s == before[i])

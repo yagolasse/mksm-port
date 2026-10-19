@@ -86,6 +86,43 @@ class PerfProfileTest(unittest.TestCase):
         self.assertIn("  root: sub_002B4940 < sub_00406C12 (50% of 2 unwound)", out)
         self.assertTrue(out[-1].startswith("1 threads below 2%"))
 
+    def test_parse_offcpu_script(self):
+        o, span = perf_profile.parse_offcpu_script(OFFCPU, depth=2)
+        self.assertAlmostEqual(span, 1.5, places=4)
+        a = o[101]
+        site = "futex_do_wait | wait_single < mksm_gpu_method"
+        self.assertEqual(list(a["site"]), [site, "schedule_timeout | ioctl < drmSyncobjWait"])
+        self.assertAlmostEqual(a["site"][site], 0.002)
+        self.assertEqual(a["n"][site], 1)
+        # The second switch starts 1.0 s into the window, off CPU 0.5 s.
+        self.assertAlmostEqual(a["sec"][1], 0.5)
+        out = perf_profile.offcpu_summary(o, span, [(101, "mksm_recomp", 50.0)], {101: 0.1}, span)
+        self.assertEqual(out[1], "thread 101 (mksm_recomp): CPU 50%, off CPU 33%, run queue 0.1%")
+
+
+# Two switch-outs of thread 101 (`perf script --show-switch-events -F tid,time,event,ip,sym`).
+OFFCPU = """\
+    101 100.000000: context-switches:
+\tffffffff8a8dcfc7 schedule
+\tffffffff8a44476a futex_do_wait
+\t    7f75b8b1e46d [unknown]
+\t    564a80000010 wait_single
+\t    564a80000020 mksm_gpu_method
+\t    564a80000030 nv2a_ack_thread
+
+    101 100.000010: PERF_RECORD_SWITCH OUT
+    101 100.002010: PERF_RECORD_SWITCH IN
+    101 101.000000: context-switches:
+\tffffffff8a8dcfc7 schedule
+\tffffffff8a8dd000 schedule_timeout
+\t    7f75b8b1e46d ioctl
+\t    7f7537000000 drmSyncobjWait
+\t    564a80000040 read_pixels
+
+    101 101.000010: PERF_RECORD_SWITCH OUT
+    101 101.500010: PERF_RECORD_SWITCH IN
+"""
+
 
 if __name__ == "__main__":
     unittest.main()

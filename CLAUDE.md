@@ -84,7 +84,7 @@ statically recompiling the retail `default.xbe` to C with
 - `tools/wavscan.py`: scans a `RECOMP_AUDIO_WAV` recording (older logs: `RECOMP_APU_WAV`) for noise bursts, clicks, repeated/dropped blocks, clipping; `--excerpt START,DUR out.wav` cuts a clip
 - `tools/voicedump.py`: reads a `RECOMP_APU_VOICE_DUMP` (per-voice samples): summary, stale-ring repeats, one voice as WAV. Two formats: our old record dump (with buffer offsets), and toolkit v0.14's raw s16 stereo 48 kHz files (`.raw`, one per voice, `=all` writes `<file>.<voice>.raw`): level, zero-crossing rate, exact copies of earlier output
 - `tools/profsum.py`: summarizes `RECOMP_PROF` run logs: per-thread CPU % + top functions, level fps per `[XGPU]` interval, medians over several logs (A/B runs)
-- `tools/perf_profile.py`: the Linux counterpart (`perf` on a smoke pad run: per-thread CPU % + top symbols; see Debugging)
+- `tools/perf_profile.py`: the Linux counterpart (`perf` on a smoke pad run: per-thread CPU % + top symbols, `--offcpu`: where guest main + the method thread wait; see Debugging)
 - `tools/stub_audit.py`: sorts `gen/recomp_stubs_unresolved.c` into real code vs. decoded data (writes `seeds/stubs.json`)
 - `docs/`: generic notes on how the port works (`gpu-renderer.md`: design of the GPU renderer, a port of xemu's PGRAPH + OpenGL backend)
 - `tests/`: unit tests for `tools/*.py` on synthetic inputs (no game data), see Testing
@@ -469,6 +469,12 @@ there), so they show the process name except Mesa's (`gl0` = glthread, `gdrv0` =
 the self symbols say which is which (method thread: `pgraph_*`/`pb_consume`; guest main:
 `sub_003C8490`...). Call chains (root/incl lines) are best effort: perf 7.1's DWARF unwinder fails
 ("No such process") for most threads; CPU % and self symbols don't need it.
+`--offcpu` (plan 2.7c7) records where guest main (the pid) and the method thread (pid + 1) wait
+instead: every context switch (`-e context-switches -c 1 --switch-events`, a stack at each switch-out),
+summed per blocking site (`futex_do_wait | wait_single < mksm_gpu_method ...`), per second of the window,
+plus each thread's run-queue delay from `/proc/.../schedstat`. Needs `perf_event_paranoid` <= 1 for the
+kernel frames, no root: sched tracepoints (`perf sched`, `-e sched:*`) need tracefs, which is root-only
+on the Deck host and so fails in the distrobox.
 Headroom runs with `RECOMP_PB_GPU_VBLANK=0` don't work with the pad script: uncapped menus and movie
 run too fast for its time-based steps and it misses the movie skip.
 `RECOMP_WBC_ACK` (plan 2.H.8b): a thread acks D3D's kickoff flush wait at once instead of the ack

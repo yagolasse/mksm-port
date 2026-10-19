@@ -1,10 +1,19 @@
 /*
  * Stand-in for QEMU's generated trace/trace-hw_xbox_nv2a.h: one no-op per event in
  * xemu's hw/xbox/nv2a/trace-events (36334d9), same signatures, so callers type-check.
+ * The surface download / eviction events feed surface_log.c when RECOMP_PB_GPU_DOWNLOAD_LOG is
+ * set (plan 2.7c9a); the rest stay no-ops.
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
+
+extern int mksm_surface_log_on;
+void mksm_surface_log_download(const char *binding, const char *layout, uint32_t addr,
+                               uint32_t width, uint32_t height, uint32_t pitch,
+                               uint32_t bytes_per_pixel);
+void mksm_surface_log_reason(const char *reason, uint32_t addr);
 
 static inline void trace_nv2a_reg_read(const char *block, uint32_t addr, unsigned int size, uint64_t val) {}
 static inline void trace_nv2a_reg_write(const char *block, uint32_t addr, unsigned int size, uint64_t val) {}
@@ -18,12 +27,12 @@ static inline void trace_nv2a_pgraph_surface_cpu_read(uint32_t addr, uint32_t of
 static inline void trace_nv2a_pgraph_surface_cpu_write(uint32_t addr, uint32_t offset) {}
 static inline void trace_nv2a_pgraph_surface_create_color(uint32_t addr, uint32_t width, uint32_t height, const char *layout, uint32_t anti_aliasing, uint32_t clip_x, uint32_t clip_width, uint32_t clip_y, uint32_t clip_height, uint32_t pitch) {}
 static inline void trace_nv2a_pgraph_surface_create_zeta(uint32_t addr, uint32_t width, uint32_t height, const char *layout, uint32_t anti_aliasing, uint32_t clip_x, uint32_t clip_width, uint32_t clip_y, uint32_t clip_height, uint32_t pitch) {}
-static inline void trace_nv2a_pgraph_surface_download(const char *binding, const char *layout, uint32_t addr, uint32_t width, uint32_t height, uint32_t pitch, uint32_t bytes_per_pixel) {}
-static inline void trace_nv2a_pgraph_surface_evict_overlapping(uint32_t addr, uint32_t width, uint32_t height, uint32_t pitch) {}
-static inline void trace_nv2a_pgraph_surface_evict_reason(const char *reason, uint32_t addr) {}
+static inline void trace_nv2a_pgraph_surface_download(const char *binding, const char *layout, uint32_t addr, uint32_t width, uint32_t height, uint32_t pitch, uint32_t bytes_per_pixel) { if (mksm_surface_log_on) mksm_surface_log_download(binding, layout, addr, width, height, pitch, bytes_per_pixel); }
+static inline void trace_nv2a_pgraph_surface_evict_overlapping(uint32_t addr, uint32_t width, uint32_t height, uint32_t pitch) { if (mksm_surface_log_on) mksm_surface_log_reason("overlap", addr); }
+static inline void trace_nv2a_pgraph_surface_evict_reason(const char *reason, uint32_t addr) { if (mksm_surface_log_on) mksm_surface_log_reason(reason, addr); }
 static inline void trace_nv2a_pgraph_surface_hit_color(uint32_t addr, uint32_t width, uint32_t height, const char *layout, uint32_t anti_aliasing, uint32_t clip_x, uint32_t clip_width, uint32_t clip_y, uint32_t clip_height, uint32_t pitch) {}
 static inline void trace_nv2a_pgraph_surface_hit_zeta(uint32_t addr, uint32_t width, uint32_t height, const char *layout, uint32_t anti_aliasing, uint32_t clip_x, uint32_t clip_width, uint32_t clip_y, uint32_t clip_height, uint32_t pitch) {}
-static inline void trace_nv2a_pgraph_surface_invalidated(uint32_t addr) {}
+static inline void trace_nv2a_pgraph_surface_invalidated(uint32_t addr) { if (mksm_surface_log_on) mksm_surface_log_reason(NULL, addr); }
 static inline void trace_nv2a_pgraph_surface_match_color(uint32_t addr, uint32_t width, uint32_t height, const char *layout, uint32_t anti_aliasing, uint32_t clip_x, uint32_t clip_width, uint32_t clip_y, uint32_t clip_height, uint32_t pitch) {}
 static inline void trace_nv2a_pgraph_surface_match_zeta(uint32_t addr, uint32_t width, uint32_t height, const char *layout, uint32_t anti_aliasing, uint32_t clip_x, uint32_t clip_width, uint32_t clip_y, uint32_t clip_height, uint32_t pitch) {}
 static inline void trace_nv2a_pgraph_surface_migrate_type(const char *new_type) {}

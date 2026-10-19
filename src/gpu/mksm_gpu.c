@@ -48,6 +48,11 @@
 int mksm_shader_patch_install(unsigned surface_scale, unsigned (*nearest_mask)(void));
 /* depth_readback.c */
 int mksm_depth_readback_install(void);
+/* surface_log.c */
+void mksm_surface_log_init(NV2AState *d);
+void mksm_surface_log_flip(void);
+void mksm_surface_log_report(void);
+extern int mksm_surface_log_on;
 
 static NV2AState *s_dev;
 static MemoryRegion s_vram;
@@ -198,6 +203,7 @@ int mksm_gpu_init(const MksmGpuMemory *mem, int opengl)
         long v = strtol(scale, NULL, 10);
         g_config.display.quality.surface_scale = v < 1 ? 1 : v > 4 ? 4 : (int)v;
     }
+    mksm_surface_log_init(d);
     pgraph_init(d);
     nv2a_context_init();
     /* early_context_init leaves the GL display context current on this thread; the method
@@ -213,11 +219,12 @@ int mksm_gpu_init(const MksmGpuMemory *mem, int opengl)
     s_sem_event = CreateEventW(NULL, FALSE, FALSE, NULL);
     s_dev = d;
     fprintf(stderr, "[XGPU] PGRAPH set up: vram %zu MiB, ramin %zu KiB, %s renderer, "
-            "vblank %.2f Hz, surface scale %ux%s%s\n", mem->vram_size >> 20, mem->ramin_size >> 10,
+            "vblank %.2f Hz, surface scale %ux%s%s%s\n", mem->vram_size >> 20, mem->ramin_size >> 10,
             opengl ? "OpenGL" : "null", s_vblank_hz,
             (unsigned)g_config.display.quality.surface_scale, snap2d ? ", 2D snap" : "",
             depth_half == 2 ? ", depth readback via float (F16C)"
-            : depth_half ? ", depth readback via float" : "");
+            : depth_half ? ", depth readback via float" : "",
+            mksm_surface_log_on ? ", download log" : "");
     return 0;
 }
 
@@ -252,6 +259,7 @@ static void report(void)
             s_stats.last_nonblack, interval_s);
     fprintf(stderr, "[XGPU] fence waits %ld, blocked %ld for %ld ms, left unreached %ld\n",
             s_sem_waits, s_sem_blocked, s_sem_wait_us / 1000, s_sem_unreached);
+    mksm_surface_log_report();
 }
 
 /* D3D's pushbuffer fence: it sends a context-pattern object's SET_MONOCHROME_COLOR0 with a
@@ -1270,6 +1278,7 @@ void mksm_gpu_method(uint32_t subch, uint32_t method, uint32_t param)
         s_stats.surf_downloads += (unsigned long)c[NV2A_PROF_SURF_DOWNLOAD];
         s_stats.surf_uploads += (unsigned long)c[NV2A_PROF_SURF_UPLOAD];
         s_stats.surf_to_tex += (unsigned long)c[NV2A_PROF_SURF_TO_TEX];
+        mksm_surface_log_flip();
         present_scanout(d);
         batch_unlock(pg);
         s_stats.frame_draws = 0;

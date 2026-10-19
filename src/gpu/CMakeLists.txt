@@ -95,6 +95,7 @@ add_library(mksm_gpu STATIC
     mksm_gpu.c
     shader_patch.c
     depth_readback.c
+    surface_log.c
     gpu_selftest.c
     $<TARGET_OBJECTS:nv2a_vsh_cpu>
     $<TARGET_OBJECTS:glad>

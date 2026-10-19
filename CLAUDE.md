@@ -55,7 +55,8 @@ statically recompiling the retail `default.xbe` to C with
   (hooked at `glShaderSource`); `depth_readback.c` = depth reads as half floats done via a float
   read + CPU conversion (F16C when the CPU has it; hooked at `glReadPixels`; Mesa radeonsi returns NaN for every texel of a
   repeated half-float depth read, which broke the character shadow maps; `RECOMP_PB_GPU_DEPTH_HALF=0`
-  turns it off); `lru_visit_fast.h` = forced into xemu's `gl/texture.c` (CMake), its texture-cache
+  turns it off); `surface_log.c` = `RECOMP_PB_GPU_DOWNLOAD_LOG`'s count of surface downloads per
+  cause (xemu's trace events reach it through `xemu/shim/trace`); `lru_visit_fast.h` = forced into xemu's `gl/texture.c` (CMake), its texture-cache
   walks visit the used nodes instead of all 65,536 LRU hash bins; `mksm_gpu.c` = stands in for xemu's PFIFO (holds `pgraph.lock` per pushbuffer walk through the toolkit's batch-end hook, patch 0032)
   (RAMHT lookup, acks the NOP-notify and flip-stall waits, presents the last-drawn surface at the
   flip and paces flips to 59.94 Hz; swaps xemu's FLIP_STALL `glFinish` for a fence per flip, waiting on
@@ -391,7 +392,11 @@ surface drawn last into the framebuffer window (`RECOMP_FB_WINDOW=1`) and waits 
 `RECOMP_PB_GPU_RENDERER=null` = xemu's null renderer (draws nothing), `RECOMP_PB_GPU_VBLANK=<Hz>` sets
 the pacing (0 = uncapped), `RECOMP_PB_GPU_DUMP=<file.bmp>` (+ `RECOMP_PB_GPU_DUMP_FLIP=<N>[,<N>...]`,
 default 600, up to 16 flips; with more than one each file is `<file>_<flip>.bmp`) dumps presented
-frames. `RECOMP_PB_GPU_SCALE=1..4` (plan 4.1, default 1) sets xemu's internal
+frames. `RECOMP_PB_GPU_DOWNLOAD_LOG=1` (plan 2.7c9a, `src/gpu/surface_log.c`, fed by the trace
+shim) adds `[XGPU] download` lines to each report: every surface xemu read back into VRAM in the
+interval, counted per cause (`texture` with the overlapping stage's address/format/shape, the
+eviction reasons `overlap`/`old`/`incompatible`, `fallback`, `other`) and surface.
+`RECOMP_PB_GPU_SCALE=1..4` (plan 4.1, default 1) sets xemu's internal
 resolution scale at start-up: surfaces render at Nx, CPU reads of surfaces are downscaled to 1x,
 the window shows the scaled surface (the dump and the `pbo` path see it at Nx too); not changeable
 while running. Above 1x, `src/gpu/shader_patch.c` edits xemu's generated GLSL as it reaches

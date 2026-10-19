@@ -5,7 +5,11 @@
  * What xemu's pfifo.c puller does around pgraph_method, done here per method:
  *   - SET_OBJECT (method 0) and the object methods 0x180-0x1FC carry a handle; the puller
  *     looks it up in RAMHT and hands PGRAPH the object's instance address;
- *   - pgraph_method runs under pgraph.lock.
+ *   - pgraph_method runs under pgraph.lock. Here the lock is taken at a batch's first method
+ *     and held to its end (mksm_gpu_batch_end), not taken per method: nothing else in the
+ *     port takes it (no PFIFO thread, no CPU-side VRAM callbacks, no live renderer switch),
+ *     and a level sends ~5M methods/s, where a lock per method was ~6% of the method thread
+ *     on the Steam Deck (plan 2.7c3). It is let go before the flip's VBlank wait.
  * Left out: the context switch (one channel; CTX_CONTROL is marked valid at init) and the
  * puller's stalls. Nothing here delivers NV2A interrupts to the title, and the stream can't
  * be held back, so the two waits PGRAPH can enter are completed at once, the way the
@@ -1030,6 +1034,32 @@ static void hold_if_frozen(void)
     fflush(stderr);
 }
 
+/* pgraph.lock across a batch of methods (see the top of the file); method thread only. */
+static bool s_batch_locked;
+
+static inline void batch_lock(PGRAPHState *pg)
+{
+    if (!s_batch_locked) {
+        qemu_mutex_lock(&pg->lock);
+        s_batch_locked = true;
+    }
+}
+
+static void batch_unlock(PGRAPHState *pg)
+{
+    if (s_batch_locked) {
+        s_batch_locked = false;
+        qemu_mutex_unlock(&pg->lock);
+    }
+}
+
+void mksm_gpu_batch_end(void)
+{
+    if (s_dev) {
+        batch_unlock(&s_dev->pgraph);
+    }
+}
+
 void mksm_gpu_method(uint32_t subch, uint32_t method, uint32_t param)
 {
     NV2AState *d = s_dev;
@@ -1091,7 +1121,7 @@ void mksm_gpu_method(uint32_t subch, uint32_t method, uint32_t param)
         }
     }
 
-    qemu_mutex_lock(&pg->lock);
+    batch_lock(pg);
     if (masked != prog) {
         pgraph_reg_w(pg, NV_PGRAPH_SHADERPROG, masked);
         restore_prog = prog;
@@ -1104,7 +1134,6 @@ void mksm_gpu_method(uint32_t subch, uint32_t method, uint32_t param)
         pgraph_reg_w(pg, NV_PGRAPH_SHADERPROG, restore_prog);
         restore_pending = false;
     }
-    qemu_mutex_unlock(&pg->lock);
 
     if (subch == 0) {
         switch (method) {
@@ -1144,9 +1173,8 @@ void mksm_gpu_method(uint32_t subch, uint32_t method, uint32_t param)
         s_stats.surf_downloads += (unsigned long)c[NV2A_PROF_SURF_DOWNLOAD];
         s_stats.surf_uploads += (unsigned long)c[NV2A_PROF_SURF_UPLOAD];
         s_stats.surf_to_tex += (unsigned long)c[NV2A_PROF_SURF_TO_TEX];
-        qemu_mutex_lock(&pg->lock);
         present_scanout(d);
-        qemu_mutex_unlock(&pg->lock);
+        batch_unlock(pg);
         s_stats.frame_draws = 0;
         wait_vblank();
         hold_if_frozen();

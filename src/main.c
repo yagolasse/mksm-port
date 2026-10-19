@@ -364,6 +364,7 @@ typedef struct MCPXAPUState MCPXAPUState;
 
 typedef void (*nv2a_pb_method_hook_fn)(uint32_t subch, uint32_t method, uint32_t param);
 extern void nv2a_pb_set_method_hook(nv2a_pb_method_hook_fn fn);
+extern void nv2a_pb_set_batch_end_hook(void (*fn)(void));
 extern int xbox_Nv2aSoftwareMethod(uint32_t param);
 
 /* Software notifies go to the toolkit, which does what D3D's interrupt handler would
@@ -458,6 +459,7 @@ static bool gpu_init_from_env(void)
     }
     mksm_gpu_set_notify(gpu_notify);
     nv2a_pb_set_method_hook(mksm_gpu_method);
+    nv2a_pb_set_batch_end_hook(mksm_gpu_batch_end);
     fprintf(stderr, "[BOOT] RECOMP_PB_GPU: pushbuffer -> xemu PGRAPH\n");
     return true;
 }

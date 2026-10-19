@@ -1,0 +1,126 @@
+From e8fa9d0f39fb05e588103a91b5f6600e83aac6ae Mon Sep 17 00:00:00 2001
+From: The FBC Agent <thefbcspecialagent@gmail.com>
+Date: Sun, 18 Oct 2026 22:39:43 -0300
+Subject: [PATCH] nv2a_pb: batch-end hook for external renderers
+
+nv2a_pb_set_batch_end_hook registers a callback that runs on the hook's
+thread after each walk of the pushbuffer up to PUT and after a replayed
+capture. A renderer can then take its lock once per batch instead of once
+per method; a level sends millions of methods per second.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01KYhJirRqhGYgSCZ1a9ArVB
+---
+ src/kernel/nv2a_pb_capture.c           |  2 ++
+ src/kernel/nv2a_pb_exec.c              | 14 ++++++++++++++
+ src/kernel/nv2a_pb_hook.h              |  7 +++++++
+ src/kernel/nv2a_pb_scan.c              |  3 +++
+ tests/nv2a_pb_walk/nv2a_pb_walk_test.c |  1 +
+ 5 files changed, 27 insertions(+)
+
+diff --git a/src/kernel/nv2a_pb_capture.c b/src/kernel/nv2a_pb_capture.c
+index 3a0e5f8..24b4c94 100644
+--- a/src/kernel/nv2a_pb_capture.c
++++ b/src/kernel/nv2a_pb_capture.c
+@@ -12,6 +12,7 @@
+ 
+ /* The software executor and the ack-thread stop, both in the kernel lib. */
+ extern void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param);
++extern void nv2a_pb_exec_batch_end(void);
+ extern void nv2a_pb_exec_dump_surface(const char *path);
+ void xbox_Nv2aAckStop(void);
+ 
+@@ -375,6 +376,7 @@ int nv2a_pb_capture_replay(const char *path)
+         nv2a_pb_exec_method(prelude[i].subch, prelude[i].method, prelude[i].param);
+     for (i = 0; i < frame_n; i++)
+         nv2a_pb_exec_method(frame[i].subch, frame[i].method, frame[i].param);
++    nv2a_pb_exec_batch_end();
+ 
+     snprintf(bmp, sizeof bmp, "%s.replay.bmp", path);
+     nv2a_pb_exec_dump_surface(bmp);
+diff --git a/src/kernel/nv2a_pb_exec.c b/src/kernel/nv2a_pb_exec.c
+index 7f8ae85..478c4ac 100644
+--- a/src/kernel/nv2a_pb_exec.c
++++ b/src/kernel/nv2a_pb_exec.c
+@@ -3538,6 +3538,20 @@ void nv2a_pb_set_method_hook(nv2a_pb_method_hook_fn fn)
+     s_method_hook = fn;
+ }
+ 
++static nv2a_pb_batch_end_fn s_batch_end_hook;
++
++void nv2a_pb_set_batch_end_hook(nv2a_pb_batch_end_fn fn)
++{
++    s_batch_end_hook = fn;
++}
++
++/* nv2a_pb_scan.c and the capture replay, after each batch of methods. */
++void nv2a_pb_exec_batch_end(void)
++{
++    if (s_method_hook && s_batch_end_hook)
++        s_batch_end_hook();
++}
++
+ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
+ {
+     nv2a_pb_capture_method(subch, method, param);
+diff --git a/src/kernel/nv2a_pb_hook.h b/src/kernel/nv2a_pb_hook.h
+index 4b88cff..89c908f 100644
+--- a/src/kernel/nv2a_pb_hook.h
++++ b/src/kernel/nv2a_pb_hook.h
+@@ -25,6 +25,13 @@ typedef void (*nv2a_pb_method_hook_fn)(uint32_t subch, uint32_t method,
+ /* NULL restores the software executor. */
+ void nv2a_pb_set_method_hook(nv2a_pb_method_hook_fn fn);
+ 
++/* Called on the hook's thread after each batch of methods: a walk of the
++ * pushbuffer up to PUT, or a replayed capture. A hook can then take its lock
++ * once per batch instead of once per method (a level sends millions of
++ * methods per second). Optional; NULL turns it off. */
++typedef void (*nv2a_pb_batch_end_fn)(void);
++void nv2a_pb_set_batch_end_hook(nv2a_pb_batch_end_fn fn);
++
+ /* A hook that runs software methods (NV097 NO_OPERATION with a non-zero
+  * parameter, which on hardware raise an interrupt for D3D's handler) reports
+  * each parameter here; the runtime reproduces what D3D's handler would do
+diff --git a/src/kernel/nv2a_pb_scan.c b/src/kernel/nv2a_pb_scan.c
+index edf4273..b2aa187 100644
+--- a/src/kernel/nv2a_pb_scan.c
++++ b/src/kernel/nv2a_pb_scan.c
+@@ -44,6 +44,7 @@ static uint32_t s_tot_calls;
+  * the executor writes to guest memory. */
+ extern void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param);
+ extern void nv2a_pb_exec_report(void);
++extern void nv2a_pb_exec_batch_end(void);
+ static int s_exec_enabled = -1;
+ static int s_scan_enabled = -1;
+ 
+@@ -423,6 +424,7 @@ void nv2a_pb_scan(uint32_t put_phys)
+         *get_reg = s_get;
+         s_pub = s_get;
+     }
++    nv2a_pb_exec_batch_end();
+     s_tot_words += words;
+     s_tot_unknown += unknown;
+     s_tot_jumps += jumps;
+@@ -530,6 +532,7 @@ void nv2a_pb_scan_segment(uint32_t start_va, uint32_t end_va)
+         end_va = start_va + 0x400000u;
+ 
+     words = pb_walk_segment(start_va, end_va, 0, &jumps, &unknown);
++    nv2a_pb_exec_batch_end();
+ 
+     s_tot_words += words;
+     s_tot_unknown += unknown;
+diff --git a/tests/nv2a_pb_walk/nv2a_pb_walk_test.c b/tests/nv2a_pb_walk/nv2a_pb_walk_test.c
+index 1fe1122..063d2cb 100644
+--- a/tests/nv2a_pb_walk/nv2a_pb_walk_test.c
++++ b/tests/nv2a_pb_walk/nv2a_pb_walk_test.c
+@@ -47,6 +47,7 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
+         s_get_reg = s_title_get;
+ }
+ void nv2a_pb_exec_report(void) {}
++void nv2a_pb_exec_batch_end(void) {}
+ void xbox_Nv2aAckBusyBits(void) {}
+ 
+ void nv2a_pb_resync(uint32_t get_phys);
+-- 
+2.53.0.windows.2
+

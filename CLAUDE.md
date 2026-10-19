@@ -53,7 +53,7 @@ statically recompiling the retail `default.xbe` to C with
   read + CPU conversion (hooked at `glReadPixels`; Mesa radeonsi returns NaN for every texel of a
   repeated half-float depth read, which broke the character shadow maps; `RECOMP_PB_GPU_DEPTH_HALF=0`
   turns it off); `lru_visit_fast.h` = forced into xemu's `gl/texture.c` (CMake), its texture-cache
-  walks visit the used nodes instead of all 65,536 LRU hash bins; `mksm_gpu.c` = stands in for xemu's PFIFO
+  walks visit the used nodes instead of all 65,536 LRU hash bins; `mksm_gpu.c` = stands in for xemu's PFIFO (holds `pgraph.lock` per pushbuffer walk through the toolkit's batch-end hook, patch 0032)
   (RAMHT lookup, acks the NOP-notify and flip-stall waits, presents the last-drawn surface at the
   flip and paces flips to 59.94 Hz); `mksm_gpu.h` = the plain-C interface for
   cl-built code. Licenses: `LICENSE` (GPL-3.0, the combined work), `LICENSES/`, `NOTICE` (file → license)

@@ -121,6 +121,10 @@ void mksm_gpu_vblank_tick(void);
  * pgraph_method. */
 void mksm_gpu_method(uint32_t subch, uint32_t method, uint32_t param);
 
+/* The end of a batch of methods (the toolkit's nv2a_pb_batch_end_fn): mksm_gpu_method holds
+ * pgraph.lock from a batch's first method to here. */
+void mksm_gpu_batch_end(void);
+
 #ifdef __cplusplus
 }
 #endif

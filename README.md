@@ -11,7 +11,7 @@ game disc. See [Legal](#legal).
 
 ## Status
 
-Work in progress. Windows x64 is the only host tested so far.
+Work in progress. Windows x64 is the main host; a native Linux build also runs (see [Linux](#linux-experimental)).
 
 | Area | State |
 |---|---|
@@ -26,7 +26,7 @@ Work in progress. Windows x64 is the only host tested so far.
 | Settings menu (F1) | edits the settings (saved to `settings.ini`), Apply and restart, Quit game, FPS counter, pauses the game; scale/aspect/wide apply on restart, the rest at once |
 | Settings file | `settings.ini` read at start, monitor-based defaults on first start; written by the menu |
 | First-start setup | asks for the disc image or game folder once, checks the version, extracts an image |
-| Native Linux build | in progress: builds and runs on the Steam Deck (GPU renderer, window, pads, audio); settings menu, movies, smoke test passes; no first-start setup |
+| Native Linux build | experimental: builds and runs on the Steam Deck and a Fedora desktop (GPU renderer, window, pads, audio); settings menu, movies, smoke test passes; no first-start setup |
 
 Expect crashes and glitches. Bug reports are welcome; please include the log (`../logs/` from the run
 scripts, else `%LOCALAPPDATA%\mksm_recomp\last_run.log`; see [Run](#run)), never game files.
@@ -54,7 +54,7 @@ binary, so you produce it yourself from your own copy (step 3 below).
 
 ## Requirements
 
-- Windows 10/11 x64, a GPU with OpenGL 4.x
+- Windows 10/11 x64, a GPU with OpenGL 4.x (for Linux see [Linux](#linux-experimental))
 - Visual Studio 2022 (C++ workload) and CMake; Git (the first configure downloads SDL2's source
   and builds it into the exe)
 - clang-cl (LLVM 18 or newer) and Ninja on `PATH`, for the GPU renderer library
@@ -235,6 +235,51 @@ tools\run.bat
 The switches the game needs to run (GPU path, game window, USB pads, audio) are on by default,
 in the exe and the run scripts; leave those alone (`0` turns one off, e.g. `RECOMP_FB_WINDOW=0`
 for a headless run). `CLAUDE.md` documents them, the pipeline and the debugging switches.
+
+## Linux (experimental)
+
+A native Linux x86-64 build works. It was tested on a Steam Deck (SteamOS, built in an Arch
+distrobox) and on a Fedora-based desktop (Nobara 44, RX 9070 XT), both on Mesa's radeonsi driver.
+It boots, plays movies and the first level at 60 fps, with the GPU renderer, the SDL2 window,
+pads, audio and the settings menu (F1), and the smoke test passes. NVIDIA and Intel GPUs on
+Linux are untested.
+
+**Not there yet on Linux:** the first-start setup (no disc picker or image extraction: extract
+the disc yourself and point the exe at the folder), the `RECOMP_PROF` profiler (use `perf`, see
+below), and the `last_run.log` file for double-click starts (the log goes to the terminal).
+
+**Packages** (besides git, a C/C++ compiler, CMake, Ninja and Python 3 with `capstone`):
+- Arch / SteamOS distrobox: `sdl2` (or `sdl2-compat`), `libepoxy`, `openssl`
+- Fedora / Nobara: `sudo dnf install sdl2-compat-devel libepoxy-devel` (OpenSSL was already there)
+- Debian / Ubuntu: `sudo apt-get install build-essential cmake ninja-build pkg-config libsdl2-dev
+  libgl1-mesa-dev libepoxy-dev libssl-dev python3-capstone`
+
+The build links the system SDL2 instead of downloading it, and GL is loaded through SDL at run
+time.
+
+**Build and run:**
+```bash
+python tools/xiso.py extract /path/to/your.iso ../game_files     # as in Quick start
+# recompile the XBE: Quick start step 3 (see the note below)
+cmake -S . -B ~/mksm-build/port -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja -C ~/mksm-build/port -j6                                   # ~2 min on a 6-core desktop, ~5 min on the Deck
+MKSM_EXE=~/mksm-build/port/mksm_recomp tools/run.sh               # or: mksm_recomp <game folder>
+MKSM_EXE=~/mksm-build/port/mksm_recomp python3 tools/smoke_test.py # optional check
+```
+- The recompile (Quick start step 3) has only been run on Windows so far. It is plain Python, but
+  it is untested on Linux; the generated `src/recomp/gen/` can also be copied over from a Windows
+  checkout of the same commit.
+- The game folder is found the same way as on Windows (first argument, `MKSM_GAME_DIR`,
+  `game_dir` in the settings file, `game/` beside the exe). File names on the disc are matched
+  case-insensitively, so the extracted folder can keep its lower-case names.
+- Saves and `settings.ini` go to `$XDG_DATA_HOME/mksm_recomp`, else
+  `~/.local/share/mksm_recomp` (`MKSM_SAVE_DIR` still overrides the saves).
+- **Steam Deck:** the SteamOS host's glibc is older than the distrobox's, so the exe runs inside
+  the distrobox. To add it to Steam for Game Mode, make a small launcher script that runs it there
+  (`distrobox enter <box> -- <path>/mksm_recomp <game folder>`) and add the script as a
+  non-Steam game.
+- Profiling: `tools/perf_profile.py` runs `perf` on a smoke pad run and gives per-thread CPU and
+  the top symbols (`--offcpu`: where threads wait). It needs `perf_event_paranoid` <= 2.
 
 ## Performance notes (for other Xbox ports)
 

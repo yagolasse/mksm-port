@@ -200,7 +200,7 @@ int mksm_gpu_init(const MksmGpuMemory *mem, int opengl)
     int snap2d = opengl &&
         mksm_shader_patch_install((unsigned)g_config.display.quality.surface_scale,
                                   nearest_stages);
-    int depth_half = opengl && mksm_depth_readback_install();
+    int depth_half = opengl ? mksm_depth_readback_install() : 0;
     /* One channel, always current: pgraph_method asserts the channel is valid. */
     pgraph_reg_w(&d->pgraph, NV_PGRAPH_CTX_CONTROL, NV_PGRAPH_CTX_CONTROL_CHID);
 
@@ -209,7 +209,8 @@ int mksm_gpu_init(const MksmGpuMemory *mem, int opengl)
             "vblank %.2f Hz, surface scale %ux%s%s\n", mem->vram_size >> 20, mem->ramin_size >> 10,
             opengl ? "OpenGL" : "null", s_vblank_hz,
             (unsigned)g_config.display.quality.surface_scale, snap2d ? ", 2D snap" : "",
-            depth_half ? ", depth readback via float" : "");
+            depth_half == 2 ? ", depth readback via float (F16C)"
+            : depth_half ? ", depth readback via float" : "");
     return 0;
 }
 

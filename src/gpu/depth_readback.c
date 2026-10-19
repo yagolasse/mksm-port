@@ -12,6 +12,9 @@
  * files stay unmodified). Reads into a pixel pack buffer, or with skip pixels/rows set, go to
  * the driver unchanged (xemu does neither). RECOMP_PB_GPU_DEPTH_HALF=0 turns the hook off
  * (A/B runs).
+ * The conversion runs per texel on the method thread (a 256x256 map ~60 times a second: 4.8% of
+ * the Steam Deck's method thread as plain C, plan 2.7c5), so CPUs with F16C convert 8 at a time
+ * (vcvtps2ph, round to nearest even: the same bytes as float_to_half for every non-NaN input).
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
@@ -20,6 +23,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <glad/gl.h>
+
+#if defined(__x86_64__) || defined(_M_X64)
+#include <immintrin.h>
+#ifdef _MSC_VER
+#include <intrin.h>
+#else
+#include <cpuid.h>
+#endif
+#define HAVE_F16C_PATH 1
+#endif
 
 static PFNGLREADPIXELSPROC s_real_read_pixels;
 static float *s_buf;
@@ -52,6 +65,51 @@ static uint16_t float_to_half(float f)
     h += rem > 0x1000 || (rem == 0x1000 && (h & 1));
     return sign | (uint16_t)h;
 }
+
+static void row_to_half(const float *in, uint16_t *out, size_t n)
+{
+    for (size_t i = 0; i < n; i++) {
+        out[i] = float_to_half(in[i]);
+    }
+}
+
+#ifdef HAVE_F16C_PATH
+__attribute__((target("avx,f16c")))
+static void row_to_half_f16c(const float *in, uint16_t *out, size_t n)
+{
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        __m128i h = _mm256_cvtps_ph(_mm256_loadu_ps(in + i), _MM_FROUND_TO_NEAREST_INT);
+        _mm_storeu_si128((__m128i *)(out + i), h);
+    }
+    row_to_half(in + i, out + i, n - i);
+}
+
+/* F16C and AVX in CPUID leaf 1, and the OS saving the YMM state (OSXSAVE, XCR0 bits 1-2). */
+static int cpu_has_f16c(void)
+{
+    unsigned ecx;
+#ifdef _MSC_VER
+    int r[4];
+    __cpuid(r, 1);
+    ecx = (unsigned)r[2];
+#else
+    unsigned eax, ebx, edx;
+    if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx)) {
+        return 0;
+    }
+#endif
+    const unsigned need = (1u << 27) | (1u << 28) | (1u << 29); /* OSXSAVE, AVX, F16C */
+    if ((ecx & need) != need) {
+        return 0;
+    }
+    unsigned lo, hi;
+    __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+    return (lo & 6) == 6;
+}
+#endif
+
+static void (*s_row_to_half)(const float *, uint16_t *, size_t) = row_to_half;
 
 static void GLAD_API_PTR read_pixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format,
                                      GLenum type, void *data)
@@ -93,14 +151,12 @@ static void GLAD_API_PTR read_pixels(GLint x, GLint y, GLsizei w, GLsizei h, GLe
     glPixelStorei(GL_PACK_ALIGNMENT, align);
 
     for (GLsizei r = 0; r < h; r++) {
-        uint16_t *out = (uint16_t *)((uint8_t *)data + (size_t)r * stride);
-        const float *in = s_buf + (size_t)r * (size_t)w;
-        for (GLsizei c = 0; c < w; c++) {
-            out[c] = float_to_half(in[c]);
-        }
+        s_row_to_half(s_buf + (size_t)r * (size_t)w,
+                      (uint16_t *)((uint8_t *)data + (size_t)r * stride), (size_t)w);
     }
 }
 
+/* 0: off, 1: on, 2: on with the F16C conversion. */
 int mksm_depth_readback_install(void);
 int mksm_depth_readback_install(void)
 {
@@ -110,5 +166,11 @@ int mksm_depth_readback_install(void)
     }
     s_real_read_pixels = glad_glReadPixels;
     glad_glReadPixels = read_pixels;
+#ifdef HAVE_F16C_PATH
+    if (cpu_has_f16c()) {
+        s_row_to_half = row_to_half_f16c;
+        return 2;
+    }
+#endif
     return 1;
 }

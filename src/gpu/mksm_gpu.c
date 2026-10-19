@@ -1116,6 +1116,42 @@ void mksm_gpu_batch_end(void)
     }
 }
 
+/* FLIP_STALL without xemu's glFinish (plan 2.7c8). xemu waits there until the GPU has drawn
+ * the whole frame; on the Steam Deck's low-clocked GPU that was ~11% of the method thread's
+ * time (1.9 ms per flip). Nothing after the flip needs the GPU idle: the presents fence their
+ * own copies and CPU reads of surfaces sync in glReadPixels. Here each flip flushes and fences
+ * its frame and waits for the previous flip's fence, so the GPU stays at most one frame behind
+ * and the method thread builds the next frame meanwhile. The const renderer table is copied
+ * to swap the one op; xemu's other glFinish (gpuprops.c, at init) stays.
+ * RECOMP_PB_GPU_FLIP_FINISH=1 keeps xemu's glFinish (A/B runs). */
+static PGRAPHRenderer s_gl_renderer;
+
+static void flip_stall_fenced(NV2AState *d)
+{
+    (void)d;
+    static GLsync prev;
+    GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    glFlush();
+    if (prev) {
+        glClientWaitSync(prev, 0, 5000000000ull);
+        glDeleteSync(prev);
+    }
+    prev = fence;
+}
+
+static bool install_flip_stall(PGRAPHState *pg)
+{
+    const char *e = getenv("RECOMP_PB_GPU_FLIP_FINISH");
+    if ((e && *e && *e != '0') || !pg->renderer ||
+        pg->renderer->type != CONFIG_DISPLAY_RENDERER_OPENGL) {
+        return false;
+    }
+    s_gl_renderer = *pg->renderer;
+    s_gl_renderer.ops.flip_stall = flip_stall_fenced;
+    pg->renderer = &s_gl_renderer;
+    return true;
+}
+
 void mksm_gpu_method(uint32_t subch, uint32_t method, uint32_t param)
 {
     NV2AState *d = s_dev;
@@ -1125,8 +1161,10 @@ void mksm_gpu_method(uint32_t subch, uint32_t method, uint32_t param)
     if (!s_stats.thread_up) {
         s_stats.thread_up = 1;
         pgraph_init_thread(d);
-        fprintf(stderr, "[XGPU] renderer '%s' up on thread %lu\n",
-                pg->renderer ? pg->renderer->name : "none", GetCurrentThreadId());
+        bool fenced = install_flip_stall(pg);
+        fprintf(stderr, "[XGPU] renderer '%s' up on thread %lu, flip stall %s\n",
+                pg->renderer ? pg->renderer->name : "none", GetCurrentThreadId(),
+                fenced ? "fenced (1 frame)" : "glFinish");
     }
     s_stats.methods++;
 

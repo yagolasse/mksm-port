@@ -50,7 +50,7 @@ statically recompiling the retail `default.xbe` to C with
   `-DMKSM_SDL_WINDOW=OFF`); `gloffscreen_window.h`: their context on the game window for the present;
   `xemu_stubs.c` = externals from unported xemu files; `shader_patch.c` = edits to xemu's generated GLSL
   (hooked at `glShaderSource`); `depth_readback.c` = depth reads as half floats done via a float
-  read + CPU conversion (hooked at `glReadPixels`; Mesa radeonsi returns NaN for every texel of a
+  read + CPU conversion (F16C when the CPU has it; hooked at `glReadPixels`; Mesa radeonsi returns NaN for every texel of a
   repeated half-float depth read, which broke the character shadow maps; `RECOMP_PB_GPU_DEPTH_HALF=0`
   turns it off); `lru_visit_fast.h` = forced into xemu's `gl/texture.c` (CMake), its texture-cache
   walks visit the used nodes instead of all 65,536 LRU hash bins; `mksm_gpu.c` = stands in for xemu's PFIFO (holds `pgraph.lock` per pushbuffer walk through the toolkit's batch-end hook, patch 0032)

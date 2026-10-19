@@ -305,7 +305,8 @@ change can't leave the zoom on after a movie), `mksm_gpu_set_filter` (the presen
 the toolkit's `mcpx_apu_set_volume` (patch 0027: XAudio2 master / waveOut / SDL2) and
 `xbox_FramebufferWindowSetFullscreen` (patch 0026: posted to the window thread; Alt+Enter reads
 the window's flags). The menu follows `xbox_FramebufferWindowIsFullscreen` on every present, so
-Alt+Enter saves `fullscreen=` too (`[MENU] fullscreen=N saved (Alt+Enter)`). Logs: `[HUD] edges
+Alt+Enter saves `fullscreen=` too (`[MENU] fullscreen=N saved (Alt+Enter)`). "Quit game" (confirm popup, `[MENU] quit`) pushes an `SDL_QUIT`: the
+same exit as closing the window (the toolkit's window loop ends, `exit(0)`). Logs: `[HUD] edges
 on/off (live)`, `[MOVIE] zoom on/off, Gauntlet on/off (live): now up to Z`, `[XGPU] present filter
 nearest/linear (live)`, `[APU] volume V`, `[FBWIN] fullscreen on/off`. Scale/aspect/wide stay pending
 until "Apply and restart" (confirm popup) saves and calls `mksm_settings_restart`: it drops the

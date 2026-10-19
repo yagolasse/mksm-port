@@ -23,7 +23,7 @@ Work in progress. Windows x64 is the only host tested so far.
 | Further levels, full playthrough | not tested yet |
 | Internal resolution 1x-4x | working (`RECOMP_PB_GPU_SCALE`) |
 | Widescreen | experimental (`RECOMP_ASPECT=16:9`, `RECOMP_ASPECT_WIDE=1`) |
-| Settings menu (F1) | edits the settings (saved to `settings.ini`), Apply and restart, FPS counter, pauses the game; scale/aspect/wide apply on restart, the rest at once |
+| Settings menu (F1) | edits the settings (saved to `settings.ini`), Apply and restart, Quit game, FPS counter, pauses the game; scale/aspect/wide apply on restart, the rest at once |
 | Settings file | `settings.ini` read at start, monitor-based defaults on first start; written by the menu |
 | First-start setup | asks for the disc image or game folder once, checks the version, extracts an image |
 | Native Linux build | in progress: builds and runs on the Steam Deck (GPU renderer, window, pads, audio); settings menu, movies, smoke test passes; no first-start setup |
@@ -146,7 +146,8 @@ later, edit or clear `game_dir` (cleared, an earlier extract in either place is 
   lost; the game then starts again by itself) or **Revert**; the others (HUD at the edges,
   movie zoom, scaling filter, volume, fullscreen) take effect at once and are saved (the volume
   is heard once the menu is closed: the sound is paused while it is open). A setting given by an environment variable is shown as
-  "set by ..." and can't be changed there. "Show FPS" toggles a counter. The game
+  "set by ..." and can't be changed there. "Show FPS" toggles a counter. **Quit game** closes the game (asks first: progress since the
+  last save is lost). The game
   (and its sound, movies included) is paused while the menu is open and picks up where it was.
 - **Alt+Enter** toggles borderless fullscreen; with a settings file the new state is saved, as
   the menu's Fullscreen box does.

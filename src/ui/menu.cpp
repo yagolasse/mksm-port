@@ -602,6 +602,32 @@ void draw_restart_popup(void)
     ImGui::EndPopup();
 }
 
+void draw_quit_popup(void)
+{
+    if (!ImGui::BeginPopupModal("Quit the game?", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        return;
+    }
+    ImGui::TextUnformatted("The game closes now.");
+    ImGui::TextUnformatted("Progress since the last save is lost.");
+    ImGui::Spacing();
+    if (ImGui::Button("Quit")) {
+        /* The same exit as closing the window: the window thread's loop ends on SDL_QUIT. */
+        fprintf(stderr, "[MENU] quit\n");
+        SDL_Event ev = {};
+        ev.type = SDL_QUIT;
+        SDL_PushEvent(&ev);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    /* Cancel has the focus: a stray A press doesn't quit. */
+    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SetItemDefaultFocus();
+    ImGui::EndPopup();
+}
+
 void draw_menu(unsigned width, unsigned height)
 {
     ImGuiIO &io = ImGui::GetIO();
@@ -678,11 +704,16 @@ void draw_menu(unsigned width, unsigned height)
             open = false;
         }
         ImGui::SameLine();
+        if (ImGui::Button("Quit game")) {
+            ImGui::OpenPopup("Quit the game?");
+        }
+        ImGui::SameLine();
         ImGui::TextDisabled("F1 / Esc / Back+Start / B");
         if (g_restart_error[0]) {
             ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", g_restart_error);
         }
         draw_restart_popup();
+        draw_quit_popup();
     }
     ImGui::End();
     save_live();

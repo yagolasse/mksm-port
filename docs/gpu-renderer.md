@@ -166,7 +166,9 @@ touches them. Here guest RAM is a file mapping viewed at the base and at every m
   sent before that PUT, so this still sees every write the methods may depend on; PUT moving
   again mid-walk no longer starts a new epoch. Outside a batch the live PUT rule above stays.
   Level on a Ryzen 5600: ~208 → ~63 epochs/s, texture pages hashed ~50k → ~42k/s (each texture
-  bound in a frame is still hashed once per frame), pages changed the same.
+  bound in a frame is still hashed once per frame), pages changed the same. Neutral on the Steam
+  Deck (fps and method thread within noise): the per-frame hashes are the cost, and only write
+  tracking (below) would cut them.
 - Page protection on every view (writes caught in the VEH) is still the precise option if a
   title writes resources without a kick in between; not needed so far.
 - Surface downloads: at flip behind a debug flag (keeps `RECOMP_FB_DUMP` working), and on CPU

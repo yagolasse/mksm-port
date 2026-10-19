@@ -160,6 +160,13 @@ touches them. Here guest RAM is a file mapping viewed at the base and at every m
   walks the cache's `global` list instead, visiting the used nodes: the same set, in another
   order, which the texture visitor doesn't depend on. Method thread 32% → 27% on a Ryzen 5600,
   72% → 67% on the Steam Deck with more frames drawn.
+- **One epoch per walk (plan 2.7c4)**: inside a batch of methods (one pushbuffer walk up to the
+  PUT a kick reported) the epoch is read once, at the batch's first method (`mksm_gpu.c`
+  `batch_lock` → `xemu_stubs_dirty_batch`), and held to its end. Every method of the walk was
+  sent before that PUT, so this still sees every write the methods may depend on; PUT moving
+  again mid-walk no longer starts a new epoch. Outside a batch the live PUT rule above stays.
+  Level on a Ryzen 5600: ~208 → ~63 epochs/s, texture pages hashed ~50k → ~42k/s (each texture
+  bound in a frame is still hashed once per frame), pages changed the same.
 - Page protection on every view (writes caught in the VEH) is still the precise option if a
   title writes resources without a kick in between; not needed so far.
 - Surface downloads: at flip behind a debug flag (keeps `RECOMP_FB_DUMP` working), and on CPU

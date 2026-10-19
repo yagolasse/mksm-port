@@ -1042,6 +1042,7 @@ static inline void batch_lock(PGRAPHState *pg)
     if (!s_batch_locked) {
         qemu_mutex_lock(&pg->lock);
         s_batch_locked = true;
+        xemu_stubs_dirty_batch(true);
     }
 }
 
@@ -1049,6 +1050,7 @@ static void batch_unlock(PGRAPHState *pg)
 {
     if (s_batch_locked) {
         s_batch_locked = false;
+        xemu_stubs_dirty_batch(false);
         qemu_mutex_unlock(&pg->lock);
     }
 }

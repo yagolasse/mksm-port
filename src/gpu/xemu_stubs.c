@@ -182,9 +182,16 @@ uint64_t memory_region_size(MemoryRegion *mr)
  * whole texture cache (pgraph_gl_mark_textures_possibly_dirty), and most textures never
  * change, so this is what keeps the walks rare (plan 2.H.8c2a).
  * Ranges xemu writes itself (surface downloads, blits) are marked dirty for the clients
- * (texture pages: re-hashed on their next check). */
+ * (texture pages: re-hashed on their next check).
+ * Inside a batch of methods (one walk up to the PUT the kick reported, see
+ * xemu_stubs_dirty_batch) the epoch is the one read at the batch's first method: every method
+ * of the walk was sent before that PUT, so the CPU writes it needs came before it too, and
+ * PUT moving again mid-walk asks for nothing this walk has to see. When the method thread
+ * lags, one walk covers several kicks, and each texture page is hashed once per walk instead
+ * of once per kick (plan 2.7c4). */
 static const volatile uint32_t *s_dma_put;
 static uint32_t s_last_put, s_epoch = 1;
+static bool s_in_batch;
 static uint32_t *s_page_epoch[2];   /* DIRTY_MEMORY_NV2A, _NV2A_TEX: epoch of the last check */
 static uint64_t *s_tex_page_hash;   /* _NV2A_TEX: content hash at the last check */
 static bool s_tex_hash = true;
@@ -194,6 +201,24 @@ void xemu_stubs_set_dma_put(const volatile uint32_t *dma_put, bool tex_hash)
 {
     s_dma_put = dma_put;
     s_tex_hash = tex_hash;
+}
+
+static void next_epoch(void)
+{
+    uint32_t put = *s_dma_put;
+    if (put != s_last_put) {
+        s_last_put = put;
+        s_epoch++;
+        xemu_stub_counts.dirty_epochs++;
+    }
+}
+
+void xemu_stubs_dirty_batch(bool begin)
+{
+    s_in_batch = begin;
+    if (begin && s_dma_put) {
+        next_epoch();
+    }
 }
 
 static uint32_t *page_epochs(MemoryRegion *mr, unsigned client)
@@ -219,11 +244,8 @@ bool memory_region_test_and_clear_dirty(MemoryRegion *mr, hwaddr addr, hwaddr si
     if (!epochs) {
         return true;
     }
-    uint32_t put = *s_dma_put;
-    if (put != s_last_put) {
-        s_last_put = put;
-        s_epoch++;
-        xemu_stub_counts.dirty_epochs++;
+    if (!s_in_batch) {
+        next_epoch();
     }
     uint64_t *hashes = client == DIRTY_MEMORY_NV2A_TEX ? s_tex_page_hash : NULL;
     bool dirty = false;

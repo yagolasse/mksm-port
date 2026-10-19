@@ -58,7 +58,8 @@ statically recompiling the retail `default.xbe` to C with
   turns it off); `lru_visit_fast.h` = forced into xemu's `gl/texture.c` (CMake), its texture-cache
   walks visit the used nodes instead of all 65,536 LRU hash bins; `mksm_gpu.c` = stands in for xemu's PFIFO (holds `pgraph.lock` per pushbuffer walk through the toolkit's batch-end hook, patch 0032)
   (RAMHT lookup, acks the NOP-notify and flip-stall waits, presents the last-drawn surface at the
-  flip and paces flips to 59.94 Hz); `mksm_gpu.h` = the plain-C interface for
+  flip and paces flips to 59.94 Hz; swaps xemu's FLIP_STALL `glFinish` for a fence per flip, waiting on
+  the previous flip's: the GPU runs at most one frame behind, `RECOMP_PB_GPU_FLIP_FINISH=1` = xemu's); `mksm_gpu.h` = the plain-C interface for
   cl-built code. Licenses: `LICENSE` (GPL-3.0, the combined work), `LICENSES/`, `NOTICE` (file → license)
 - `src/ui/`: the settings menu (`menu.cpp`, plan 4.6/B7a1, editable since B7b2; C++, cl-built lib `mksm_menu`, linked
   with the SDL window + GPU in non-Debug configs, `MKSM_HAVE_MENU`): Dear ImGui with its SDL2 and

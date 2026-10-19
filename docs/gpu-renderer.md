@@ -260,6 +260,12 @@ imported by the top-level build (see `CLAUDE.md`, Build):
   puller's stalls. The two waits PGRAPH can enter are ended at once, through xemu's own
   `pgraph_write`, as the title's ISR / the VBlank would: a `NO_OPERATION` notify gets its
   `NV_PGRAPH_INTR` ack, a `FLIP_STALL` gets one `NV_PGRAPH_INCREMENT` (read buffer + 1).
+  xemu's GL `flip_stall` op (`glFinish`: wait until the GPU has drawn the frame) is swapped in a
+  copy of the renderer table for a fence per flip that waits on the previous flip's fence, so the
+  GPU runs at most one frame behind (plan 2.7c8; the presents fence their own copies, CPU reads of
+  surfaces sync in `glReadPixels`). On the Steam Deck the flip's GPU wait went from 1.9 ms to
+  ~70 µs and the lowest level interval 56-57 → 58.5-59 fps. `RECOMP_PB_GPU_FLIP_FINISH=1` keeps
+  `glFinish`.
   `pfifo_kick` / `nv2a_update_irq` stay counters: there is no FIFO thread and no interrupt line.
   The renderer comes up (`pgraph_init_thread`) on the first method's thread, the ack thread.
 - **Asserts on** (`/UNDEBUG`, as QEMU requires), reported on stderr (`_set_error_mode`).

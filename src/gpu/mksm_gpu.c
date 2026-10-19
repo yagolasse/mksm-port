@@ -42,6 +42,7 @@
 #include "xemu_stubs.h"
 #include "gloffscreen_window.h"
 #include "ui/xemu-settings.h"
+#include <immintrin.h>   /* _mm_pause */
 
 /* shader_patch.c */
 int mksm_shader_patch_install(unsigned surface_scale, unsigned (*nearest_mask)(void));
@@ -65,6 +66,11 @@ static struct {
     unsigned last_w, last_h;
     int thread_up;
 } s_stats;
+
+/* mksm_gpu_wait_semaphore: an auto-reset event set at each semaphore release, and its counters
+ * (any thread; reported with the [XGPU] line). */
+static HANDLE s_sem_event;
+static volatile LONG s_sem_waits, s_sem_blocked, s_sem_wait_us, s_sem_unreached;
 
 /* The colour surface the title drew into last (the frame the next flip shows). */
 static struct {
@@ -204,6 +210,7 @@ int mksm_gpu_init(const MksmGpuMemory *mem, int opengl)
     /* One channel, always current: pgraph_method asserts the channel is valid. */
     pgraph_reg_w(&d->pgraph, NV_PGRAPH_CTX_CONTROL, NV_PGRAPH_CTX_CONTROL_CHID);
 
+    s_sem_event = CreateEventW(NULL, FALSE, FALSE, NULL);
     s_dev = d;
     fprintf(stderr, "[XGPU] PGRAPH set up: vram %zu MiB, ramin %zu KiB, %s renderer, "
             "vblank %.2f Hz, surface scale %ux%s%s\n", mem->vram_size >> 20, mem->ramin_size >> 10,
@@ -243,6 +250,8 @@ static void report(void)
             s_stats.surf_downloads, s_stats.surf_uploads, s_stats.surf_to_tex,
             s_stats.masked_stages, s_stats.presents, s_stats.no_surface, s_stats.last_w, s_stats.last_h,
             s_stats.last_nonblack, interval_s);
+    fprintf(stderr, "[XGPU] fence waits %ld, blocked %ld for %ld ms, left unreached %ld\n",
+            s_sem_waits, s_sem_blocked, s_sem_wait_us / 1000, s_sem_unreached);
 }
 
 /* D3D's pushbuffer fence: it sends a context-pattern object's SET_MONOCHROME_COLOR0 with a
@@ -1035,6 +1044,50 @@ static void hold_if_frozen(void)
     fflush(stderr);
 }
 
+void mksm_gpu_wait_semaphore(const volatile uint32_t *sem, uint32_t now, uint32_t target)
+{
+    static int64_t spin_ns = -1;
+    InterlockedIncrement(&s_sem_waits);
+    if (!s_sem_event || now - target >= now - *sem) {
+        return;
+    }
+    if (spin_ns < 0) {
+        const char *e = getenv("RECOMP_FENCE_SPIN_US");
+        spin_ns = (e && *e ? atoi(e) : 100) * 1000LL;
+    }
+    int64_t t0 = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+    /* Polls for a short while first: a wake costs tens of µs (the Deck's lows at the heavy
+     * scene dropped ~1 fps with a block at once, plan 2.7c6), and many waits end that soon. */
+    for (unsigned i = 1; now - target < now - *sem; i++) {
+        _mm_pause();
+        if (!(i & 63) && qemu_clock_get_ns(QEMU_CLOCK_REALTIME) - t0 >= spin_ns) {
+            break;
+        }
+    }
+    if (now - target >= now - *sem) {
+        return;
+    }
+    InterlockedIncrement(&s_sem_blocked);
+    int64_t warn = 1000000000LL;
+    while (now - target < now - *sem) {
+        /* The timeout only guards a release whose wake went to another waiter. */
+        WaitForSingleObject(s_sem_event, 4);
+        int64_t t = qemu_clock_get_ns(QEMU_CLOCK_REALTIME) - t0;
+        if (t >= warn) {
+            fprintf(stderr, "[XGPU] fence wait for %u still waiting after %lld ms (count %u, "
+                    "flips %lu)\n", target, (long long)(t / 1000000), *sem, s_stats.flips);
+            warn *= 2;
+        }
+    }
+    InterlockedExchangeAdd(&s_sem_wait_us,
+                           (LONG)((qemu_clock_get_ns(QEMU_CLOCK_REALTIME) - t0) / 1000));
+}
+
+void mksm_gpu_note_semaphore_unreached(void)
+{
+    InterlockedIncrement(&s_sem_unreached);
+}
+
 /* pgraph.lock across a batch of methods (see the top of the file); method thread only. */
 static bool s_batch_locked;
 
@@ -1152,6 +1205,9 @@ void mksm_gpu_method(uint32_t subch, uint32_t method, uint32_t param)
             break;
         case NV097_BACK_END_WRITE_SEMAPHORE_RELEASE:
             s_stats.semaphores++;
+            if (s_sem_event) {
+                SetEvent(s_sem_event);
+            }
             break;
         default:
             break;

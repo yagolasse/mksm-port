@@ -36,7 +36,10 @@ statically recompiling the retail `default.xbe` to C with
   `tests/xiso_test.c` (CTest `xiso`, synthetic in-memory images incl. a file past 4 GB;
   `tests/test_xiso_c.py` runs it); `xiso_test --extract <image> <dir>` extracts a real image
 - `src/recomp_manual.c`: hand-written overrides (`recomp_lookup_manual`), entry hooks
-  (`sub_X_enter`, see Pipeline), widescreen (`RECOMP_ASPECT`) and ICALL diagnostics
+  (`sub_X_enter`, see Pipeline), widescreen (`RECOMP_ASPECT`), D3D's fence wait `sub_003C8490`
+  (waits in `mksm_gpu_wait_semaphore`: polls `RECOMP_FENCE_SPIN_US`, default 100 µs, then sleeps on
+  an event the glue sets at each semaphore release; `RECOMP_FENCE_WAIT=0` = the original spin; the
+  `[XGPU] fence waits` line counts them) and ICALL diagnostics
 - `src/recomp/gen/`: generated C (not in git)
 - `src/gpu/`: GPU renderer library `mksm_gpu` (xemu's PGRAPH; the game uses it with `RECOMP_PB_GPU=1`): its own
   CMake project built with clang-cl (see Build). `xemu/hw/xbox/nv2a/` = xemu files **copied unmodified**

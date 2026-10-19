@@ -219,6 +219,9 @@ tools\run.bat
 | `RECOMP_KEYBOARD=0` | on | turn the keyboard pad off |
 | `RECOMP_MKB=1` | off | mouse+keyboard pad on pad 1 (mouse = right stick); F9 captures the mouse |
 | `RECOMP_MKB_SENS`, `_DZ`, `_ACC`, `_FULL`, `_INVERT_Y=1`, `_SWAP_STICKS=1` | | mouse sensitivity, dead-zone floor, acceleration, full-throw speed, inverted Y, mouse on the left stick. Also read from `mkb.ini` next to the exe (`sens=`, `dz=`, ...; `RECOMP_MKB_INI` names another file) |
+| **Performance** | | |
+| `RECOMP_FENCE_WAIT=0` | on | let the game's own GPU fence wait spin a core again instead of sleeping until the GPU gets there |
+| `RECOMP_FENCE_SPIN_US=<n>` | 100 | how long that wait polls before it sleeps, in µs (0 = sleep at once) |
 | **Files** | | |
 | `MKSM_GAME_DIR=<dir>` | `../game_files` | the extracted disc (the folder with `default.xbe`) |
 | `MKSM_SAVE_DIR=<dir>` | `%LOCALAPPDATA%\mksm_recomp\saves` | where the saves go (the emulated hard disk stays in `mksm_recomp`) |

@@ -107,6 +107,17 @@ void mksm_gpu_set_side_mask(int on);
 typedef void (*MksmGpuNotifyFn)(uint32_t param);
 void mksm_gpu_set_notify(MksmGpuNotifyFn fn);
 
+/* D3D's fence wait (plan 2.7c6): returns once the semaphore count *sem (D3D's
+ * [[device+0x30]], written by BACK_END_WRITE_SEMAPHORE_RELEASE) has reached `target`, counted
+ * the way D3D does (reached when now - target >= now - *sem, now = its CPU-side count). Polls
+ * for RECOMP_FENCE_SPIN_US (default 100), then sleeps on an event set at each release. Any
+ * thread. Counted in the "[XGPU] fence waits" line. */
+void mksm_gpu_wait_semaphore(const volatile uint32_t *sem, uint32_t now, uint32_t target);
+
+/* Counts a fence wait that the title's code finished with the count still short of the
+ * target (RECOMP_FENCE_WAIT=0 runs only: whether waiting first changes what D3D does). */
+void mksm_gpu_note_semaphore_unreached(void);
+
 /* VBlank pacing: with hz > 0 (the default is 59.94, NTSC) a flip waits for the next
  * VBlank, the way the title's FLIP_STALL waits for the CRTC. 0 turns it off. */
 void mksm_gpu_set_vblank_hz(double hz);

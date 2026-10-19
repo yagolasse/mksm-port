@@ -96,6 +96,7 @@ add_library(mksm_gpu STATIC
     shader_patch.c
     depth_readback.c
     surface_log.c
+    zeta_texture.c
     gpu_selftest.c
     $<TARGET_OBJECTS:nv2a_vsh_cpu>
     $<TARGET_OBJECTS:glad>
@@ -119,13 +120,17 @@ if(NOT WIN32)
     target_compile_definitions(mksm_gpu PRIVATE _GNU_SOURCE)   # pthread_setname_np
 endif()
 # texture.c's cache walks go through lru_visit_fast.h (the used nodes only, not all 65536 hash
-# bins; plan 2.7c1), forced in so the xemu file stays unmodified.
+# bins; plan 2.7c1), and its surface-to-texture calls through zeta_texture.h (depth surfaces
+# sampled as depth textures stay on the GPU; plan 2.7c9b), forced in so the xemu file stays
+# unmodified.
 if(WIN32)
-    set(MKSM_LRU_FI /FI${CMAKE_CURRENT_SOURCE_DIR}/lru_visit_fast.h)
+    set(MKSM_TEXTURE_FI /FI${CMAKE_CURRENT_SOURCE_DIR}/lru_visit_fast.h
+                        /FI${CMAKE_CURRENT_SOURCE_DIR}/zeta_texture.h)
 else()
-    set(MKSM_LRU_FI -include ${CMAKE_CURRENT_SOURCE_DIR}/lru_visit_fast.h)
+    set(MKSM_TEXTURE_FI -include ${CMAKE_CURRENT_SOURCE_DIR}/lru_visit_fast.h
+                        -include ${CMAKE_CURRENT_SOURCE_DIR}/zeta_texture.h)
 endif()
-set_source_files_properties(${XEMU_NV2A}/pgraph/gl/texture.c PROPERTIES COMPILE_OPTIONS "${MKSM_LRU_FI}")
+set_source_files_properties(${XEMU_NV2A}/pgraph/gl/texture.c PROPERTIES COMPILE_OPTIONS "${MKSM_TEXTURE_FI}")
 # xemu builds the GL renderer with CONFIG_OPENGL (pgraph.c's default-renderer choice).
 target_compile_definitions(mksm_gpu PRIVATE CONFIG_OPENGL=1)
 target_compile_definitions(mksm_gpu PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)

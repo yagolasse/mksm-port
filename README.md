@@ -223,6 +223,7 @@ tools\run.bat
 | `RECOMP_FENCE_WAIT=0` | on | let the game's own GPU fence wait spin a core again instead of sleeping until the GPU gets there |
 | `RECOMP_FENCE_SPIN_US=<n>` | 100 | how long that wait polls before it sleeps, in µs (0 = sleep at once) |
 | `RECOMP_PB_GPU_FLIP_FINISH=1` | off | wait for the GPU to finish each frame at the flip (xemu's `glFinish`) instead of letting it run up to one frame behind |
+| `RECOMP_PB_GPU_ZETA_TEX=0` | on | copy the character shadow maps (depth surfaces used as textures) through game memory each frame, as xemu does, instead of on the GPU |
 | **Files** | | |
 | `MKSM_GAME_DIR=<dir>` | `../game_files` | the extracted disc (the folder with `default.xbe`) |
 | `MKSM_SAVE_DIR=<dir>` | `%LOCALAPPDATA%\mksm_recomp\saves` | where the saves go (the emulated hard disk stays in `mksm_recomp`) |

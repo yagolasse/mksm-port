@@ -266,6 +266,18 @@ imported by the top-level build (see `CLAUDE.md`, Build):
   surfaces sync in `glReadPixels`). On the Steam Deck the flip's GPU wait went from 1.9 ms to
   ~70 µs and the lowest level interval 56-57 → 58.5-59 fps. `RECOMP_PB_GPU_FLIP_FINISH=1` keeps
   `glFinish`.
+- **Depth surfaces sampled as depth textures** (`zeta_texture.c`, plan 2.7c9b): xemu never binds a
+  zeta surface as a texture, so a stage sampling one made `bind_textures` write it back to VRAM (a GPU
+  sync + `glReadPixels`) and upload it again. The game's character shadow maps (Z16, 256x256 linear,
+  sampled at their own address as format 0x31) did that 2-3 times a frame. `zeta_texture.h` is forced
+  into xemu's `gl/texture.c` and renames its two surface-to-texture calls: a Z16 surface sampled as the
+  matching linear depth format (0x31 for a float Z16, 0x30 for fixed) with the same shape passes the
+  compatibility check, and the render draws it into the texture's depth (full-screen triangle writing
+  `gl_FragDepth`, float depths rounded to half floats as the round trip did; copy/blit refuse D32F →
+  D16). Everything else goes to xemu's functions. As with colour render targets, the surface's VRAM is
+  written only when it's evicted. On the Steam Deck the readback left the method thread's waits
+  (1.16 ms × ~120/s → none) and the lowest level interval went 57.6-59.2 → 59.4-59.6 fps.
+  `RECOMP_PB_GPU_ZETA_TEX=0` = xemu's round trip.
   `pfifo_kick` / `nv2a_update_irq` stay counters: there is no FIFO thread and no interrupt line.
   The renderer comes up (`pgraph_init_thread`) on the first method's thread, the ack thread.
 - **Asserts on** (`/UNDEBUG`, as QEMU requires), reported on stderr (`_set_error_mode`).

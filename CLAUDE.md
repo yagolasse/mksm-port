@@ -57,7 +57,10 @@ statically recompiling the retail `default.xbe` to C with
   repeated half-float depth read, which broke the character shadow maps; `RECOMP_PB_GPU_DEPTH_HALF=0`
   turns it off); `surface_log.c` = `RECOMP_PB_GPU_DOWNLOAD_LOG`'s count of surface downloads per
   cause (xemu's trace events reach it through `xemu/shim/trace`); `lru_visit_fast.h` = forced into xemu's `gl/texture.c` (CMake), its texture-cache
-  walks visit the used nodes instead of all 65,536 LRU hash bins; `mksm_gpu.c` = stands in for xemu's PFIFO (holds `pgraph.lock` per pushbuffer walk through the toolkit's batch-end hook, patch 0032)
+  walks visit the used nodes instead of all 65,536 LRU hash bins; `zeta_texture.h`/`.c` = also forced into
+  `gl/texture.c`: a Z16 surface sampled at its own address as the matching linear depth format (0x30/0x31,
+  the character shadow maps) is drawn into the texture's depth on the GPU instead of xemu's VRAM round
+  trip (plan 2.7c9b; `RECOMP_PB_GPU_ZETA_TEX=0` = the round trip); `mksm_gpu.c` = stands in for xemu's PFIFO (holds `pgraph.lock` per pushbuffer walk through the toolkit's batch-end hook, patch 0032)
   (RAMHT lookup, acks the NOP-notify and flip-stall waits, presents the last-drawn surface at the
   flip and paces flips to 59.94 Hz; swaps xemu's FLIP_STALL `glFinish` for a fence per flip, waiting on
   the previous flip's: the GPU runs at most one frame behind, `RECOMP_PB_GPU_FLIP_FINISH=1` = xemu's); `mksm_gpu.h` = the plain-C interface for

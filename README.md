@@ -236,6 +236,48 @@ The switches the game needs to run (GPU path, game window, USB pads, audio) are 
 in the exe and the run scripts; leave those alone (`0` turns one off, e.g. `RECOMP_FB_WINDOW=0`
 for a headless run). `CLAUDE.md` documents them, the pipeline and the debugging switches.
 
+## Performance notes (for other Xbox ports)
+
+The first level went from **~6 fps to a steady 60** on a desktop, and then from lows of ~40 to
+**59.4-59.6 fps on a Steam Deck** (native Linux). None of the fixes are specific to this game;
+most are about how a recompiled XDK title, the toolkit's pushbuffer path and xemu's renderer
+interact, so they may apply to other ports built the same way. Every number is a level run,
+old vs new build, back to back on an idle machine.
+
+**Getting to 60 on the desktop** (Windows, NVIDIA)
+| What was slow | Fix | Effect |
+|---|---|---|
+| xemu's texture "dirty" check always answered dirty (no QEMU dirty bitmap), so every draw re-walked and re-hashed the texture cache | answer per 4 KiB page from a content hash (XXH3), re-checked once per pushbuffer kick | level 5-7 → 10-12 fps; later 49-60 → 55-60 |
+| The title spun in D3D's kickoff waiting for the write-back-cache flush to be acknowledged, which only happened after the whole previous segment had run: title and GPU thread in lockstep | acknowledge at once; the ring walk updates `DMA_GET` as it goes (else D3D sees a stale GET and overwrites unexecuted commands); mirror D3D's pushbuffer fence register and handle its software method | title thread 95% → 4% in that spin (`RECOMP_WBC_ACK`) |
+| Debug bookkeeping on every pushbuffer method (a linear search per method word, a QPC call, `getenv` per MMIO trap, `glGetError`) | only when the survey/trace is on | method thread scan 36% → 1%; level 23 → 49-60 fps |
+| Present read the frame back synchronously (`glGetTexImage` + context switches) | `glReadPixels` into a PBO with a fence, present the previous flip's buffer (one flip of latency); later a GPU present in the window | method thread 75% → 60% busy |
+| XDK worker threads paced by the VBlank event spun at 100%, because the event never blocked them | a real 59.94 Hz VBlank that sets D3D's VBlank event as its interrupt handler would | **3.4 → 1.3 cores** at 60 fps |
+| DirectSound reset the audio DSPs with a 10 ms busy-wait ~20 times a second during movies | report the DSP as alive (toolkit APU, `RECOMP_APU_EP_ALIVE`) | movies 46-56 → 60 fps |
+| D3D's fence wait (the wait for the previous frame at Swap) spun on the semaphore | wait first on an event the GPU glue sets after each semaphore release, then run the original body, which finds the count reached (`RECOMP_FENCE_WAIT=0` = off) | main thread 32% → 27%, 1.05 → 0.94 cores |
+
+**The Steam Deck** (native Linux, Mesa radeonsi): the limit is the single GPU method thread
+(decode + GL), not the GPU. Profiled with `perf` (`tools/perf_profile.py`, also off-CPU time):
+| What was slow | Fix | Deck level lows |
+|---|---|---|
+| xemu's texture-cache walk visited all 65,536 LRU bins per walk | visit only the live entries | 41-43 → 46-48 fps |
+| The scanner counted every method for an inventory nobody printed | count only when it is printed | 45-48 → 51-52 |
+| `pgraph` lock taken per method (~5M/s) | once per pushbuffer walk | → 56.6-58.0 |
+| Our depth readback's half-float loop | F16C | gone from the profile |
+| `glFinish` at each `FLIP_STALL` | GL fences | 56.2-57.0 → 58.5-59.1 |
+| Character shadow maps (16-bit depth surfaces sampled as textures) went GPU → CPU → GPU every frame | when a depth surface is sampled at its own address and size, draw its depth into the texture on the GPU (`src/gpu/zeta_texture.c`, `RECOMP_PB_GPU_ZETA_TEX=0` = off) | 57.6-59.2 → **59.4-59.6**; the method thread idles even in the heaviest scene |
+
+**Lessons**
+- A recompiled title runs at the speed of its frame loop: below the target rate the game is in
+  slow motion, so "fps" is also "game speed". Measure the level, not the menus.
+- Look for **spins first**: XDK code polls hardware (fences, VBlank, the WBC flush, DSP state)
+  that real hardware answers in microseconds. Each spin that never blocks costs a whole core.
+  A profiler that samples every thread's stack (`RECOMP_PROF` + `tools/profsum.py` on Windows,
+  `perf` on Linux) finds them quickly.
+- With xemu's renderer outside QEMU, **dirty tracking** and **locking** are the costs QEMU used
+  to hide. Readbacks (surface downloads) are the next ones; keep data on the GPU where possible.
+- Keep each fix behind an env switch that restores the old path: it makes A/B runs and bug
+  triage cheap.
+
 ## Repository map
 
 | Path | What |

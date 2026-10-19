@@ -34,9 +34,10 @@ scripts, else `%LOCALAPPDATA%\mksm_recomp\last_run.log`; see [Run](#run)), never
 ## What's included
 
 - `src/main.c`: host entry point: loads the XBE, maps the Xbox memory layout, starts the
-  recompiled game
+  recompiled game; `src/paths.c` (game / save directories, built-in run defaults) and
+  `src/fault.c` (crash diagnostics) are split out of it
 - `src/recomp_manual.c`: hand-written overrides and hooks on top of the generated code (fixes,
-  widescreen, diagnostics)
+  widescreen, diagnostics); the helpers behind them are in `src/manual/` by feature
 - `src/ui/`: the settings menu (Dear ImGui, `external/imgui`, over the GPU present)
 - `src/gpu/`: the GPU renderer: xemu's PGRAPH and OpenGL back end (copied unmodified), the glue
   that stands in for the rest of the emulated GPU, and the present path to the game window

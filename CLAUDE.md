@@ -19,7 +19,13 @@ statically recompiling the retail `default.xbe` to C with
 
 ## Layout
 - `CMakeLists.txt`: game executable `mksm_recomp`; pulls in the toolkit via `add_subdirectory`
-- `src/main.c`: host entry: loads the XBE, maps Xbox memory, inits kernel/bridge, calls the guest entry `0x000F40CA`
+- `src/main.c`: host entry: loads the XBE, maps Xbox memory, inits kernel/bridge, calls the guest entry `0x000F40CA`;
+  the GPU init, the `wbc ack` / `vblank` threads, `player_log_open`, `mksm_main` / `mksm_boot`
+- `src/paths.c`, `src/paths.h`: plan B14 split from `main.c`: the game / base / save directory resolution
+  (`resolve_game_dir`, `resolve_base_dir`, `resolve_save_dir`), the save migration (`migrate_legacy_saves`)
+  and the built-in env defaults (`k_env_defaults` / `apply_env_defaults`)
+- `src/fault.c`, `src/fault.h`: plan B14 split from `main.c`: the crash handlers (`veh_handler` on Windows,
+  `posix_fault` + `posix_fault_install` on POSIX) and `print_guest_context`
 - `src/posix_stubs.c`: Linux stand-ins for `prof.c`, `setup.c` and `xiso.c` (plan H.5c2a; log a line, do nothing)
 - `src/recomp_libc_names.h`: force-included into `gen/*.c` on POSIX; renames lifted CRT functions that share a
   libc name (see Build)
@@ -36,10 +42,15 @@ statically recompiling the retail `default.xbe` to C with
   `tests/xiso_test.c` (CTest `xiso`, synthetic in-memory images incl. a file past 4 GB;
   `tests/test_xiso_c.py` runs it); `xiso_test --extract <image> <dir>` extracts a real image
 - `src/recomp_manual.c`: hand-written overrides (`recomp_lookup_manual`), entry hooks
-  (`sub_X_enter`, see Pipeline), widescreen (`RECOMP_ASPECT`), D3D's fence wait `sub_003C8490`
+  (`sub_X_enter`, see Pipeline), ICALL diagnostics. Plan B14: it keeps every `sub_XXXXXXXX` definition and
+  wrapper (the lifter's `--exclude-manual` scans only this file, so a `sub_` name used anywhere must also
+  be mentioned here) as thin calls into `src/manual/` (one private header, `manual_internal.h`):
+  `widescreen.c` (`RECOMP_ASPECT` / `_WIDE`, the wide 2D layer), `hud.c` (HUD edges, `mksm_manual_set_hud_edges`),
+  `movie.c` (movie zoom, `mksm_manual_set_movie_zoom`), `cine.c` (`RECOMP_CINE_LOG`), `audio.c`
+  (`RECOMP_AUDIO_TICK_STATS`) and `fence.c`: D3D's fence wait `sub_003C8490`
   (waits in `mksm_gpu_wait_semaphore`: polls `RECOMP_FENCE_SPIN_US`, default 100 µs, then sleeps on
   an event the glue sets at each semaphore release; `RECOMP_FENCE_WAIT=0` = the original spin; the
-  `[XGPU] fence waits` line counts them) and ICALL diagnostics
+  `[XGPU] fence waits` line counts them)
 - `src/recomp/gen/`: generated C (not in git)
 - `src/gpu/`: GPU renderer library `mksm_gpu` (xemu's PGRAPH; the game uses it with `RECOMP_PB_GPU=1`): its own
   CMake project built with clang-cl (see Build). `xemu/hw/xbox/nv2a/` = xemu files **copied unmodified**
@@ -179,7 +190,7 @@ ninja -C ~/mksm-build/port -j6          # ~5 min on the Deck, ~0.9 GB peak
 ```
 The system SDL2 replaces the fetched static one. `prof.c`, `setup.c` and `xiso.c` are Win32 only
 (`src/posix_stubs.c` stands in). Pads, AC'97 and the APU work through the toolkit's x86-64 POSIX
-MMIO trap (patch 0029, the SIGSEGV handler in `main.c` calls `xbox_PosixMmioFault`).
+MMIO trap (patch 0029, the SIGSEGV handler in `fault.c` calls `xbox_PosixMmioFault`).
 The GPU lib (plan H.5c2c) is built by the same gcc as part of the build (`add_subdirectory(src/gpu)`,
 no ExternalProject), in every config, with SDL2 GL contexts (`gloffscreen_sdl.c`; GL is loaded
 through SDL at run time, nothing links libGL). The glue's Win32 calls (events, threads,
@@ -200,7 +211,7 @@ functions with libc names (`write`, `close`, ...) are renamed in `gen/` by the f
 ## Run
 The exe takes the extracted game folder (holding `default.xbe`) from its first argument, else
 `MKSM_GAME_DIR` (or `settings.ini`'s `game_dir=`, which sets it), else `game\` in the working
-directory, else `game\` beside the exe (`resolve_game_dir` in `src/main.c`, after
+directory, else `game\` beside the exe (`resolve_game_dir` in `src/paths.c`, after
 `mksm_settings_load`). When the folder came from the file or the default and has no
 `default.xbe`, `mksm_setup_run` (`src/setup.c`, plan B10b2) asks for the disc. Extract
 candidates, in order: the exe's folder, then the settings file's folder
@@ -214,7 +225,7 @@ into `<dest>\game.partial` on a worker thread (progress window; Cancel / close d
 partial folder, exit 1), renamed to `game`. The folder is saved as `game_dir=` (`[SETUP] game_dir=... saved`; not with
 `RECOMP_SETTINGS=0`). A folder from the argument or a user-set `MKSM_GAME_DIR` gets the old
 MessageBox instead. Every boot logs `[SETUP] default.xbe is the retail ... build` or `is NOT`
-(logged, not refused). Paths stay ANSI in `main.c`; a picked path that doesn't fit the code page
+(logged, not refused). Paths stay ANSI in `paths.c`; a picked path that doesn't fit the code page
 is refused with a message. `MKSM_SETUP_PICK=<path>` (tests, debug only) takes that path instead
 of the dialogs: no message boxes (`[SETUP]` lines only), a refused path exits 1 at once; the
 progress window still shows (its class is `mksm_setup_progress`).
@@ -222,7 +233,7 @@ It's a GUI-subsystem exe: with stdout/stderr not a file or a pipe (double-clicke
 console handle) `player_log_open` (`main.c`, plan B10a) sends both to
 `%LOCALAPPDATA%\mksm_recomp\last_run.log` (the previous one renamed `last_run.old.log`; a
 settings relaunch inherits the handle and keeps writing to it). The switches the game needs are
-built in since B10a (`k_env_defaults` / `apply_env_defaults` in `main.c`, right after the settings
+built in since B10a (`k_env_defaults` / `apply_env_defaults` in `paths.c`, right after the settings
 file: environment > `settings.ini` > table, filled only where a variable is unset; an empty value
 counts as set, so `RECOMP_APU_EP_ALIVE=` / `RECOMP_PB_WALK=` stay the A/B "off"): `RECOMP_PB_EXEC`,
 `_PB_GPU`, `_FB_WINDOW`, `_USB`, `_KEYBOARD`, `_AC97_READY`, `_APU_DSP_ACK=auto`,
@@ -276,7 +287,7 @@ means unset there). Keep the two scripts' defaults in sync. The smoke test sets
 The failure path for a missing XBE shows a MessageBox (a folder given by argument / variable) or
 the first-launch setup's dialogs (none given), which block an unattended run.
 Saves and settings (plan B7b1): `main.c` passes the toolkit a title-specific base dir,
-`%LOCALAPPDATA%\mksm_recomp` (`resolve_base_dir`): the emulated hard disk (`Partition0-5.img`,
+`%LOCALAPPDATA%\mksm_recomp` (`resolve_base_dir` in `paths.c`): the emulated hard disk (`Partition0-5.img`,
 sparse, caches) and `settings.ini`. The saves (`UDATA\4d570029`, `TDATA`) go to their own folder,
 `<base>\saves`, or `MKSM_SAVE_DIR` (which now names that folder only), handed to the toolkit as
 `RECOMP_SAVE_DIR` (its switch that moves just UDATA/TDATA; one set by hand wins). Logged as
@@ -300,7 +311,7 @@ The menu edits it (B7b2, `menu.cpp`): its copy starts from `mksm_settings_file()
 read at start); live items apply at once and are saved (`mksm_settings_save`: temp file +
 replace, unknown `key=value` lines kept). Live (B7c, `apply_live` in `menu.cpp`, each setter
 safe from the present thread): `mksm_manual_set_hud_edges` / `mksm_manual_set_movie_zoom`
-(`recomp_manual.c`; the movie zoom takes a spin lock with the movie start/end hooks so a menu
+(`src/manual/hud.c` / `movie.c`; the movie zoom takes a spin lock with the movie start/end hooks so a menu
 change can't leave the zoom on after a movie), `mksm_gpu_set_filter` (the present's sampler),
 the toolkit's `mcpx_apu_set_volume` (patch 0027: XAudio2 master / waveOut / SDL2) and
 `xbox_FramebufferWindowSetFullscreen` (patch 0026: posted to the window thread; Alt+Enter reads
@@ -385,7 +396,7 @@ Headless: `RECOMP_PAD_PRESS=0x10,3000,300` (mask,period,hold ms) or `RECOMP_PAD_
 `RECOMP_USB_STATS=1` prints transfer counts every 5 s.
 
 ## Debugging
-Expect crashes during bring-up. The VEH handler in `main.c` prints the faulting guest function, the
+Expect crashes during bring-up. The VEH handler in `fault.c` prints the faulting guest function, the
 guest stack, and recent ICALL targets. Fix by adding overrides in `recomp_manual.c` or runtime
 support. Useful env vars from the toolkit: `RECOMP_WATCHDOG_SECS`, `RECOMP_AC97_READY`.
 `RECOMP_PB_GPU=1` (default in the run scripts since 2.H.8c1, `=0` = software executor; toolkit patches
@@ -410,7 +421,7 @@ layer (HUD, bars, menus) shows what 1x shows; it also hooks `glUseProgram`/`glLi
 draw calls to set a per-draw uniform with the point-sampled stages. `RECOMP_PB_GPU_SNAP2D=0`
 turns it off, `=debug` colours 2D draws (red/green = sub-pixel x/y of a vertex, blue = 0.25,
 +0.5 for w = 1, +0.25 if stage 0 is point-sampled). `RECOMP_ASPECT=16:9` (plan 4.2, B5a; also `16:10`, `21:9`, `W/H` or a ratio; unset/4:3 = off) draws
-the 3D view at that aspect (Hor+: entry hook on the camera update in `recomp_manual.c`, see
+the 3D view at that aspect (Hor+: entry hook on the camera update in `recomp_manual.c`, helpers in `src/manual/widescreen.c`, see
 `--exclude-manual`) and the window present stretches the 640x480 frame to it (anamorphic, so the
 HUD/menus stretch until B5b), except during movies (kept 4:3). The dump shows the unstretched
 frame. `RECOMP_ASPECT_WIDE=1` (B5b1, with `RECOMP_ASPECT`) renders into a wider back buffer
@@ -425,13 +436,13 @@ present), and in the menus (the game's front-end flag) the GPU glue blacks out t
 outside the centred 640 at each flip (`mksm_gpu_set_side_mask`): their backdrops have art there.
 Movie zoom (plan B5c2, on by default with `RECOMP_ASPECT`; without it movies stay as on the Xbox): letterboxed movies are zoomed
 by the window present as far as the window is wider than 4:3, up to the share the picture fills
-(a per-file table in `recomp_manual.c`, keyed by the name the movie player gets; `[MOVIE]` logs
+(a per-file table in `src/manual/movie.c`, keyed by the name the movie player gets; `[MOVIE]` logs
 it), cropping only black rows; the others stay pillarboxed. `RECOMP_MOVIE_ZOOM=0` turns it off,
 `RECOMP_MOVIE_ZOOM_GAUNTLET=1` also zooms the Gauntlet trailer (cuts its full-frame shots). The
 dump shows the unzoomed frame. `RECOMP_CINE_LOG=1` prints `[cine]` lines when the cutscene signals change (sequence
 flag, cinematic camera, letterbox bars, fade) and at movie start/end.
 With the wide buffer the HUD sits at the screen edges (plan B5d2, `RECOMP_HUD_EDGES=0` keeps
-it at its 4:3 place in the centre 640): `recomp_manual.c` records the HUD manager's elements
+it at its 4:3 place in the centre 640): `src/manual/hud.c` records the HUD manager's elements
 as the game builds them, moves each left/right piece by ∓(W-640)/2 for its draw (centred ones
 stay) and moves the text an element's callback queues the same way. The pause menu's map
 lives in the same manager (layout flags 0x600B4..0x600B6, plan B5f) and is kept centred.
@@ -511,7 +522,7 @@ logs and `docs/audio.md` still mention them. Upstream's own: `RECOMP_AUDIO_WAV=<
 audio device is given, `RECOMP_AUDIO_WAV_SECS` limits it; scan with `tools/wavscan.py`),
 `RECOMP_APU_RING` (stale-lap replays in streamed rings), `RECOMP_APU_SOLO`, `RECOMP_APU_VOICE_DUMP`
 (check its format against `tools/voicedump.py` before relying on that tool), host starvation lines.
-`RECOMP_AUDIO_TICK_STATS=1` (`recomp_manual.c`) prints `[AUDIO-TICK]` calls per second of the
+`RECOMP_AUDIO_TICK_STATS=1` (`src/manual/audio.c`) prints `[AUDIO-TICK]` calls per second of the
 game's 5 ms sound driver tick (`timeSetEvent` callback; should be ~200, needs patch 0013's
 precise kernel timers: the old 10 ms poll gave ~65).
 `RECOMP_APU_VOLUME=<0..1>` sets the output volume (patch 0012; 0 = silent, the APU still runs).

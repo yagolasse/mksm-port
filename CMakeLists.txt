@@ -88,8 +88,16 @@ endif()
 # Core game sources
 set(GAME_SOURCES
     src/main.c
+    src/paths.c
+    src/fault.c
     src/settings.c
     src/recomp_manual.c
+    src/manual/widescreen.c
+    src/manual/hud.c
+    src/manual/movie.c
+    src/manual/cine.c
+    src/manual/fence.c
+    src/manual/audio.c
     # Add game-specific sources here, e.g.:
     # src/asset_loader.c
     # src/custom_renderer.c

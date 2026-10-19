@@ -56,7 +56,7 @@ void mcpx_apu_set_host_paused(int on);
 void mcpx_apu_set_volume(float vol);
 /* toolkit src/input/mkb_input.h */
 void mkb_set_overlay(int open);
-/* recomp_manual.c (B7c) */
+/* src/manual/hud.c, src/manual/movie.c (B7c) */
 void mksm_manual_set_hud_edges(int on);
 void mksm_manual_set_movie_zoom(int on, int gauntlet);
 }

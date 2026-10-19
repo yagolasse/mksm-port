@@ -20,24 +20,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
-#include <string.h>
-#ifdef _WIN32
-#include <intrin.h>    /* _InterlockedExchange, _mm_pause (plan B7c live options) */
-#define MKSM_THREAD_LOCAL __declspec(thread)
-#else
-/* POSIX (plan H.5c2a): the same intrinsics from GCC's builtins. */
-#include <strings.h>
-#include <time.h>
-#include <immintrin.h> /* _mm_pause */
-#define _stricmp strcasecmp
-#define MKSM_THREAD_LOCAL __thread
-#define _InterlockedExchange(p, v) __atomic_exchange_n((p), (v), __ATOMIC_SEQ_CST)
-#define _InterlockedCompareExchange(p, x, c) __extension__({                         \
-        __typeof__(+*(p)) mksm_cmp_ = (c);                                              \
-        __atomic_compare_exchange_n((p), &mksm_cmp_, (x), 0, __ATOMIC_SEQ_CST,         \
-                                    __ATOMIC_SEQ_CST);                                 \
-        mksm_cmp_; })
-#endif
+#include "manual/manual_internal.h"
 
 /* ── ICALL trace ring buffer ───────────────────────────────── */
 
@@ -127,704 +110,98 @@ static recomp_func_t resolve_ilt_thunk(uint32_t xbox_va)
 }
 
 /*
- * RECOMP_AUDIO_TICK_STATS=1 (plan 3.3c): count the game's 5 ms sound tick,
- * the periodic timeSetEvent callback 0x00319DF0 (the XDK timer thread calls
- * it through a function pointer, so it comes through here). One line per
- * second: calls, and how many found the driver idle (busy byte +0xD99 == 1,
- * so the body ran) vs. still busy.
+ * RECOMP_AUDIO_TICK_STATS=1 (plan 3.3c): the game's 5 ms sound tick, the periodic timeSetEvent
+ * callback 0x00319DF0, comes through recomp_lookup_manual (audio.c counts the calls).
  */
-#include <stdlib.h>
-
 extern void sub_00319DF0(void);
-#ifdef _WIN32
-__declspec(dllimport) unsigned long long __stdcall GetTickCount64(void);
-#else
-static unsigned long long GetTickCount64(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (unsigned long long)ts.tv_sec * 1000u + (unsigned long long)ts.tv_nsec / 1000000u;
-}
-#endif
 
 static void counted_audio_tick(void)
 {
-    static unsigned long long t0;
-    static unsigned calls, ran;
-    uint32_t snd = *(volatile uint32_t *)((uintptr_t)0x008B4464u + g_xbox_mem_offset);
-    unsigned long long now = GetTickCount64();
-
-    calls++;
-    if (snd && *(volatile uint8_t *)((uintptr_t)snd + 0xD99u + g_xbox_mem_offset) == 1)
-        ran++;
-    if (!t0)
-        t0 = now;
-    if (now - t0 >= 1000) {
-        fprintf(stderr, "[AUDIO-TICK] calls=%u ran=%u state=0x%08X\n", calls, ran, snd);
-        fflush(stderr);
-        calls = ran = 0;
-        t0 = now;
-    }
+    audio_tick_count();
     sub_00319DF0();
-}
-
-static int audio_tick_stats(void)
-{
-    static int on = -1;
-    if (on < 0) {
-        const char *e = getenv("RECOMP_AUDIO_TICK_STATS");
-        on = e && *e && *e != '0';
-    }
-    return on;
 }
 
 /* ── Widescreen (plan 4.2, B5a) ────────────────────────────────────────────
  *
- * RECOMP_ASPECT=16:9 (also 16:10, 21:9, W/H or a plain ratio; unset or 4:3 = off) draws the
- * 3D view at that aspect: Hor+, the vertical FOV stays, more shows at the sides. The game
- * builds its projection as D3DXMatrixPerspectiveFovLH(fovy, cam+0x20, ...) in the camera
- * update 0x00124150, and nothing rewrites cam+0x20 per frame, so the hook widens it by
- * target / (4/3) before each update (see the hook for why relative); frustum culling is built from
- * the same matrix and follows. The frame stays 640x480 (anamorphic) and the GPU present
- * stretches it to the aspect, except while a movie plays (0x00142420 sets the movie up,
- * 0x00141F10 tears it down): movies keep 4:3. The 2D layer (HUD, menus, text) is stretched
- * for now. Addresses and the reasoning: ../docs/widescreen.md § 9.
- *
- * RECOMP_ASPECT_WIDE=1 (B5b1) renders into a W x 480 back buffer instead (854 at 16:9): the
- * display init, the device reset and D3D's mode lookup are hooked below, and the present shows
- * the frame at its own size. The game itself keeps seeing a 640-wide display, so its 2D layout
- * (authored for 640) stays as on 4:3; only the code that has to cover the real frame (2D
- * projection, viewports, full-screen quads) sees W, and pixel-space 2D is moved by (W - 640) / 2:
- * the 2D sits centred (pillarboxed, B5b2). Movies keep a 640x480 buffer.
- *
- * The hooks are entry hooks (`sub_X_enter`): the lift has to be made with
+ * RECOMP_ASPECT, the wide buffer and the 2D layer: widescreen.c has the notes and the helpers;
+ * the hooks are entry hooks (`sub_X_enter`): the lift has to be made with
  * `--exclude-manual src/recomp_manual.c` so the generated function calls them first. Direct
  * calls in the lifted code don't go through recomp_lookup_manual, so an override there would
  * miss them. */
-extern MKSM_THREAD_LOCAL uint32_t g_ecx, g_esp;
 
-#define GUEST_U8(va)  (*(volatile uint8_t *)((uintptr_t)(va) + g_xbox_mem_offset))
-#define GUEST_U32(va) (*(volatile uint32_t *)((uintptr_t)(va) + g_xbox_mem_offset))
-#define GUEST_F32(va) (*(volatile float *)((uintptr_t)(va) + g_xbox_mem_offset))
-
-#ifdef MKSM_HAVE_GPU
-#include "gpu/mksm_gpu.h"
-#endif
-
-/* The target aspect, 0 = off (the game's own 4:3). */
-static float wide_aspect(void)
-{
-    static int parsed;
-    static float aspect;
-    if (!parsed) {
-        const char *e = getenv("RECOMP_ASPECT");
-        double a = 0.0, w, h;
-        char sep;
-        if (e && *e) {
-            if (sscanf(e, "%lf%c%lf", &w, &sep, &h) == 3 && (sep == ':' || sep == '/') && h > 0)
-                a = w / h;
-            else
-                a = atof(e);
-            if (a < 1.0 || a > 4.0) {
-                fprintf(stderr, "[WIDE] RECOMP_ASPECT=%s ignored (want e.g. 16:9)\n", e);
-                a = 0.0;
-            } else if (a > 4.0 / 3.0 - 0.001 && a < 4.0 / 3.0 + 0.001) {
-                a = 0.0;    /* 4:3 is the game's own */
-            }
-        }
-        aspect = (float)a;
-        if (aspect)
-            fprintf(stderr, "[WIDE] aspect %.4f: 3D Hor+, frame stretched at present\n", a);
-        parsed = 1;
-    }
-    return aspect;
-}
-
-/* RECOMP_ASPECT_WIDE=1 (plan B5b1) with an aspect: the game renders into a wider back buffer
- * (W x 480, W = 480 * aspect rounded to even: 854 at 16:9) instead of stretching 640x480, so
- * the frame has square pixels and the present shows it at its own size. 0 = anamorphic (B5a).
- * W is capped at 1024: wider buffers (pitch above 4096 bytes) get horizontal stripes over the
- * frame from the glow layer (21:9 = 1120 wide; cause not found yet), so a capped frame is
- * stretched the rest of the way to the aspect at present. */
-#define WIDE_MAX_WIDTH 1024u
-static int wide_capped;
-
-static uint32_t wide_buffer_width(void)
-{
-    static int parsed;
-    static uint32_t width;
-    if (!parsed) {
-        const char *e = getenv("RECOMP_ASPECT_WIDE");
-        if (e && *e && *e != '0' && wide_aspect()) {
-            width = ((uint32_t)(480.0f * wide_aspect() + 1.0f)) & ~1u;
-            if (width > WIDE_MAX_WIDTH) {
-                width = WIDE_MAX_WIDTH;
-                wide_capped = 1;
-            }
-            fprintf(stderr, "[WIDE] back buffer %ux480%s\n", width,
-                    wide_capped ? " (capped: stretched to the aspect at present)" : "");
-        }
-        parsed = 1;
-    }
-    return width;
-}
-
-/* What the present shows the frame at: the target aspect, or the frame's own (0) in a movie
- * or when the frame is already as wide as the aspect. */
-static void wide_set_output(int movie)
-{
-#ifdef MKSM_HAVE_GPU
-    int own = movie || (wide_buffer_width() && !wide_capped);
-    mksm_gpu_set_output_aspect(own ? 0.0f : wide_aspect());
-#else
-    (void)movie;
-#endif
-}
-
-/* Display init 0x0011B290 (thiscall, ecx = display object *(0x00638988)): fills the present
- * parameters at +0xC (BackBufferWidth +0xC, BackBufferHeight +0x10) with 640x480, the float
- * size +0xC0/+0xC4 and the globals 0x0050E59C/0x0050E5A0, then resets the device (when one
- * exists) or returns to 0x0011B7C0, which creates it from the same parameters. It runs again
- * after every movie. The wide size goes into the back buffer width only; the reset inside sees
- * it through the hook on 0x003C99E0. The float size and the globals stay 640: the game lays its
- * 2D out from them (W/2 for centred text, W - 104 for right-side prompts, B5b2 hand check), and
- * the few readers that must cover the real frame get W from wide_real_width_call. Not while a
- * movie is set up (0x00142420 resets to 640x480 itself). */
+/* Display init 0x0011B290 (thiscall, ecx = display object *(0x00638988)): see
+ * wide_display_init_done. */
 extern void sub_0011B290_gen(void);
-
-static int wide_in_movie;
-
-static void wide_patch_display(uint32_t disp)
-{
-    uint32_t w = wide_buffer_width();
-    if (!w || !disp || wide_in_movie)
-        return;
-    GUEST_U32(disp + 0xCu) = w;
-}
-
-/* How far 640-authored 2D moves to sit centred in the wide frame (0 = not wide). */
-static int wide_2d_shift(void)
-{
-    uint32_t w = wide_buffer_width();
-    return w && !wide_in_movie ? (int)(w - 640u) / 2 : 0;
-}
 
 void sub_0011B290(void)
 {
-    static int logged;
     uint32_t disp = g_ecx;
     sub_0011B290_gen();
-    if (wide_buffer_width()) {
-        wide_patch_display(disp);
-        if (logged++ < 8)
-            fprintf(stderr, "[WIDE] display 0x%08X init: %ux%u%s\n", disp,
-                    GUEST_U32(disp + 0xCu), GUEST_U32(disp + 0x10u),
-                    wide_in_movie ? " (movie, left at 640)" : "");
-    }
+    wide_display_init_done(disp);
 }
 
-/* D3D's display-mode lookup 0x003D30D3 (cdecl; width, height, flags, ...): matches the size
- * against the AV encoder mode table (0x003EB238, 12-byte entries keyed by AV pack, with width
- * and height at +4/+6) and fails CreateDevice for a size that isn't there (B5b1's first wide
- * run: buffers allocated at pitch 0xE00, then all freed, no pushbuffer). The mode only picks
- * the encoder timings; the frame shown is the rendered surface (mksm_gpu.c), so W x 480 asks
- * for the 640x480 mode. */
-void sub_003D30D3_enter(void)
-{
-    static int logged;
-    uint32_t w = wide_buffer_width();
-    if (!w || GUEST_U32(g_esp + 4u) != w || GUEST_U32(g_esp + 8u) != 480u)
-        return;
-    GUEST_U32(g_esp + 4u) = 640u;
-    if (logged++ < 4)
-        fprintf(stderr, "[WIDE] display mode lookup %ux480 -> 640x480 (from 0x%08X)\n", w,
-                GUEST_U32(g_esp));
-}
+/* D3D's display-mode lookup 0x003D30D3 (cdecl; width, height, flags, ...) */
+void sub_003D30D3_enter(void) { wide_mode_lookup_enter(); }
 
-/* D3DDevice_Reset 0x003C99E0 (stdcall, the present parameters): 0x0011B290 calls it with the
- * display's parameters it has just set to 640 wide. */
-void sub_003C99E0_enter(void)
-{
-    uint32_t w = wide_buffer_width(), pp, disp;
-    if (!w)
-        return;
-    pp = GUEST_U32(g_esp + 4u);
-    disp = GUEST_U32(0x00638988u);
-    if (disp && pp == disp + 0xCu)
-        wide_patch_display(disp);
-    else
-        fprintf(stderr, "[WIDE] reset with other parameters 0x%08X (%ux%u), left alone\n", pp,
-                pp ? GUEST_U32(pp) : 0, pp ? GUEST_U32(pp + 4u) : 0);
-}
+/* D3DDevice_Reset 0x003C99E0 (stdcall, the present parameters) */
+void sub_003C99E0_enter(void) { wide_reset_enter(); }
 
-/* Camera update (thiscall, ecx = camera). Only the renderer's view camera: renderer
- * *(0x00639224), current camera +0x304, world camera +0x308.
- *
- * Relative, not absolute: the game draws its 640x480 frame with cam+0x20 = 1.2, not 4/3
- * (B5a run: the camera already holds 1.2 at its first update, and gets it back after
- * movies; the writer isn't known, the constructor writes 640/480), so the 4:3 picture is
- * ~11% wider than square. The hook scales whatever the game set by target / (4/3), which keeps
- * the original proportions and only adds picture at the sides. A value other than the one
- * written last is the game's new base. */
-void sub_00124150_enter(void)
-{
-    static int logged, output_set;
-    static uint32_t last_cam;
-    static float base, written;
-    float aspect = wide_aspect(), now;
-    uint32_t cam = g_ecx, renderer;
-    if (!aspect)
-        return;
-    renderer = GUEST_U32(0x00639224u);
-    if (!renderer || !cam ||
-        (cam != GUEST_U32(renderer + 0x304u) && cam != GUEST_U32(renderer + 0x308u)))
-        return;
-    if (!output_set) {
-        wide_set_output(0);
-        output_set = 1;
-    }
-    now = GUEST_F32(cam + 0x20u);
-    if (cam == last_cam && now == written)
-        return;
-    /* The game's value is 0.9 * W/H of the display it sees (1.2 at 640; B5b1 found 1.6012 when
-     * it saw 854). It sees 640 in both modes, so it's always the 4:3 base. */
-    if (now != base && logged < 8) {
-        logged++;
-        fprintf(stderr, "[WIDE] camera 0x%08X game aspect %.4f -> %.4f (from 0x%08X)\n", cam,
-                now, now * aspect * 0.75f, GUEST_U32(g_esp));
-    }
-    last_cam = cam;
-    base = now;
-    written = now * aspect * 0.75f;
-    GUEST_F32(cam + 0x20u) = written;
-}
-
-static int cine_log_on(void);
+/* Camera update 0x00124150 (thiscall, ecx = camera): Hor+ */
+void sub_00124150_enter(void) { wide_camera_enter(); }
 
 /* Movie set-up / tear-down (the blocking movie loop 0x00128DE0 calls both). */
-/* With the wide buffer a movie keeps 640x480: the set-up resets the device to the movie's size
- * (0x0011B200, same present parameters) and draws a 640-space quad; the present pillarboxes
- * it. The tear-down ends with the display init 0x0011B290, which widens the buffer again. */
-/* Movie zoom (plan B5c2): most movies are letterboxed inside their 4:3 frame, so on a wider
- * window the present may zoom them up to the share the picture fills (480 / picture rows, by
- * decoding the files: ../docs/widescreen.md § 14), cropping only black rows. The rest (logo or
- * card on black, full-frame shots) stay pillarboxed. Keyed by the file name the movie player
- * 0x00128DE0 (name, w, h, ...) gets, the only caller of the set-up. Only with RECOMP_ASPECT set
- * (wide or anamorphic); RECOMP_MOVIE_ZOOM=0 turns it off there too; RECOMP_MOVIE_ZOOM_GAUNTLET=1 zooms the Gauntlet trailer too, which cuts 17% of its
- * full-frame shots at 16:9. The settings menu flips both while running (plan B7c,
- * mksm_manual_set_movie_zoom, present thread) and the movie hooks run on the game's thread: a
- * spin lock keeps a menu change computed from a movie that just ended from overwriting the end
- * hook's 0 (the gameplay frame would stay zoomed). */
-static volatile long movie_lock;
-static int movie_zoom_on = -1, movie_gauntlet_on = -1;    /* -1 = env not read yet */
-static float movie_cur_zoom;    /* the playing movie's own zoom, 0 = none or no movie */
-static int movie_cur_gauntlet;
+void sub_00142420_enter(void) { movie_start_hook(); }
 
-static void movie_lock_take(void)
-{
-    while (_InterlockedExchange(&movie_lock, 1))
-        _mm_pause();
-}
-
-static void movie_lock_drop(void) { _InterlockedExchange(&movie_lock, 0); }
-
-/* The movie's own zoom, whatever the switches say (movie_zoom_apply applies them). */
-static float movie_zoom_for(const char *name, int *gauntlet)
-{
-    static const struct { const char *name; float zoom; } table[] = {
-        { "opening.sfd", 480.0f / 288 }, { "end006.sfd", 480.0f / 340 },
-        { "end011.sfd", 480.0f / 352 },  { "final.sfd", 480.0f / 340 },
-        { "blitz.sfd", 480.0f / 322 },
-    };
-    const char *base = name, *p;
-    *gauntlet = 0;
-    if (!wide_aspect())
-        return 0.0f;    /* without RECOMP_ASPECT movies look as on the Xbox */
-    for (p = name; *p; p++)
-        if (*p == '\\' || *p == '/' || *p == ':')
-            base = p + 1;
-    for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
-        if (_stricmp(base, table[i].name) == 0)
-            return table[i].zoom;
-    if (_stricmp(base, "gauntlet.sfd") == 0) {
-        *gauntlet = 1;
-        return 4.0f / 3.0f;
-    }
-    return 0.0f;
-}
-
-/* Lock held: hands the present the zoom the switches allow for the playing movie; returns it. */
-static float movie_zoom_apply(void)
-{
-    float z;
-    if (movie_zoom_on < 0) {
-        const char *e = getenv("RECOMP_MOVIE_ZOOM");
-        movie_zoom_on = !(e && *e == '0');
-    }
-    if (movie_gauntlet_on < 0) {
-        const char *e = getenv("RECOMP_MOVIE_ZOOM_GAUNTLET");
-        movie_gauntlet_on = e && *e && *e != '0';
-    }
-    z = movie_zoom_on && (!movie_cur_gauntlet || movie_gauntlet_on) ? movie_cur_zoom : 0.0f;
-#ifdef MKSM_HAVE_GPU
-    mksm_gpu_set_movie_zoom(z);
-#endif
-    return z;
-}
-
-/* The settings menu (plan B7c): RECOMP_MOVIE_ZOOM / _GAUNTLET while running; a playing movie
- * follows at the next present. */
-void mksm_manual_set_movie_zoom(int on, int gauntlet)
-{
-    float z;
-    movie_lock_take();
-    movie_zoom_on = on != 0;
-    movie_gauntlet_on = gauntlet != 0;
-    z = movie_zoom_apply();
-    movie_lock_drop();
-    fprintf(stderr, "[MOVIE] zoom %s, Gauntlet %s (live): now up to %.3f\n", on ? "on" : "off",
-            gauntlet ? "on" : "off", z ? z : 1.0f);
-}
-
-static void movie_zoom_start(void)
-{
-    char name[128];
-    uint32_t va, w, h;
-    size_t i;
-    float own, zoom;
-    int gauntlet;
-    /* The set-up's return address in 0x00128DE0, whose own arguments sit above its 4 saved
-     * registers and the 2 set-up arguments. */
-    if (GUEST_U32(g_esp) != 0x00128DF3u)
-        return;
-    va = GUEST_U32(g_esp + 0x20u);
-    w = GUEST_U32(g_esp + 0x24u);
-    h = GUEST_U32(g_esp + 0x28u);
-    for (i = 0; va && i < sizeof(name) - 1 && GUEST_U8(va + i); i++)
-        name[i] = (char)GUEST_U8(va + i);
-    name[i] = 0;
-    own = movie_zoom_for(name, &gauntlet);
-    movie_lock_take();
-    movie_cur_zoom = own;
-    movie_cur_gauntlet = gauntlet;
-    zoom = movie_zoom_apply();
-    movie_lock_drop();
-    fprintf(stderr, "[MOVIE] %s %ux%u: zoom up to %.3f\n", name, w, h, zoom ? zoom : 1.0f);
-}
-
-void sub_00142420_enter(void)
-{
-    if (cine_log_on())
-        fprintf(stderr, "[cine] movie start\n");
-    movie_zoom_start();
-    wide_in_movie = 1;
-    if (wide_aspect())
-        wide_set_output(1);
-}
-
-void sub_00141F10_enter(void)
-{
-    if (cine_log_on())
-        fprintf(stderr, "[cine] movie end\n");
-    movie_lock_take();
-    movie_cur_zoom = 0.0f;
-    movie_cur_gauntlet = 0;
-    movie_zoom_apply();
-    movie_lock_drop();
-    wide_in_movie = 0;
-    if (wide_aspect())
-        wide_set_output(0);
-}
-
-/* ── Widescreen 2D (plan B5b2) ─────────────────────────────────────────────
- *
- * With the wide buffer the game still sees a 640x480 display (display +0xC0, 0x0050E59C), so
- * its 2D layout is the 4:3 one (../docs/widescreen.md § 13):
- * - sprites (flush 0x0011D140) and text (0x001EF210, origin 0x0071AF48 = -320) are placed in
- *   640 space and drawn through an ortho projection of the display's size: with that
- *   projection built from W (below) they come out centred;
- * - the quad batch 0x0063F5E0 and the rect list 0x00639760 take pre-transformed pixels: the
- *   640-space rect quads 0x00125E10 / 0x001B3B10 (menu frames, message boxes) are moved by
- *   (W - 640) / 2, full-width ones stretched to W;
- * - code that covers the real frame gets W for the length of the call: the two 2D projections,
- *   the viewports, full-screen rects and quads, the loading bar, the blur targets;
- * - full-screen sprites (menu backgrounds) and the letterbox bars are widened to W. */
-
-/* Rect quad (cdecl x0, y0, x1, y1, colours, flag), 640 space: moved to the centre, or stretched
- * to the whole frame when it spans the 640 (the message-box dim). */
-static void wide_shift_rect_args(void)
-{
-    int dx = wide_2d_shift();
-    int32_t x0, x1;
-    if (!dx)
-        return;
-    x0 = (int32_t)GUEST_U32(g_esp + 4u);
-    x1 = (int32_t)GUEST_U32(g_esp + 12u);
-    if (x0 <= 0 && x1 >= 640)
-        x1 += 2 * dx;
-    else
-        x0 += dx, x1 += dx;
-    GUEST_U32(g_esp + 4u) = (uint32_t)x0;
-    GUEST_U32(g_esp + 12u) = (uint32_t)x1;
-}
+void sub_00141F10_enter(void) { movie_end_hook(); }
 
 /* ── HUD at the screen edges (plan B5d2) ───────────────────────────────────
- *
- * With the wide buffer the HUD (authored for 640) sits pillarboxed in the centre 640 columns.
- * RECOMP_HUD_EDGES (default on with RECOMP_ASPECT_WIDE; =0 keeps the 4:3 place) moves it out to
- * the screen edges: pieces on the left by -(W - 640) / 2, on the right by +(W - 640) / 2,
- * centred ones stay (../docs/widescreen.md § 15/16).
- * - The HUD manager (built by 0x000921D0) keeps its elements, one sprite each, in a pointer
- *   array (mgr +0, 128 slots). Elements come from layout tables (0x00091240, thiscall ecx = mgr,
- *   the table first) or per player (0x000914F0); the wrapper below remembers the centred ones:
- *   made from the bottom-bar or popup tables, placed at x 320, or the pause map's pieces
- *   (plan B5f: same manager, flags 0x600B4..0x600B6, placed in the menu's "Map Display" box).
- * - Side of the others: the sprite's x (+0xC0, 640 space) at the draw vs 320. The draw
- *   (0x0011D000, cdecl entry; sprite at entry +8) gets the x moved for the call.
- * - The HUD text is queued by the elements' per-frame callbacks (run by 0x001B6900 through
- *   +0x1FC, with the element as the argument) via the text helper 0x001EEF90: the callback's
- *   element is caught at the indirect call (recomp_lookup_manual) and its text moved alike.
- *
- * RECOMP_HUD_LOG=1 (plan B5d1) logs every 300th sprite flush: the drawn sprites (position,
- * size, anchor flags, HUD side) and the next frame's queued text and rect quads with the
- * element whose callback queued them (`[HUD]` lines). */
-static int hud_log_on(void)
-{
-    static int on = -1;
-    if (on < 0) {
-        const char *e = getenv("RECOMP_HUD_LOG");
-        on = e && *e && *e != '0';
-    }
-    return on;
-}
+ * hud.c has the notes and the state. */
 
-/* RECOMP_HUD_EDGES, -1 = not read yet. The settings menu sets it while running (plan B7c,
- * present thread); read at each sprite draw and text queue on the game's thread. Nothing
- * outlives one draw (the sprite's x is put back), so the next frame is laid out the new way. */
-static volatile long hud_edges_on = -1;
-
-void mksm_manual_set_hud_edges(int on)
-{
-    _InterlockedExchange(&hud_edges_on, on != 0);
-    fprintf(stderr, "[HUD] edges %s (live)\n", on ? "on" : "off");
-}
-
-/* how far HUD pieces move to the edges (0 = off) */
-static int hud_edge_shift(void)
-{
-    long on = hud_edges_on;
-    if (on < 0) {
-        const char *e = getenv("RECOMP_HUD_EDGES");
-        _InterlockedCompareExchange(&hud_edges_on, !(e && *e == '0'), -1);
-        on = hud_edges_on;
-    }
-    return on ? wide_2d_shift() : 0;
-}
-
-#define HUD_SLOTS 128u
-static uint32_t hud_mgr, hud_cur;
-static int hud_in_loop;
-static uint32_t hud_centred[HUD_SLOTS];
-static unsigned hud_ncentred, hud_frame;
-
-/* RAM, or its 0x80000000 mirror (the HUD's sprites and manager live there) */
-static int hud_va_ok(uint32_t va)
-{
-    return (va >= 0x00010000u && va < 0x04000000u) || (va >= 0x80000000u && va < 0x84000000u);
-}
-
-static uint32_t hud_list(void)
-{
-    uint32_t list = hud_va_ok(hud_mgr) ? GUEST_U32(hud_mgr) : 0;
-    return hud_va_ok(list) ? list : 0;
-}
-
-/* -1 left, +1 right, 0 centred or not a HUD element */
-static int hud_side(uint32_t s)
-{
-    uint32_t list = hud_list();
-    float x;
-    unsigned i;
-    if (!list || !s)
-        return 0;
-    for (i = 0; i < HUD_SLOTS && GUEST_U32(list + 4u * i) != s; i++)
-        ;
-    if (i == HUD_SLOTS)
-        return 0;
-    for (i = 0; i < hud_ncentred; i++)
-        if (hud_centred[i] == s)
-            return 0;
-    x = GUEST_F32(s + 0xC0u);
-    return x < 320.0f ? -1 : x > 320.0f ? 1 : 0;
-}
-
-/* Elements from a layout table (0x38-byte rows, x at +8; thiscall: table, layer, flags).
- * Centred: the bottom bar 0x004EC2C8, the popup 0x004EC878, rows at x 320, and the pause
- * map (flags 0x600B5 backdrop, 0x600B6 rooms of area 0x0059E3AC, 0x600B4 the no-map picture;
- * the HUD's own are 0x600B2). The map's rooms are replaced on each area change
- * (0x0008B0F0 frees them), so entries no longer in the list are dropped. */
+/* HUD layout tables (0x38-byte rows; thiscall: table, layer, flags): remembers the centred ones */
 extern void sub_00091240_gen(void);
 void sub_00091240(void)
 {
-    uint32_t mgr = g_ecx, table = GUEST_U32(g_esp + 4u), list, before[HUD_SLOTS];
-    uint32_t flags = GUEST_U32(g_esp + 12u);
-    int centred_table = table == 0x004EC2C8u || table == 0x004EC878u ||
-                        (flags >= 0x000600B4u && flags <= 0x000600B6u);
-    unsigned i, j;
-    list = hud_va_ok(mgr) ? GUEST_U32(mgr) : 0;
-    if (!hud_va_ok(list)) {
+    HudLayoutState st;
+    if (!hud_layout_begin(&st)) {
         sub_00091240_gen();
         return;
     }
-    if (mgr != hud_mgr || GUEST_U32(mgr + 4u) == 0)
-        hud_ncentred = 0;    /* a new HUD */
-    hud_mgr = mgr;
-    for (i = 0; i < HUD_SLOTS; i++)
-        before[i] = GUEST_U32(list + 4u * i);
     sub_00091240_gen();
-    for (j = 0; j < hud_ncentred;) {    /* forget freed elements */
-        for (i = 0; i < HUD_SLOTS && GUEST_U32(list + 4u * i) != hud_centred[j]; i++)
-            ;
-        if (i == HUD_SLOTS)
-            hud_centred[j] = hud_centred[--hud_ncentred];
-        else
-            j++;
-    }
-    for (i = 0; i < HUD_SLOTS; i++) {
-        uint32_t s = GUEST_U32(list + 4u * i);
-        if (!s || s == before[i])
-            continue;
-        for (j = 0; j < hud_ncentred && hud_centred[j] != s; j++)
-            ;
-        if (centred_table || GUEST_F32(s + 0xC0u) == 320.0f) {
-            if (j == hud_ncentred && hud_ncentred < HUD_SLOTS)
-                hud_centred[hud_ncentred++] = s;
-        } else if (j < hud_ncentred) {
-            hud_centred[j] = hud_centred[--hud_ncentred];
-        }
-    }
+    hud_layout_end(&st);
 }
 
 /* the per-frame element callbacks; hud_cur is the element whose callback runs */
 extern void sub_001B6900_gen(void);
 void sub_001B6900(void)
 {
-    hud_cur = 0;
-    hud_in_loop = 1;
+    hud_loop_begin();
     sub_001B6900_gen();
-    hud_in_loop = 0;
-    hud_cur = 0;
+    hud_loop_end();
 }
 
-/* called from recomp_lookup_manual for every indirect call: the loop's call returns to
- * 0x001B691D with the element as the only argument */
-static void hud_note_callback(void)
-{
-    if (hud_in_loop && GUEST_U32(g_esp) == 0x001B691Du)
-        hud_cur = GUEST_U32(g_esp + 4u);
-}
-
-static int hud_log_frame(void)
-{
-    return hud_log_on() && hud_frame % 300u == 299u;
-}
-
-/* logged on the frame after a sprite log, so a whole frame's queue shows */
-static int hud_log_queue_frame(void)
-{
-    return hud_log_on() && hud_frame % 300u == 0u && hud_frame;
-}
-
-void sub_0011D140_enter(void)
-{
-    hud_frame++;
-    if (hud_log_frame())
-        fprintf(stderr, "[HUD] ---- frame %u (sprites, then the next frame's text/rects)\n",
-                hud_frame);
-}
-
-static void hud_log_sprite(uint32_t e)
-{
-    uint32_t rect = e ? GUEST_U32(e) : 0, s = e ? GUEST_U32(e + 8u) : 0;
-    if (!rect || !s || GUEST_U8(s + 0x70u) || !GUEST_U32(s + 0x128u))
-        return;
-    fprintf(stderr, "[HUD] sprite 0x%08X side=%d x=%.1f y=%.1f flags=0x%02X w=%d h=%d "
-            "tex=0x%08X\n", s, hud_side(s), GUEST_F32(s + 0xC0u), GUEST_F32(s + 0xC4u),
-            GUEST_U32(s + 0x78u) & 0xFFu,
-            *(volatile int16_t *)((uintptr_t)rect + 4u + g_xbox_mem_offset),
-            *(volatile int16_t *)((uintptr_t)rect + 6u + g_xbox_mem_offset),
-            GUEST_U32(s + 0x128u));
-}
+void sub_0011D140_enter(void) { hud_frame_enter(); }
 
 /* sprite draw (cdecl entry): a HUD piece drawn at its edge-anchored x */
 extern void sub_0011D000_gen(void);
 void sub_0011D000(void)
 {
-    uint32_t e = GUEST_U32(g_esp + 4u), s = e ? GUEST_U32(e + 8u) : 0;
-    int dx = hud_edge_shift(), side = dx && s ? hud_side(s) : 0;
+    uint32_t s;
     float x;
-    if (hud_log_frame())
-        hud_log_sprite(e);
-    if (!side) {
+    if (!hud_sprite_begin(&s, &x)) {
         sub_0011D000_gen();
         return;
     }
-    x = GUEST_F32(s + 0xC0u);
-    GUEST_F32(s + 0xC0u) = x + (float)(side * dx);
     sub_0011D000_gen();
-    GUEST_F32(s + 0xC0u) = x;
+    hud_sprite_end(s, x);
 }
 
 /* text (thiscall; x, y floats, colour, string, align): a HUD element's text follows it */
-void sub_001EEF90_enter(void)
-{
-    int dx = hud_edge_shift(), side = dx && hud_cur ? hud_side(hud_cur) : 0;
-    if (hud_log_queue_frame()) {
-        char str[48];
-        uint32_t va = GUEST_U32(g_esp + 0x10u);
-        size_t i;
-        for (i = 0; va && i < sizeof(str) - 1 && GUEST_U8(va + i); i++) {
-            uint8_t c = GUEST_U8(va + i);
-            str[i] = c >= 0x20 && c < 0x7F ? (char)c : '.';
-        }
-        str[i] = 0;
-        fprintf(stderr, "[HUD] text elem=0x%08X side=%d ra=0x%08X x=%.1f y=%.1f align=%d "
-                "\"%s\"\n", hud_cur, side, GUEST_U32(g_esp), GUEST_F32(g_esp + 4u),
-                GUEST_F32(g_esp + 8u), (int)GUEST_U32(g_esp + 0x14u), str);
-    }
-    if (side)
-        GUEST_F32(g_esp + 4u) += (float)(side * dx);
-}
+void sub_001EEF90_enter(void) { hud_text_enter(); }
 
-static void hud_log_rect(void)
-{
-    if (!hud_log_queue_frame())
-        return;
-    fprintf(stderr, "[HUD] rect elem=0x%08X ra=0x%08X %d,%d .. %d,%d\n", hud_cur,
-            GUEST_U32(g_esp), (int)GUEST_U32(g_esp + 4u), (int)GUEST_U32(g_esp + 8u),
-            (int)GUEST_U32(g_esp + 12u), (int)GUEST_U32(g_esp + 16u));
-}
+/* ── Widescreen 2D (plan B5b2): see widescreen.c ───────────── */
 
 void sub_00125E10_enter(void) { hud_log_rect(); wide_shift_rect_args(); }
 void sub_001B3B10_enter(void) { wide_shift_rect_args(); }
-
-/* Runs fn with the display's real width in display +0xC0 and 0x0050E59C. */
-static void wide_real_width_call(void (*fn)(void))
-{
-    uint32_t disp = GUEST_U32(0x00638988u);
-    float d, g;
-    if (!wide_2d_shift() || !disp) {
-        fn();
-        return;
-    }
-    d = GUEST_F32(disp + 0xC0u);
-    g = GUEST_F32(0x0050E59Cu);
-    GUEST_F32(disp + 0xC0u) = (float)wide_buffer_width();
-    GUEST_F32(0x0050E59Cu) = (float)wide_buffer_width();
-    fn();
-    GUEST_F32(disp + 0xC0u) = d;
-    GUEST_F32(0x0050E59Cu) = g;
-}
 
 /* sprite pass set-up: ortho W x H into vertex constant 0x66 */
 extern void sub_0011C730_gen(void);
@@ -880,111 +257,23 @@ void sub_0013FFB0(void)
         wide_real_width_call(sub_0013FFB0_centred);
 }
 
-/* Menu sprite 0x00094710 (thiscall; x, y, w, h at +0x14..+0x20): a full-width one (x 0,
- * w 640: the menu backgrounds of 0x00097180 / 0x00097260) covers the whole frame. */
-void sub_00094710_enter(void)
-{
-    int dx = wide_2d_shift();
-    if (dx && GUEST_U32(g_esp + 0x14u) == 0 && GUEST_U32(g_esp + 0x1Cu) == 640u) {
-        GUEST_U32(g_esp + 0x14u) = (uint32_t)-dx;
-        GUEST_U32(g_esp + 0x1Cu) = wide_buffer_width();
-    }
-}
+/* Menu sprite 0x00094710: a full-width one covers the whole frame. */
+void sub_00094710_enter(void) { wide_menu_sprite_enter(); }
 
-/* Letterbox bars create 0x001CF380: two sprites centred at x = 320, as wide as the display it
- * sees (640): widened to W. */
+/* Letterbox bars create 0x001CF380: widened to W. */
 extern void sub_001CF380_gen(void);
 
 void sub_001CF380(void)
 {
-    uint32_t bar, i;
     sub_001CF380_gen();
-    if (!wide_2d_shift())
-        return;
-    for (i = 0; i < 2; i++) {
-        bar = GUEST_U32(0x006CE8A0u + 4u * i);
-        if (bar && GUEST_U32(bar + 0x1D8u))
-            *(volatile int16_t *)((uintptr_t)GUEST_U32(bar + 0x1D8u) + 4u + g_xbox_mem_offset) =
-                (int16_t)wide_buffer_width();
-    }
+    wide_letterbox_bars_widen();
 }
 
-/* Per-frame render dispatch 0x00114CD0: the in-game pass, or the front end's while 0x006C92F8
- * (front-end mode) is set. The front end's backdrops have art outside the 640 columns (a 4:3
- * screen hid it; the game's own dead 720-wide mode masked it too, in 0x0013FD70), so while
- * it's up the GPU glue blacks out the sides. In game the sides are the wider 3D view. */
-void sub_00114CD0_enter(void)
-{
-#ifdef MKSM_HAVE_GPU
-    static int last = -1;
-    int on = wide_2d_shift() && GUEST_U32(0x006C92F8u) != 0;
-    if (on != last) {
-        mksm_gpu_set_side_mask(on);
-        last = on;
-    }
-#endif
-}
+/* Per-frame render dispatch 0x00114CD0: blacks out the sides in the front end. */
+void sub_00114CD0_enter(void) { wide_render_dispatch_enter(); }
 
-/* RECOMP_CINE_LOG=1 (plan B5a): the cutscene signals, sampled at the start of each game
- * update 0x000CB780 (= after the previous one), one line whenever one changes
- * (widescreen.md § 10.4). seq = a scripted sequence is playing (0x006C4198); cincam = the
- * current camera is the cinematic class and not done (FUN_0016CEC0's test, read from the
- * fields); auto = the update's own "bars wanted" state (0x005ACEE6); bars = the letterbox
- * sprites are up (FUN_001CF6C0's test) with their y; fade = fade active / alpha. */
-static int cine_log_on(void)
-{
-    static int on = -1;
-    if (on < 0) {
-        const char *e = getenv("RECOMP_CINE_LOG");
-        on = e && *e && *e != '0';
-    }
-    return on;
-}
-
-void sub_000CB780_enter(void)
-{
-    static unsigned frame;
-    static uint32_t last_key = 0xFFFFFFFFu;
-    uint32_t mgr, cam = 0, top, bot, key;
-    unsigned seq, cincam = 0, mode = 0, done = 0, autob, bars, fade;
-    float top_y = 0.0f, bot_y = 0.0f;
-
-    frame++;
-    if (!cine_log_on())
-        return;
-    seq = GUEST_U8(0x006C4198u);
-    mgr = GUEST_U32(0x00599844u);
-    if (mgr) {
-        uint32_t slot = GUEST_U32(mgr + 0x1Cu) - GUEST_U32(mgr + 0x120u);
-        if (slot < 64)
-            cam = GUEST_U32(mgr + 0x20u + slot * 4u);
-    }
-    if (cam && GUEST_U32(cam) == 0x0049E3A0u) {    /* cinematic camera vtable */
-        mode = GUEST_U32(cam + 0x2CCu);
-        done = GUEST_U8(cam + 0x2D9u);
-        cincam = !done || GUEST_U8(0x005144F8u);
-    }
-    autob = GUEST_U8(0x005ACEE6u);
-    top = GUEST_U32(0x006CE8A0u);
-    bot = GUEST_U32(0x006CE8A4u);
-    bars = top && !GUEST_U8(top + 0x70u);
-    if (top)
-        top_y = GUEST_F32(top + 0xC4u);
-    if (bot)
-        bot_y = GUEST_F32(bot + 0xC4u);
-    fade = GUEST_U8(0x005146E4u);
-    /* Bar y only counts as "at rest" or "moving", or a slide prints 30 lines. */
-    key = seq | cincam << 1 | autob << 2 | bars << 3 | (fade != 0) << 4 |
-          (top_y != 0.0f) << 5 | (cam && GUEST_U32(cam) == 0x0049E3A0u) << 6;
-    if (key != last_key) {
-        last_key = key;
-        fprintf(stderr,
-                "[cine] f=%u seq=%u cincam=%u (cam 0x%08X vt 0x%08X mode %u done %u) auto=%u "
-                "bars=%u topY=%.1f botY=%.1f fade=%u/%.0f\n",
-                frame, seq, cincam, cam, cam ? GUEST_U32(cam) : 0u, mode, done, autob, bars,
-                top_y, bot_y, fade, GUEST_F32(0x005146ECu));
-    }
-}
+/* RECOMP_CINE_LOG=1 (plan B5a): the cutscene signals, at the start of each game update. */
+void sub_000CB780_enter(void) { cine_log_update(); }
 
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
 {
@@ -1079,47 +368,9 @@ void recomp_icall_not_code_log(uint32_t va)
     fflush(stderr);
 }
 
-/* ── D3D's fence wait (plan 2.7c6) ──────────────────────────────────────
- *
- * 0x003C8490 (stdcall: fence count, flags; Swap waits here for the previous frame) ends in a
- * loop that polls the semaphore word the GPU writes at each fence ([[device+0x30]]) until it
- * reaches the count: a core spinning whenever the title is ahead of the GPU (~half the main
- * thread at the 60 cap since plan 2.7c3). A count other than the device's current one
- * (device+0x2C) belongs to a fence D3D has already sent and kicked (0x003C83D0 kicks), so it
- * is waited for here, blocking (mksm_gpu_wait_semaphore), and the body then finds it reached
- * and returns at once. The current count is the body's own: it sends that fence first.
- * RECOMP_FENCE_WAIT=0: the body alone, as before (the [XGPU] fence line then counts only the
- * waits it ended short of the count: 0 in a pad run, so waiting first changes nothing D3D does). */
+/* ── D3D's fence wait (plan 2.7c6): see fence.c ────────────── */
 extern void sub_003C8490_gen(void);
-void sub_003C8490(void)
-{
-#ifdef MKSM_HAVE_GPU
-    static int on = -1;
-    uint32_t dev = GUEST_U32(0x003F0C08u), target = GUEST_U32(g_esp + 4u), now;
-    const volatile uint32_t *sem;
-
-    if (on < 0) {
-        const char *e = getenv("RECOMP_FENCE_WAIT");
-        on = !e || !*e || *e != '0';
-    }
-    now = dev ? GUEST_U32(dev + 0x2Cu) : target;
-    sem = &GUEST_U32(dev ? GUEST_U32(dev + 0x30u) : 0u);
-    if (!dev || target == now) {
-        sub_003C8490_gen();
-        return;
-    }
-    if (on) {
-        mksm_gpu_wait_semaphore(sem, now, target);
-        sub_003C8490_gen();
-        return;
-    }
-    sub_003C8490_gen();
-    if (now - target < now - *sem)
-        mksm_gpu_note_semaphore_unreached();
-#else
-    sub_003C8490_gen();
-#endif
-}
+void sub_003C8490(void) { fence_wait(sub_003C8490_gen); }
 
 /* ── Untranslated instructions ───────────────────────────────────────────
  *
